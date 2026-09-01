@@ -1,4 +1,10 @@
 import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionRecord, AssemblyChangeProposalRecord, ContextCheckpointRecord, ContextPolicyDefinitionRecord, ContextSummaryArtifactRecord, ConversationTurnTerminalEnvelopeV1, DelegationRecord, InteractionRequestRecord, OperatorAttentionRecord, OperatorFocusRecord, SpecialistDefinitionRecord, ThreadAssemblyRecord, ThreadCompactionEventRecord, ThreadRecord } from "../kestrel/contracts/orchestration.js";
+import {
+  assertMatchingThreadAssemblyRetry,
+  compareThreadAssemblyRecordsNewestFirst,
+  orderThreadAssemblyRecordAfter,
+  selectLatestThreadAssemblyRecord,
+} from "./threadAssemblyOrdering.js";
 import { parseHarnessEconomicsPolicyV1 } from "../economics/policy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
@@ -89,6 +95,39 @@ export class InMemoryOrchestrationStore implements OrchestrationStore {
 
   async upsertDelegation(record: DelegationRecord): Promise<void> {
     this.delegations.set(record.delegationId, clone(record));
+  }
+
+  async createDialog(record: DelegationRecord): Promise<boolean> {
+    const dialog = readStoredDialog(record);
+    if (dialog === undefined) {
+      throw new Error("createDialog requires a dialog delegation record.");
+    }
+    const exists = [...this.delegations.values()].some((candidate) => {
+      if (candidate.parentThreadId !== record.parentThreadId) return false;
+      const existing = readStoredDialog(candidate);
+      return existing?.normalizedName === dialog.normalizedName;
+    });
+    if (exists) return false;
+    this.threads.set(record.childThreadId, {
+      threadId: record.childThreadId,
+      sessionId: record.childThreadId,
+      title: `Delegated: ${record.title}`,
+      status: "IDLE",
+      parentThreadId: record.parentThreadId,
+      metadata: { delegationPrompt: record.prompt },
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    });
+    this.delegations.set(record.delegationId, clone(record));
+    return true;
+  }
+
+  async compareAndSetDialog(record: DelegationRecord, expectedRevision: number): Promise<boolean> {
+    const current = this.delegations.get(record.delegationId);
+    const currentDialog = current === undefined ? undefined : readStoredDialog(current);
+    if (currentDialog === undefined || currentDialog.revision !== expectedRevision) return false;
+    this.delegations.set(record.delegationId, clone(record));
+    return true;
   }
 
   async getDelegation(delegationId: string): Promise<DelegationRecord | null> {
@@ -246,15 +285,27 @@ export class InMemoryOrchestrationStore implements OrchestrationStore {
       .map((record) => clone(record));
   }
 
-  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<void> {
+  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<ThreadAssemblyRecord> {
+    const duplicate = [...this.threadAssemblies.values()]
+      .flat()
+      .find((candidate) => candidate.recordId === record.recordId);
+    if (duplicate !== undefined) {
+      assertMatchingThreadAssemblyRetry(record, duplicate);
+      return clone(duplicate);
+    }
     const existing = this.threadAssemblies.get(record.threadId) ?? [];
-    this.threadAssemblies.set(record.threadId, [...existing, clone(record)]);
+    const persisted = orderThreadAssemblyRecordAfter(
+      record,
+      selectLatestThreadAssemblyRecord(existing),
+    );
+    this.threadAssemblies.set(record.threadId, [...existing, clone(persisted)]);
+    return clone(persisted);
   }
 
   async listThreadAssemblyRecords(threadId: string): Promise<ThreadAssemblyRecord[]> {
     return (this.threadAssemblies.get(threadId) ?? [])
       .map((record) => clone(record))
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      .sort(compareThreadAssemblyRecordsNewestFirst);
   }
 
   async upsertAssemblyChangeProposal(record: AssemblyChangeProposalRecord): Promise<void> {
@@ -339,6 +390,21 @@ export class InMemoryOrchestrationStore implements OrchestrationStore {
   async getContextPolicyDefinition(contextPolicyId: string): Promise<ContextPolicyDefinitionRecord | null> {
     return cloneOrNull(this.contextPolicies.get(contextPolicyId));
   }
+}
+
+function readStoredDialog(record: DelegationRecord): { normalizedName: string; revision: number } | undefined {
+  const dialog = record.policy?.dialog;
+  if (typeof dialog !== "object" || dialog === null || Array.isArray(dialog)) return undefined;
+  const value = dialog as Record<string, unknown>;
+  if (value.version !== "v1" || typeof value.name !== "string") return undefined;
+  return {
+    normalizedName: typeof value.normalizedName === "string"
+      ? value.normalizedName
+      : value.name.trim().toLocaleLowerCase(),
+    revision: typeof value.revision === "number" && Number.isInteger(value.revision) && value.revision >= 0
+      ? value.revision
+      : 0,
+  };
 }
 
 function clone<T>(value: T): T {

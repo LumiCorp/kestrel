@@ -1,7 +1,34 @@
+import { CONVERSATION_ATTACHMENT_MAX_FILE_BYTES } from "@kestrel-agents/conversation";
+
 import type {
   ToolApprovalDispositionV1,
   ToolApprovalReasonCode,
 } from "../mode/contracts.js";
+import { isRememberApprovalEligibleV1 } from "../mode/contracts.js";
+import { canonicalizePublicBrowserDestination } from "../browser/domainAuthority.js";
+import {
+  parseBrowserDownloadPreparedEffectV1,
+  parseBrowserUploadPreparedEffectV1,
+} from "../browser/contracts.js";
+import type { PreparedToolInputAdapterV1 } from "../kestrel/contracts/tool-invocation.js";
+
+export interface BrowserDomainGrantApprovalPresentationV1 {
+  version: "browser_domain_grant_approval_v1";
+  sessionId: string;
+  sessionMode: "operator";
+  canonicalDomain: string;
+  scheme: "https";
+  scope: "apex_and_subdomains";
+  includeSubdomains: true;
+  port: 443;
+  ownerEffect: "requesting_person";
+  environmentEffect: "future_eligible_projects_in_environment";
+  sessionEffect: "immediate";
+  actionLabel: "Allow and remember";
+  requestingActorId?: string | undefined;
+  environmentId?: string | undefined;
+  approvalAuthorityRevision?: string | undefined;
+}
 
 export interface ToolApprovalPresentationV1 {
   title: string;
@@ -14,7 +41,9 @@ export interface ToolApprovalPresentationV1 {
     explanation: string;
     authorityKind: ToolApprovalDispositionV1["authority"]["kind"];
     authorityRevision: string;
+    rememberApprovalEligible: boolean;
   };
+  browserDomainGrant?: BrowserDomainGrantApprovalPresentationV1 | undefined;
 }
 
 type Presenter = {
@@ -28,12 +57,25 @@ type Presenter = {
       | "event_time"
       | "attendees"
       | "string_list"
+      | "json_string_list"
       | undefined;
   }>;
   warnings?: readonly string[] | undefined;
 };
 
 const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
+  exec_command: presenter(
+    "Run command",
+    "Review this command before it runs.",
+    [
+      ["command", "Command"],
+      ["cwd", "Working directory"],
+      ["envNames", "Environment access", "string_list"],
+    ],
+    [
+      "Allow for thread remembers only this exact command in this folder.",
+    ],
+  ),
   "internet.search": presenter("Search the web", "Run a Tavily web search.", [
     ["query", "Query"],
   ]),
@@ -108,6 +150,30 @@ const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
       ["text", "Message"],
     ],
     ["Organization email always requires approval for each send."],
+  ),
+  "google_workspace.send_gmail": presenter(
+    "Send a Gmail message",
+    "Review the exact Gmail message and Thread-file revisions before it is sent.",
+    [
+      ["__kestrelGmailPrepared.envelope.to", "To", "string_list"],
+      ["__kestrelGmailPrepared.envelope.cc", "Cc", "string_list"],
+      ["__kestrelGmailPrepared.envelope.subject", "Subject"],
+      ["__kestrelGmailPrepared.envelope.text", "Message"],
+      ["__kestrelGmailPrepared.attachments", "Attachments", "json_string_list"],
+    ],
+    ["Gmail sends require approval for this exact prepared message."],
+  ),
+  "google_workspace.reply_gmail": presenter(
+    "Reply with Gmail",
+    "Review the provider-resolved recipient, thread, message, and Thread-file revisions before sending.",
+    [
+      ["__kestrelGmailPrepared.envelope.threadId", "Thread"],
+      ["__kestrelGmailPrepared.envelope.to", "To", "string_list"],
+      ["__kestrelGmailPrepared.envelope.subject", "Subject"],
+      ["__kestrelGmailPrepared.envelope.text", "Message"],
+      ["__kestrelGmailPrepared.attachments", "Attachments", "json_string_list"],
+    ],
+    ["Gmail supplies the reply recipient and RFC reply headers from the selected message."],
   ),
   "kestrel_one.google_calendar_create_event": presenter(
     "Create a calendar event",
@@ -253,7 +319,7 @@ const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
     "Publish an immutable file or ZIP through a temporary preview link.",
     [
       ["mode", "Mode"],
-      ["paths", "Selected files", "string_list"],
+      ["paths", "Selected files", "json_string_list"],
       ["downloadName", "Download name"],
       ["ttlMinutes", "Lifetime (minutes)"],
     ],
@@ -277,7 +343,12 @@ const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
 export function buildToolApprovalPresentation(input: {
   toolName: string;
   effectiveInput: unknown;
+  inputAdapters?: readonly PreparedToolInputAdapterV1[] | undefined;
   disposition?: ToolApprovalDispositionV1 | undefined;
+  hostedApprovalScope?: {
+    requestingActorId: string;
+    environmentId: string;
+  } | undefined;
 }): ToolApprovalPresentationV1 {
   const presenterDefinition = PRESENTERS[input.toolName];
   const record = readRecord(input.effectiveInput);
@@ -289,6 +360,133 @@ export function buildToolApprovalPresentation(input: {
       revision: "legacy-external-confirm",
     },
   };
+  if (input.toolName === "browser.request_grant") {
+    const sessionId = readNonEmptyString(record?.sessionId, "sessionId");
+    const destination = readNonEmptyString(record?.destination, "destination");
+    const authority = canonicalizePublicBrowserDestination(destination);
+    const browserDomainGrant: BrowserDomainGrantApprovalPresentationV1 = {
+      version: "browser_domain_grant_approval_v1",
+      sessionId,
+      sessionMode: "operator",
+      canonicalDomain: authority.canonicalDomain,
+      scheme: authority.scheme,
+      scope: "apex_and_subdomains",
+      includeSubdomains: authority.includeSubdomains,
+      port: authority.port,
+      ownerEffect: "requesting_person",
+      environmentEffect: "future_eligible_projects_in_environment",
+      sessionEffect: "immediate",
+      actionLabel: "Allow and remember",
+      ...(input.hostedApprovalScope === undefined
+        ? {}
+        : {
+            requestingActorId: input.hostedApprovalScope.requestingActorId,
+            environmentId: input.hostedApprovalScope.environmentId,
+            approvalAuthorityRevision: disposition.authority.revision,
+          }),
+    };
+    return {
+      title: "Allow this Browser domain",
+      summary:
+        "Allow this HTTPS apex and its subdomains now and remember it for your eligible Projects in this Environment.",
+      fields: [
+        { label: "Domain", value: authority.canonicalDomain },
+        { label: "Scope", value: "Apex and subdomains" },
+        { label: "Port", value: "443 (HTTPS)" },
+        ...(input.hostedApprovalScope === undefined
+          ? [{ label: "Applies to", value: "You in this Environment" }]
+          : [
+              {
+                label: "Person",
+                value: input.hostedApprovalScope.requestingActorId,
+              },
+              {
+                label: "Environment",
+                value: input.hostedApprovalScope.environmentId,
+              },
+            ]),
+      ],
+      warnings: [
+        "This takes effect in the current Browser Session and future eligible Projects in this Environment.",
+      ],
+      policy: {
+        mode: "ask",
+        reasonCode: disposition.reasonCode,
+        explanation: approvalReasonExplanation(disposition.reasonCode),
+        authorityKind: disposition.authority.kind,
+        authorityRevision: disposition.authority.revision,
+        rememberApprovalEligible: false,
+      },
+      browserDomainGrant,
+    };
+  }
+  if (input.toolName === "browser.upload") {
+    const matches = (input.inputAdapters ?? []).filter(
+      (adapter) => adapter.adapterId === "kestrel.browser-upload-effect:v1",
+    );
+    if (matches.length !== 1) {
+      throw new Error("Browser upload approval is missing exact prepared effect authority.");
+    }
+    const effect = parseBrowserUploadPreparedEffectV1(matches[0]!.metadata);
+    return {
+      title: "Upload attachment",
+      summary: "Upload this active-turn attachment to the selected Browser file input.",
+      fields: [
+        { label: "File", value: effect.filename },
+        {
+          label: "Measured size",
+          value: `${effect.sizeBytes} bytes (${CONVERSATION_ATTACHMENT_MAX_FILE_BYTES / (1024 * 1024)} MiB maximum)`,
+        },
+        { label: "Declared media type", value: `${effect.declaredMediaType} (untrusted metadata)` },
+        { label: "Browser target", value: effect.targetLabel },
+      ],
+      warnings: [
+        "Only this approved attachment is transferred to this exact current file input.",
+      ],
+      policy: {
+        mode: "ask",
+        reasonCode: disposition.reasonCode,
+        explanation: approvalReasonExplanation(disposition.reasonCode),
+        authorityKind: disposition.authority.kind,
+        authorityRevision: disposition.authority.revision,
+        rememberApprovalEligible: false,
+      },
+    };
+  }
+  if (input.toolName === "browser.download") {
+    const matches = (input.inputAdapters ?? []).filter(
+      (adapter) => adapter.adapterId === "kestrel.browser-download-effect:v1",
+    );
+    if (matches.length !== 1) {
+      throw new Error("Browser download approval is missing exact prepared effect authority.");
+    }
+    const effect = parseBrowserDownloadPreparedEffectV1(matches[0]!.metadata);
+    return {
+      title: "Promote browser download",
+      summary: "Publish this quarantined Browser download as one file in the current Thread.",
+      fields: [
+        { label: "File", value: effect.filename },
+        {
+          label: "Measured size",
+          value: `${effect.measuredBytes} bytes (${CONVERSATION_ATTACHMENT_MAX_FILE_BYTES / (1024 * 1024)} MiB maximum)`,
+        },
+        { label: "Declared media type", value: `${effect.declaredMediaType} (untrusted metadata)` },
+        { label: "Source origin", value: effect.normalizedSourceOrigin },
+        { label: "Result", value: "One file in the current Thread" },
+      ],
+      warnings: [
+        "Only this exact completed quarantine item is published. Browser paths and storage locations remain hidden.",
+      ],
+      policy: {
+        mode: "ask",
+        reasonCode: disposition.reasonCode,
+        explanation: approvalReasonExplanation(disposition.reasonCode),
+        authorityKind: disposition.authority.kind,
+        authorityRevision: disposition.authority.revision,
+        rememberApprovalEligible: false,
+      },
+    };
+  }
   const fields =
     presenterDefinition === undefined || record === null
       ? []
@@ -316,6 +514,7 @@ export function buildToolApprovalPresentation(input: {
       explanation: approvalReasonExplanation(disposition.reasonCode),
       authorityKind: disposition.authority.kind,
       authorityRevision: disposition.authority.revision,
+      rememberApprovalEligible: isRememberApprovalEligibleV1({ disposition }),
     },
   };
 }
@@ -334,6 +533,8 @@ export function approvalReasonExplanation(
       return "A user or agent restriction requires approval for this invocation.";
     case "runtime_strict":
       return "The current runtime mode requires approval for every tool call.";
+    case "remembered_thread":
+      return "This tool was approved for the rest of this thread.";
   }
 }
 
@@ -344,7 +545,13 @@ function presenter(
     readonly [
       string,
       string,
-      ("default" | "event_time" | "attendees" | "string_list")?,
+      (
+        | "default"
+        | "event_time"
+        | "attendees"
+        | "string_list"
+        | "json_string_list"
+      )?,
     ]
   >,
   warnings?: readonly string[],
@@ -367,6 +574,13 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function readNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`browser.request_grant ${field} is required.`);
+  }
+  return value.trim();
+}
+
 function readPath(record: Record<string, unknown>, path: string): unknown {
   let value: unknown = record;
   for (const segment of path.split(".")) {
@@ -383,7 +597,8 @@ function displayValue(
     | "default"
     | "event_time"
     | "attendees"
-    | "string_list" = "default",
+    | "string_list"
+    | "json_string_list" = "default",
 ): string {
   if (format === "event_time") {
     const time = readRecord(value);
@@ -406,8 +621,11 @@ function displayValue(
   if (format === "string_list") {
     return Array.isArray(value) &&
       value.every((item): item is string => typeof item === "string")
-      ? JSON.stringify(value)
+      ? value.join(", ") || "None"
       : "Configured selection";
+  }
+  if (format === "json_string_list") {
+    return Array.isArray(value) ? JSON.stringify(value) : "Configured selection";
   }
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean")

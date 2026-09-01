@@ -5,9 +5,24 @@ import {
   CURRENT_RUNTIME_STATE_SCHEMA_VERSION,
   decodeRuntimeSessionState,
   normalizeRuntimeStateForPersist,
+  readExecState,
   readWaitState,
   validateRuntimeSessionState,
 } from "../../src/runtime/state.js";
+import {
+  createToolActivationRefV1,
+  fingerprintToolScopeV1,
+  hashCanonical,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import {
+  parseDurablePreparedToolCallV1,
+  parsePreparedToolCallV1,
+} from "../../src/kestrel/contracts/tool-invocation.js";
+import {
+  projectHostedToolApprovalInteractionV4,
+  projectLocalToolApprovalInteractionV1,
+} from "../../src/runtime/assistantResponseContract.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
 
 
 test("runtime state codec normalizes agent pending fields into exec", () => {
@@ -138,8 +153,8 @@ test("readWaitState reflects canonical waitingFor state", () => {
       observations: [],
       exec: {},
       waitingFor: {
-        kind: "approval",
-        eventType: "user.approval",
+        kind: "user_input",
+        eventType: "user.response",
         reason: "Need consent",
         resumeInstruction: "Approve the pending action.",
         resumeStepAgent: "agent.exec.wait_approval",
@@ -147,19 +162,515 @@ test("readWaitState reflects canonical waitingFor state", () => {
         metadata: {
           requestId: "approval-1",
         },
+        interaction: {
+          version: "v1",
+          requestId: "approval-1",
+          kind: "user_input",
+          eventType: "user.response",
+          prompt: "Approve the pending action.",
+        },
       },
     },
   });
 
   assert.deepEqual(wait, {
-    kind: "approval",
-    eventType: "user.approval",
+    kind: "user_input",
+    eventType: "user.response",
     resumeStepAgent: "agent.exec.wait_approval",
     resumeToken: "resume-1",
     metadata: {
       requestId: "approval-1",
     },
+    interaction: {
+      version: "v1",
+      requestId: "approval-1",
+      kind: "user_input",
+      eventType: "user.response",
+      prompt: "Approve the pending action.",
+    },
   });
+});
+
+test("runtime state restart preserves the exact prepared canonical hosted approval", () => {
+  const descriptor = defaultToolCatalog.getDescriptorRef("internet.search");
+  assert.ok(descriptor);
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-restart",
+    scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
+  });
+  const effectiveInput = { query: "persist exactly" };
+  const policyRevision = hashCanonical({ policy: "ask" });
+  const stableAuthorityPayload = {
+    version: "prepared_tool_stable_authority_v2" as const,
+    actor: {
+      actorType: "end_user" as const,
+      actorId: "user-1",
+      tenantId: "org-1",
+    },
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    threadId: "thread-restart",
+    resourceAuthority: {
+      toolSourceKind: descriptor.sourceKind,
+      toolSourceId: descriptor.sourceId,
+    },
+    policyRevision,
+    capabilities: ["network.call"],
+    descriptorContractRevision: descriptor.contractRevision,
+    approvalAuthorityRevision: "approval-authority-v1",
+    normalizedActionHash: hashCanonical({
+      toolId: descriptor.toolId,
+      effectiveInput,
+    }),
+    executionClass: "read_only" as const,
+  };
+  const unboundPrepared = parsePreparedToolCallV1({
+    version: "v1",
+    runId: "run-before-restart",
+    sessionId: "thread-restart",
+    callId: "prepared-restart-1",
+    activation,
+    origin: {
+      kind: "model",
+      snapshotId: hashCanonical({ snapshot: "restart" }),
+      modelToolCallId: "model-call-restart",
+    },
+    effectiveInput,
+    inputAdapters: [],
+    policy: {
+      decision: "approval_required",
+      policyRevision,
+      reasonCode: "environment_policy",
+    },
+    approval: {
+      approvalId: "approval-restart-1",
+      authorityRevision: hashCanonical({ approval: "restart" }),
+    },
+    stableAuthority: {
+      ...stableAuthorityPayload,
+      fingerprint: hashCanonical(stableAuthorityPayload),
+    },
+    stableToolIdentity: {
+      version: "stable_tool_approval_identity_v1",
+      toolId: descriptor.toolId,
+      descriptorContractRevision: descriptor.contractRevision,
+      approvalAuthorityRevision: "approval-authority-v1",
+    },
+    executionRequirements: {
+      version: "prepared_tool_execution_requirements_v1",
+      credentials: ["continuation_run_segment", "live_handler_capability"],
+    },
+    preparedAt: "2026-08-26T12:00:00.000Z",
+  });
+  const requestedAt = "2026-08-26T12:00:00.000Z";
+  const expiresAt = "2026-08-26T12:05:00.000Z";
+  const binding = {
+    version: "runner_external_approval_binding_v2" as const,
+    approvalId: "approval-restart-1",
+    preparedInvocationId: unboundPrepared.callId,
+    threadId: stableAuthorityPayload.threadId,
+    actionKey: descriptor.toolId,
+    payloadHash: hashCanonical(effectiveInput),
+    stableAuthorityFingerprint: unboundPrepared.stableAuthority!.fingerprint,
+    stableToolIdentity: unboundPrepared.stableToolIdentity!,
+    requestingActor: stableAuthorityPayload.actor,
+    toolClass: "read_only" as const,
+    capabilities: stableAuthorityPayload.capabilities,
+    authorityKind: "runtime_policy" as const,
+    authorityRevision:
+      unboundPrepared.stableToolIdentity!.approvalAuthorityRevision,
+    requestedAt,
+    expiresAt,
+  };
+  const prepared = parseDurablePreparedToolCallV1({
+    ...unboundPrepared,
+    approval: {
+      ...unboundPrepared.approval,
+      externalApprovalBinding: binding,
+    },
+  });
+  const interaction = projectHostedToolApprovalInteractionV4({
+    preparedToolCall: prepared,
+    requestId: "approval-restart-1",
+    reasonCode: "environment_policy",
+  });
+  const persisted = normalizeRuntimeStateForPersist({
+    runtime: { schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION },
+    agent: {
+      observations: [],
+      exec: {
+        substate: "wait_approval",
+        pendingApproval: {
+          version: "hosted_tool_approval_v2",
+          preparedInvocationId: prepared.callId,
+          approvalId: prepared.approval?.approvalId,
+          toolName: descriptor.toolId,
+          toolClass: "read_only",
+          expiresAt,
+          externalApprovalBinding: binding,
+        },
+      },
+      assistantText: interaction.prompt,
+      waitingFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        reason: "Approval required",
+        resumeInstruction: "Choose an approval decision.",
+        metadata: {
+          preparedToolCall: prepared,
+          approvalId: prepared.approval?.approvalId,
+          toolName: descriptor.toolId,
+          toolClass: "read_only",
+          requestedAt,
+          expiresAt,
+          approvalAuthorityKind: "runtime_policy",
+          reasonCode: "environment_policy",
+          externalApprovalBinding: binding,
+        },
+        interaction,
+      },
+    },
+  });
+  const restarted = JSON.parse(JSON.stringify(persisted)) as Record<string, unknown>;
+
+  assert.equal(validateRuntimeSessionState(restarted), undefined);
+  assert.deepEqual(readWaitState(restarted)?.interaction, interaction);
+  assert.deepEqual(
+    parsePreparedToolCallV1(readWaitState(restarted)?.metadata?.preparedToolCall),
+    prepared,
+  );
+  assert.deepEqual(readExecState(restarted).pendingApproval, {
+    version: "hosted_tool_approval_v2",
+    preparedInvocationId: prepared.callId,
+    approvalId: prepared.approval?.approvalId,
+    toolName: descriptor.toolId,
+    toolClass: "read_only",
+    expiresAt,
+    externalApprovalBinding: binding,
+  });
+  const rememberedInteraction = projectHostedToolApprovalInteractionV4({
+    preparedToolCall: prepared,
+    requestId: "approval-restart-1",
+    reasonCode: "environment_policy",
+  });
+  const rememberedRestart = structuredClone(restarted);
+  const rememberedAgent = rememberedRestart.agent as Record<string, unknown>;
+  rememberedAgent.assistantText = rememberedInteraction.prompt;
+  (rememberedAgent.waitingFor as Record<string, unknown>).interaction =
+    rememberedInteraction;
+  assert.equal(validateRuntimeSessionState(rememberedRestart), undefined);
+  assert.equal(rememberedInteraction.metadata, undefined);
+  assert.deepEqual(
+    readWaitState(rememberedRestart)?.interaction,
+    rememberedInteraction,
+  );
+  const downgraded = structuredClone(restarted);
+  const downgradedPending = (
+    (downgraded.agent as Record<string, unknown>).exec as Record<
+      string,
+      unknown
+    >
+  ).pendingApproval as Record<string, unknown>;
+  delete downgradedPending.version;
+  assert.equal(
+    validateRuntimeSessionState(downgraded)?.code,
+    "RUNTIME_STATE_INVALID",
+  );
+  const divergent = structuredClone(restarted);
+  const divergentPending = readExecState(divergent).pendingApproval as Record<
+    string,
+    unknown
+  >;
+  divergentPending.preparedToolCall = structuredClone(prepared);
+  const error = validateRuntimeSessionState(divergent);
+  assert.equal(error?.code, "RUNTIME_STATE_INVALID");
+  assert.equal(error?.details?.path, "state.agent.waitingFor.interaction");
+
+  const forgedCards = [
+    {
+      name: "prompt",
+      mutate(card: Record<string, unknown>) {
+        card.prompt = "Approve a harmless search?";
+      },
+    },
+    {
+      name: "coherent tool identity",
+      mutate(card: Record<string, unknown>) {
+        const approval = card.approval as Record<string, unknown>;
+        approval.toolName = "forged.tool";
+        approval.stableToolIdentity = {
+          ...(approval.stableToolIdentity as Record<string, unknown>),
+          toolId: "forged.tool",
+        };
+      },
+    },
+    {
+      name: "stable identity revision",
+      mutate(card: Record<string, unknown>) {
+        const approval = card.approval as Record<string, unknown>;
+        approval.stableToolIdentity = {
+          ...(approval.stableToolIdentity as Record<string, unknown>),
+          approvalAuthorityRevision: "forged-authority-revision",
+        };
+      },
+    },
+    {
+      name: "presentation",
+      mutate(card: Record<string, unknown>) {
+        const approval = card.approval as Record<string, unknown>;
+        approval.presentation = {
+          ...(approval.presentation as Record<string, unknown>),
+          title: "Approve a different operation",
+        };
+      },
+    },
+  ];
+  for (const forgedCard of forgedCards) {
+    const forged = structuredClone(restarted);
+    const card = (
+      (forged.agent as Record<string, unknown>).waitingFor as Record<
+        string,
+        unknown
+      >
+    ).interaction as Record<string, unknown>;
+    forgedCard.mutate(card);
+    const forgedError = validateRuntimeSessionState(forged);
+    assert.equal(forgedError?.code, "RUNTIME_STATE_INVALID", forgedCard.name);
+    assert.match(
+      String(forgedError?.details?.cause),
+      /canonical prepared invocation/u,
+      forgedCard.name,
+    );
+  }
+});
+
+test("runtime state restart preserves a canonical local exact-action approval", () => {
+  const approvalId = "local-approval-state-1";
+  const requestedAt = "2026-08-28T12:00:00.000Z";
+  const expiresAt = "2026-08-28T12:05:00.000Z";
+  const binding = {
+    version: "runner_external_approval_binding_v1",
+    approvalId,
+    threadId: "session-local",
+    runId: "run-local",
+    actionKey: "desktop.host.open",
+    payloadHash: hashCanonical({
+      kind: "url",
+      url: "http://localhost:4173",
+      application: "Safari",
+    }),
+    toolClass: "external_side_effect",
+    capabilities: ["external.confirm"],
+    authorityKind: "runtime_policy",
+    authorityRevision: "desktop-local-policy-v1",
+    requestedAt,
+    expiresAt,
+  };
+  const metadata = {
+    approvalId,
+    toolName: "desktop.host.open",
+    toolClass: "external_side_effect",
+    approvalPresentation: { title: "Open in Safari" },
+    requestedAt,
+    expiresAt,
+    externalApprovalBinding: binding,
+    prompt: "Review this action before it runs.",
+  };
+  const interaction = projectLocalToolApprovalInteractionV1({
+    metadata,
+    requestId: "request-local",
+  });
+  const interactionWithModeSwitch = {
+    ...interaction,
+    metadata: { modeSwitch: { mode: "build" } },
+  };
+  const state = normalizeRuntimeStateForPersist({
+    agent: {
+      observations: [],
+      exec: {
+        substate: "wait_approval",
+        pendingApproval: {
+          version: "local_tool_approval_v1",
+          approvalId,
+          toolName: "desktop.host.open",
+          toolClass: "external_side_effect",
+          expiresAt,
+          externalApprovalBinding: binding,
+        },
+      },
+      assistantText: interaction.prompt,
+      waitingFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        reason: "Approval required",
+        resumeInstruction: "Choose an approval decision.",
+        metadata,
+        interaction: interactionWithModeSwitch,
+      },
+    },
+  });
+
+  assert.equal(validateRuntimeSessionState(structuredClone(state)), undefined);
+  const forged = structuredClone(state);
+  const forgedAgent = forged.agent as Record<string, unknown>;
+  const forgedWait = forgedAgent.waitingFor as Record<string, unknown>;
+  const forgedInteraction = forgedWait.interaction as Record<string, unknown>;
+  const forgedApproval = forgedInteraction.approval as Record<string, unknown>;
+  forgedApproval.toolName = "desktop.host.open.other";
+  assert.equal(validateRuntimeSessionState(forged)?.code, "RUNTIME_STATE_INVALID");
+});
+
+test("runtime state accepts a canonical local approval without an external binding", () => {
+  const metadata = {
+    approvalId: "local-sandboxed-approval",
+    toolName: "filesystem.write_text",
+    toolClass: "sandboxed_only",
+    requestedAt: "2026-08-28T12:00:00.000Z",
+    expiresAt: "2026-08-28T12:05:00.000Z",
+  };
+  const interaction = projectLocalToolApprovalInteractionV1({
+    metadata,
+    requestId: "request-local-sandboxed",
+  });
+  const state = normalizeRuntimeStateForPersist({
+    agent: {
+      observations: [],
+      exec: {
+        substate: "wait_approval",
+        pendingApproval: {
+          version: "local_tool_approval_v1",
+          approvalId: metadata.approvalId,
+          toolName: metadata.toolName,
+          toolClass: metadata.toolClass,
+          expiresAt: metadata.expiresAt,
+        },
+      },
+      assistantText: interaction.prompt,
+      waitingFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        reason: "Approval required",
+        resumeInstruction: "Choose an approval decision.",
+        metadata,
+        interaction,
+      },
+    },
+  });
+
+  assert.equal(validateRuntimeSessionState(state), undefined);
+});
+
+test("runtime state codec upgrades an unversioned legacy local approval", () => {
+  const approvalId = "legacy-local-approval";
+  const requestedAt = "2026-08-28T12:00:00.000Z";
+  const expiresAt = "2026-08-28T12:05:00.000Z";
+  const binding = {
+    version: "runner_external_approval_binding_v1",
+    approvalId,
+    threadId: "session-legacy",
+    runId: "run-legacy",
+    actionKey: "desktop.host.open",
+    payloadHash: hashCanonical({ kind: "url", url: "http://localhost:4173" }),
+    toolClass: "external_side_effect",
+    capabilities: ["external.confirm"],
+    authorityKind: "runtime_policy",
+    authorityRevision: "legacy-policy",
+    requestedAt,
+    expiresAt,
+  };
+  const decoded = decodeRuntimeSessionState({
+    runtime: { schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION },
+    agent: {
+      observations: [],
+      assistantText: "Approve desktop.host.open?",
+      exec: {
+        substate: "wait_approval",
+        pendingApproval: {
+          approvalId,
+          toolName: "desktop.host.open",
+          toolClass: "external_side_effect",
+          expiresAt,
+          externalApprovalBinding: binding,
+        },
+      },
+      waitingFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        reason: "Approval required",
+        resumeInstruction: "Choose an approval decision.",
+        metadata: {
+          approvalId,
+          toolName: "desktop.host.open",
+          toolClass: "external_side_effect",
+          expiresAt,
+          externalApprovalBinding: binding,
+          prompt: "Approve desktop.host.open?",
+        },
+        interaction: {
+          version: "v1",
+          requestId: "legacy-request",
+          kind: "approval",
+          eventType: "user.approval",
+          prompt: "Approve desktop.host.open?",
+        },
+      },
+    },
+  });
+
+  assert.equal(
+    (readExecState(decoded).pendingApproval as Record<string, unknown>).version,
+    "local_tool_approval_v1",
+  );
+  assert.equal(
+    readWaitState(decoded)?.interaction?.version,
+    "runner_local_tool_approval_interaction_v1",
+  );
+  assert.equal(validateRuntimeSessionState(decoded), undefined);
+});
+
+test("runtime state rejects a mixed V2 interaction carrying legacy approval fields", () => {
+  const error = validateRuntimeSessionState({
+    runtime: { schemaVersion: CURRENT_RUNTIME_STATE_SCHEMA_VERSION },
+    agent: {
+      observations: [],
+      exec: {},
+      assistantText: "Approve?",
+      waitingFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        reason: "Approval required",
+        resumeInstruction: "Choose a decision.",
+        interaction: {
+          version: "runner_hosted_tool_approval_interaction_v2",
+          requestId: "mixed-1",
+          kind: "approval",
+          eventType: "user.approval",
+          prompt: "Approve?",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["decision"],
+            properties: {
+              decision: {
+                type: "string",
+                enum: ["decline", "approve_once"],
+              },
+            },
+          },
+          approval: {
+            toolCallId: "legacy-call",
+            toolName: "legacy.tool",
+            input: {},
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(error?.code, "RUNTIME_STATE_INVALID");
+  assert.equal(error?.details?.path, "state.agent.waitingFor.interaction");
 });
 
 test("runtime state validation rejects legacy execution ledger", () => {

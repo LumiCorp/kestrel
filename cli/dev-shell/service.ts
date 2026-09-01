@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import http from "node:http";
-import { appendFileSync, chmodSync, rmSync } from "node:fs";
+import { appendFileSync, chmodSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,7 +15,7 @@ import {
   resolveDefaultDevShellLogPath,
   resolveDefaultDevShellSocketPath,
 } from "../../src/devshell/paths.js";
-import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
+import { asRuntimeError, createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type {
   DevShellHealth,
   DevProcessStartInput,
@@ -28,8 +28,38 @@ import type {
   DevShellRunInput,
 } from "../../src/devshell/contracts.js";
 import { DEV_SHELL_SERVICE_PROTOCOL_VERSION } from "../../src/devshell/contracts.js";
+import {
+  readDevShellStoreBindingFromEnvironment,
+  type DevShellStoreBinding,
+} from "../../src/devshell/storeBinding.js";
+import {
+  readDevShellSocketObservation,
+  removeDevShellSocketIfUnchanged,
+} from "../../src/devshell/socketOwnership.js";
+import {
+  isMatchingDevShellRequestIdentity,
+  readDevShellRequestIdentity,
+} from "../../src/devshell/requestIdentity.js";
+import {
+  acquireDevShellBootstrapAuthority,
+  createDevShellBootstrapAuthorityToken,
+  releaseDevShellBootstrapAuthority,
+  verifyDevShellBootstrapAuthority,
+} from "../../src/devshell/bootstrapAuthority.js";
 
 async function main(): Promise<void> {
+  const authority = await acceptBootstrapAuthority();
+  try {
+    await runService(authority.authorityPath);
+  } finally {
+    const released = await releaseDevShellBootstrapAuthority(authority);
+    if (released === false) {
+      throw new Error("Developer shell bootstrap authority release failed.");
+    }
+  }
+}
+
+async function runService(authorityPath: string): Promise<void> {
   const socketPath = resolveSocketPath();
   const logPath = resolveLogPath();
   const statusPath = resolveStatusPath();
@@ -41,16 +71,17 @@ async function main(): Promise<void> {
     await mkdir(path.dirname(statusPath), { recursive: true });
     await writeBootstrapStatus(statusPath, { status: "booting" });
   }
-  rmSync(socketPath, { force: true });
-
   const repoRoot = resolveRepoRoot();
   const sqlitePath = path.join(path.dirname(socketPath), "store.db");
   let storeHandle: SqlExecutorStoreHandle;
   let supervisor: DevShellSupervisor;
+  let storeBinding: DevShellStoreBinding;
   try {
+    storeBinding = readDevShellStoreBindingFromEnvironment(process.env);
     ({ storeHandle, supervisor } = await createInitializedDevShellRuntime({
       repoRoot,
       sqlitePath,
+      storeBinding,
       onStoreQuarantined: ({ recoveryPath }) => {
         writeBootstrapLog(
           `warning: quarantined failed developer shell store at '${recoveryPath}' and retrying once`,
@@ -65,11 +96,51 @@ async function main(): Promise<void> {
     throw error;
   }
 
+  let shuttingDown = false;
+  const shutdownController = new AbortController();
+  let activeRequests = 0;
+  const drainWaiters = new Set<() => void>();
+  const beginRequest = (allowDuringShutdown: boolean): (() => void) | undefined => {
+    if (shuttingDown) return allowDuringShutdown ? () => {} : undefined;
+    activeRequests += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      activeRequests -= 1;
+      if (activeRequests === 0) {
+        for (const resolve of drainWaiters) resolve();
+        drainWaiters.clear();
+      }
+    };
+  };
+  const waitForRequestDrain = async (): Promise<void> => {
+    if (activeRequests === 0) return;
+    await new Promise<void>((resolve) => drainWaiters.add(resolve));
+  };
   const server = http.createServer((request, response) => {
-    void handleRequest(supervisor, request, response).catch((error) => {
-      writeJson(response, 500, {
-        error: asRuntimeError(error),
-      });
+    const isShutdownRequest = isServiceShutdownRequest(request);
+    const endRequest = beginRequest(isShutdownRequest);
+    if (endRequest === undefined) {
+      writeJson(response, 503, { error: "service_shutting_down" });
+      return;
+    }
+    void handleRequest(
+      supervisor,
+      storeBinding,
+      request,
+      response,
+      () => shutdown(),
+      () => shuttingDown,
+      shutdownController.signal,
+    ).catch((error) => {
+      if (response.headersSent === false && response.destroyed === false) {
+        writeJson(response, 500, {
+          error: asRuntimeError(error),
+        });
+      }
+    }).finally(() => {
+      endRequest();
     });
   });
 
@@ -89,51 +160,259 @@ async function main(): Promise<void> {
   } catch (error) {
     writeBootstrapLog(`warning: unable to chmod supervisor socket: ${toErrorMessage(error)}`);
   }
+  const socketObservation = await readDevShellSocketObservation(socketPath);
+  if (socketObservation === undefined) {
+    await writeBootstrapFailure(statusPath, "socket_bind_failed");
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    throw new Error("Developer shell service could not establish ownership of its local socket.");
+  }
   await writeBootstrapStatus(statusPath, {
     status: "ready",
     pid: process.pid,
   });
 
-  const shutdown = async () => {
-    await supervisor.close();
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
-    await storeHandle.close();
-    rmSync(socketPath, { force: true });
+  let shutdownPromise: Promise<void> | undefined;
+  let shutdownFailureReported = false;
+  const reportShutdownFailure = (error: unknown) => {
+    if (shutdownFailureReported) return;
+    shutdownFailureReported = true;
+    const message = formatDevShellBootstrapFailureMessage(error);
+    writeBootstrapLog(message);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
   };
-  const ownerWatch = startOwnerWatch(supervisor, shutdown);
+  const shutdown = () => {
+    shuttingDown = true;
+    shutdownController.abort();
+    shutdownPromise ??= (async () => {
+      await waitForRequestDrain();
+      await supervisor.close();
+      await storeHandle.close();
+      const cleanupAuthority = await acquireDevShellBootstrapAuthority({
+        authorityPath,
+        ownerToken: createDevShellBootstrapAuthorityToken(),
+        timeoutMs: 0,
+        pollIntervalMs: 1,
+      });
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      if (cleanupAuthority.status === "unavailable") {
+        if (cleanupAuthority.reason === "invalid_owner_evidence") {
+          throw new Error(
+            "Developer shell socket cleanup found invalid bootstrap authority evidence.",
+          );
+        }
+        writeBootstrapLog(
+          "warning: skipped developer shell socket cleanup because another bootstrap owner is active",
+        );
+        return;
+      }
+      let cleanupError: unknown;
+      try {
+        if (await cleanupAuthority.lease.verify() === false) {
+          throw new Error(
+            "Developer shell socket cleanup lost bootstrap authority.",
+          );
+        }
+        const socketCleanup = await removeDevShellSocketIfUnchanged(
+          socketPath,
+          socketObservation,
+        );
+        if (socketCleanup === "changed") {
+          writeBootstrapLog(
+            "warning: skipped developer shell socket cleanup because the path changed",
+          );
+        }
+      } catch (error) {
+        cleanupError = error;
+      }
+      let releaseError: unknown;
+      try {
+        if (await cleanupAuthority.lease.release() === false) {
+          throw new Error("Developer shell socket cleanup authority release failed.");
+        }
+      } catch (error) {
+        releaseError = error;
+      }
+      if (cleanupError !== undefined && releaseError !== undefined) {
+        throw new AggregateError(
+          [cleanupError, releaseError],
+          "Developer shell socket cleanup and authority release failed.",
+        );
+      }
+      if (cleanupError !== undefined) throw cleanupError;
+      if (releaseError !== undefined) throw releaseError;
+    })();
+    void shutdownPromise.catch(reportShutdownFailure);
+    return shutdownPromise;
+  };
+  const exitAfterShutdown = () => {
+    void shutdown().then(
+      () => process.exit(0),
+      (error) => {
+        reportShutdownFailure(error);
+        process.exit(1);
+      },
+    );
+  };
+  const ownerWatch = startOwnerWatch(supervisor, exitAfterShutdown);
 
   process.on("SIGINT", () => {
     clearInterval(ownerWatch);
-    void shutdown().finally(() => process.exit(0));
+    exitAfterShutdown();
   });
   process.on("SIGTERM", () => {
     clearInterval(ownerWatch);
-    void shutdown().finally(() => process.exit(0));
+    exitAfterShutdown();
   });
 }
 
-async function handleRequest(
+function isServiceShutdownRequest(request: http.IncomingMessage): boolean {
+  if (request.method !== "POST") return false;
+  try {
+    return new URL(request.url ?? "/", "http://unix").pathname === "/service/shutdown";
+  } catch {
+    return false;
+  }
+}
+
+async function acceptBootstrapAuthority(): Promise<{
+  authorityPath: string;
+  ownerPid: number;
+  ownerToken: string;
+}> {
+  const authorityPath = process.env.KESTREL_DEV_SHELL_AUTHORITY_PATH?.trim();
+  const ownerToken = process.env.KESTREL_DEV_SHELL_AUTHORITY_TOKEN?.trim();
+  if (authorityPath === undefined || authorityPath.length === 0 || ownerToken === undefined || ownerToken.length === 0) {
+    throw new Error("Developer shell bootstrap authority handshake is missing.");
+  }
+  await new Promise<void>((resolve, reject) => {
+    const onDisconnect = () => finish(new Error("Developer shell bootstrap client disconnected before authority handoff."));
+    const onMessage = (message: unknown) => {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        (message as { type?: unknown }).type === "kestrel-dev-shell-authority-proceed" &&
+        (message as { authorityToken?: unknown }).authorityToken === ownerToken
+      ) finish();
+    };
+    const finish = (error?: Error) => {
+      process.off("disconnect", onDisconnect);
+      process.off("message", onMessage);
+      if (error === undefined) resolve(); else reject(error);
+    };
+    process.once("disconnect", onDisconnect);
+    process.on("message", onMessage);
+  });
+  const valid = await verifyDevShellBootstrapAuthority({
+    authorityPath,
+    ownerPid: process.pid,
+    ownerToken,
+  });
+  if (valid === false) {
+    throw new Error("Developer shell bootstrap authority handoff identity is invalid.");
+  }
+  process.send?.({
+    type: "kestrel-dev-shell-authority-accepted",
+    authorityToken: ownerToken,
+  });
+  return { authorityPath, ownerPid: process.pid, ownerToken };
+}
+
+export async function handleRequest(
   supervisor: DevShellSupervisor,
+  storeBinding: DevShellStoreBinding,
   request: http.IncomingMessage,
   response: http.ServerResponse,
+  requestShutdown?: (() => Promise<void>) | undefined,
+  isShuttingDown: (() => boolean) = () => false,
+  shutdownSignal?: AbortSignal | undefined,
 ): Promise<void> {
   const method = request.method ?? "GET";
   const url = new URL(request.url ?? "/", "http://unix");
 
   if (method === "GET" && url.pathname === "/health") {
-    writeJson(response, 200, createHealthPayload());
+    if (isShuttingDown()) {
+      writeJson(response, 503, { error: "service_shutting_down" });
+      return;
+    }
+    const maintenanceFailure = supervisor.getMaintenanceFailure?.();
+    if (maintenanceFailure !== undefined) {
+      writeJson(response, 503, {
+        error: asRuntimeError(createRuntimeFailure(
+          "DEV_SHELL_SERVICE_UNAVAILABLE",
+          "Developer shell service maintenance failed and requires recovery.",
+          {
+            subsystem: "dev_shell",
+            failureReason: "maintenance_failed",
+            failurePhase: "service_maintenance",
+            nextSuggestedAction:
+              "The command did not run. Retry after the developer-shell storage service is healthy.",
+          },
+        )),
+      });
+      return;
+    }
+    writeJson(response, 200, createHealthPayload(storeBinding));
+    return;
+  }
+
+  const requestIdentity = readDevShellRequestIdentity(request.headers);
+  if (isMatchingDevShellRequestIdentity(requestIdentity, storeBinding) === false) {
+    writeJson(response, 409, {
+      error: asRuntimeError(createRuntimeFailure(
+        "DEV_SHELL_SERVICE_BINDING_MISMATCH",
+        "Developer shell request was rejected before dispatch because the service binding changed.",
+        {
+          subsystem: "dev_shell",
+          failureReason: "service_binding_mismatch",
+          failurePhase: "command_dispatch",
+          expectedServiceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+          expectedStoreDriver: storeBinding.driver,
+          expectedStoreBindingRevision: storeBinding.revision,
+          ...(requestIdentity === undefined
+            ? { receivedRequestIdentity: "missing_or_invalid" }
+            : {
+                receivedServiceProtocolVersion: requestIdentity.serviceProtocolVersion,
+                receivedStoreDriver: requestIdentity.storeDriver,
+                receivedStoreBindingRevision: requestIdentity.storeBindingRevision,
+              }),
+          nextSuggestedAction:
+            "The command or process action did not run. Retry so the client can bind the request to the current developer-shell service.",
+        },
+      )),
+    });
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/service/shutdown") {
+    if (requestShutdown === undefined) {
+      writeJson(response, 503, { error: "shutdown_unavailable" });
+      return;
+    }
+    const completion = requestShutdown();
+    writeJson(response, 202, { status: "shutting_down" });
+    void completion.catch(() => {});
+    return;
+  }
+
+  if (isShuttingDown()) {
+    writeJson(response, 503, { error: "service_shutting_down" });
     return;
   }
 
   if (method === "POST" && url.pathname === "/shell/run") {
-    writeJson(response, 200, await supervisor.runCommand(await readJson(request) as unknown as DevShellRunInput));
+    const body = await readJson(request, shutdownSignal) as unknown as DevShellRunInput;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
+    writeJson(response, 200, await supervisor.runCommand(body, { shutdownSignal }));
     return;
   }
 
   if (method === "POST" && url.pathname === "/processes/start") {
-    writeJson(response, 200, await supervisor.startProcess(await readJson(request) as unknown as DevProcessStartInput));
+    const body = await readJson(request, shutdownSignal) as unknown as DevProcessStartInput;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
+    writeJson(response, 200, await supervisor.startProcess(body, { shutdownSignal }));
     return;
   }
 
@@ -154,10 +433,11 @@ async function handleRequest(
   );
   if (method === "POST" && retentionPromotionMatch !== null) {
     const processId = decodeURIComponent(retentionPromotionMatch[1]!);
-    const body = await readJson(request) as unknown as Omit<
+    const body = await readJson(request, shutdownSignal) as unknown as Omit<
       DevProcessRetentionPromoteInput,
       "processId"
     >;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
     writeJson(
       response,
       200,
@@ -184,13 +464,15 @@ async function handleRequest(
   const action = match[2]!;
 
   if (method === "POST" && action === "retention") {
-    const body = await readJson(request) as unknown as Omit<DevProcessRetainInput, "processId">;
+    const body = await readJson(request, shutdownSignal) as unknown as Omit<DevProcessRetainInput, "processId">;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
     writeJson(response, 200, await supervisor.retainProcess({ ...body, processId }));
     return;
   }
 
   if (method === "POST" && action === "write") {
-    const body = await readJson(request) as unknown as Omit<DevProcessWriteInput, "processId">;
+    const body = await readJson(request, shutdownSignal) as unknown as Omit<DevProcessWriteInput, "processId">;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
     writeJson(response, 200, await supervisor.writeProcess({
       ...body,
       processId,
@@ -199,46 +481,72 @@ async function handleRequest(
   }
 
   if (method === "POST" && action === "write_and_read") {
-    const body = await readJson(request) as unknown as Omit<DevProcessWriteAndReadInput, "processId">;
-    writeJson(response, 200, await supervisor.writeAndReadProcess({
-      ...body,
-      processId,
-    }));
+    const body = await readJson(request, shutdownSignal) as unknown as Omit<DevProcessWriteAndReadInput, "processId">;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
+    writeJson(
+      response,
+      200,
+      await supervisor.writeAndReadProcess(
+        { ...body, processId },
+        { shutdownSignal },
+      ),
+    );
     return;
   }
 
   if (method === "GET" && action === "read") {
-    writeJson(response, 200, await supervisor.readProcess({
-      processId,
-      ...(url.searchParams.get("waitMs") !== null
-        ? { waitMs: Number.parseInt(url.searchParams.get("waitMs") ?? "", 10) }
-        : {}),
-      ...(url.searchParams.get("maxBytes") !== null
-        ? { maxBytes: Number.parseInt(url.searchParams.get("maxBytes") ?? "", 10) }
-        : {}),
-      ...(url.searchParams.get("cursor") !== null
-        ? { cursor: Number.parseInt(url.searchParams.get("cursor") ?? "", 10) }
-        : {}),
-    }));
+    writeJson(
+      response,
+      200,
+      await supervisor.readProcess({
+        processId,
+        ...(url.searchParams.get("waitMs") !== null
+          ? { waitMs: Number.parseInt(url.searchParams.get("waitMs") ?? "", 10) }
+          : {}),
+        ...(url.searchParams.get("maxBytes") !== null
+          ? { maxBytes: Number.parseInt(url.searchParams.get("maxBytes") ?? "", 10) }
+          : {}),
+        ...(url.searchParams.get("cursor") !== null
+          ? { cursor: Number.parseInt(url.searchParams.get("cursor") ?? "", 10) }
+          : {}),
+      }, { shutdownSignal }),
+    );
     return;
   }
 
   if (method === "POST" && action === "stop") {
-    const body = await readJson(request) as unknown as Omit<DevProcessStopInput, "processId">;
-    writeJson(response, 200, await supervisor.stopProcess({
-      ...body,
-      processId,
-    }));
+    const body = await readJson(request, shutdownSignal) as unknown as Omit<DevProcessStopInput, "processId">;
+    if (rejectShuttingDownRequest(response, isShuttingDown)) return;
+    writeJson(
+      response,
+      200,
+      await supervisor.stopProcess(
+        { ...body, processId },
+        { shutdownSignal },
+      ),
+    );
     return;
   }
 
   writeJson(response, 405, { error: "method_not_allowed" });
 }
 
-function createHealthPayload(): DevShellHealth {
+function rejectShuttingDownRequest(
+  response: http.ServerResponse,
+  isShuttingDown: () => boolean,
+): boolean {
+  if (isShuttingDown() === false) return false;
+  writeJson(response, 503, { error: "service_shutting_down" });
+  return true;
+}
+
+function createHealthPayload(storeBinding: DevShellStoreBinding): DevShellHealth {
   return {
     ok: true,
     serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    servicePid: process.pid,
+    storeDriver: storeBinding.driver,
+    storeBindingRevision: storeBinding.revision,
     capabilities: {
       processWriteAndRead: true,
       processRetentionLeases: true,
@@ -247,16 +555,26 @@ function createHealthPayload(): DevShellHealth {
   };
 }
 
-async function readJson(request: http.IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+async function readJson(
+  request: http.IncomingMessage,
+  signal?: AbortSignal | undefined,
+): Promise<Record<string, unknown>> {
+  const abortRequest = () => request.destroy(new Error("Developer shell service is shutting down."));
+  if (signal?.aborted === true) abortRequest();
+  signal?.addEventListener("abort", abortRequest, { once: true });
+  try {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    }
+    const raw = Buffer.concat(chunks).toString("utf8").trim();
+    if (raw.length === 0) {
+      return {};
+    }
+    return JSON.parse(raw) as Record<string, unknown>;
+  } finally {
+    signal?.removeEventListener("abort", abortRequest);
   }
-  const raw = Buffer.concat(chunks).toString("utf8").trim();
-  if (raw.length === 0) {
-    return {};
-  }
-  return JSON.parse(raw) as Record<string, unknown>;
 }
 
 function writeJson(
@@ -375,7 +693,7 @@ function buildBootstrapStatus(payload: Record<string, unknown>): Record<string, 
 
 function startOwnerWatch(
   supervisor: DevShellSupervisor,
-  shutdown: () => Promise<void>,
+  shutdownAndExit: () => void,
 ): NodeJS.Timeout {
   const ownerPid = parsePositiveInt(process.env.KESTREL_DEV_SHELL_OWNER_PID);
   const timer = setInterval(() => {
@@ -383,7 +701,7 @@ function startOwnerWatch(
       return;
     }
     clearInterval(timer);
-    void shutdown().finally(() => process.exit(0));
+    shutdownAndExit();
   }, 5000);
   timer.unref();
   return timer;
@@ -415,9 +733,14 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.stack ?? error.message : String(error);
 }
 
-void main().catch((error) => {
-  const message = formatDevShellBootstrapFailureMessage(error);
-  writeBootstrapLog(message);
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
-});
+const invokedEntrypoint = process.argv[1] === undefined
+  ? undefined
+  : path.resolve(process.argv[1]);
+if (invokedEntrypoint === fileURLToPath(import.meta.url)) {
+  void main().catch((error) => {
+    const message = formatDevShellBootstrapFailureMessage(error);
+    writeBootstrapLog(message);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  });
+}

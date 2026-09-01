@@ -9,6 +9,7 @@ const stylesPath = path.join(testDir, "..", "renderer", "src", "styles.css");
 const appPath = path.join(testDir, "..", "renderer", "src", "DesktopApp.tsx");
 const explorerPath = path.join(testDir, "..", "renderer", "src", "ConversationExplorer.tsx");
 const timelinePath = path.join(testDir, "..", "renderer", "src", "ConversationTimeline.tsx");
+const collaboratorInspectorPath = path.join(testDir, "..", "renderer", "src", "CollaboratorInspector.tsx");
 const browserPreviewPath = path.join(testDir, "..", "renderer", "src", "browserPreview.ts");
 const rendererEntryPath = path.join(testDir, "..", "renderer", "src", "main.tsx");
 const rendererBoundaryPath = path.join(testDir, "..", "renderer", "src", "RendererErrorBoundary.tsx");
@@ -117,6 +118,22 @@ test("conversation workspace omits the Details drawer", async () => {
   assert.doesNotMatch(app, /ContextSidebar|context-sidebar|details-button|inspectorOpen|inspectorWidth/u);
   assert.doesNotMatch(styles, /\.workspace\.with-inspector|--inspector-width|\.details-button/u);
   assert.doesNotMatch(main, /Toggle File Inspector|toggle-right-sidebar/u);
+});
+
+test("collaborator history uses a bounded split pane and a focus-contained narrow modal", async () => {
+  const [app, styles, inspector] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readDesktopStyles(),
+    readFile(collaboratorInspectorPath, "utf8"),
+  ]);
+
+  assert.match(app, /\[activeThread\?\.id\]/u);
+  assert.match(app, /collaboratorInspectorModal/u);
+  assert.match(app, /<CollaboratorInspector[\s\S]*?modal=\{collaboratorInspectorModal\}/u);
+  assert.match(inspector, /aria-modal=\{modal \? true : undefined\}/u);
+  assert.match(inspector, /keepFocusInsideDialog/u);
+  assert.match(styles, /min\(var\(--collaborator-inspector-width, 360px\), 40vw\)/u);
+  assert.match(styles, /\.collaborator-inspector-scrim\s*\{[^}]*position:\s*fixed;/su);
 });
 
 test("background attachment hydration waits for healthy Core and stays non-blocking", async () => {

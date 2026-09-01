@@ -72,6 +72,8 @@ export interface LocalCoreResolvedModelProfile {
 export interface LocalCoreRuntimeEnvironmentSnapshot {
   readonly modelProvider: ModelProviderId;
   readonly model: string;
+  /** Core-owned configuration, kept non-enumerable with the environment views. */
+  readonly runtimeConfiguration?: LocalCoreRuntimeConfigurationV1 | undefined;
   /** Canonical selected-provider configuration and its available credentials. */
   readonly modelEnv: Readonly<NodeJS.ProcessEnv>;
   /** Canonical Tavily configuration and its available credentials. */
@@ -95,11 +97,15 @@ export interface CreateLocalCoreRuntimeEnvironmentResolverInput {
   readonly baseEnv: Readonly<NodeJS.ProcessEnv>;
   readonly runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
   readonly credentialStore?: Pick<LocalCoreCredentialStore, "get"> | undefined;
-  readonly mcpCredentialBindings?: readonly {
-    readonly credentialId: LocalCoreCredentialId;
-    readonly envKey: string;
-  }[] | undefined;
-  readonly mcpEnvironmentOptions?: Readonly<Partial<Record<"SHELL" | "PATH", string>>> | undefined;
+  readonly mcpCredentialBindings?:
+    | readonly {
+        readonly credentialId: LocalCoreCredentialId;
+        readonly envKey: string;
+      }[]
+    | undefined;
+  readonly mcpEnvironmentOptions?:
+    | Readonly<Partial<Record<"SHELL" | "PATH", string>>>
+    | undefined;
 }
 
 export interface LocalCoreRuntimeEnvironmentResolver {
@@ -184,10 +190,14 @@ export async function createLocalCoreRuntimeEnvironmentResolver(
   >;
   const credentialStore = input.credentialStore;
   if (credentialStore !== undefined) {
-    const credentialIds = [...new Set<LocalCoreCredentialId>([
-      ...LOCAL_CORE_RUNTIME_CREDENTIAL_IDS,
-      ...(input.mcpCredentialBindings?.map((binding) => binding.credentialId) ?? []),
-    ])];
+    const credentialIds = [
+      ...new Set<LocalCoreCredentialId>([
+        ...LOCAL_CORE_RUNTIME_CREDENTIAL_IDS,
+        ...(input.mcpCredentialBindings?.map(
+          (binding) => binding.credentialId,
+        ) ?? []),
+      ]),
+    ];
     const entries = await Promise.all(
       credentialIds.map(
         async (credentialId) =>
@@ -232,7 +242,9 @@ function buildLocalCoreRuntimeEnvironmentSnapshot(input: {
     readonly credentialId: LocalCoreCredentialId;
     readonly envKey: string;
   }[];
-  readonly mcpEnvironmentOptions: Readonly<Partial<Record<"SHELL" | "PATH", string>>>;
+  readonly mcpEnvironmentOptions: Readonly<
+    Partial<Record<"SHELL" | "PATH", string>>
+  >;
 }): LocalCoreRuntimeEnvironmentSnapshot {
   const modelProvider = parseModelProvider(input.resolvedProfile.modelProvider);
   const model = requireNonEmpty(
@@ -293,9 +305,13 @@ function buildLocalCoreRuntimeEnvironmentSnapshot(input: {
     const value = input.credentials[binding.credentialId];
     return value === undefined ? [] : [{ key: binding.envKey, value }];
   });
-  const mcpEnv = mcpCredentials.length > 0
-    ? createArbitrarySecretBearingEnvironmentView(mcpBaseEnv, mcpCredentials)
-    : createRuntimeEnvironmentView(mcpBaseEnv, !input.credentialStoreIsAuthoritative);
+  const mcpEnv =
+    mcpCredentials.length > 0
+      ? createArbitrarySecretBearingEnvironmentView(mcpBaseEnv, mcpCredentials)
+      : createRuntimeEnvironmentView(
+          mcpBaseEnv,
+          !input.credentialStoreIsAuthoritative,
+        );
 
   const snapshot = {
     modelProvider,
@@ -303,12 +319,19 @@ function buildLocalCoreRuntimeEnvironmentSnapshot(input: {
   } as {
     readonly modelProvider: ModelProviderId;
     readonly model: string;
+    readonly runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
     readonly modelEnv: Readonly<NodeJS.ProcessEnv>;
     readonly internetEnv: Readonly<NodeJS.ProcessEnv>;
     readonly runtimeEnv: Readonly<NodeJS.ProcessEnv>;
     readonly mcpEnv: Readonly<NodeJS.ProcessEnv>;
   };
   defineEnvironmentView(snapshot, "modelEnv", modelEnv);
+  Object.defineProperty(snapshot, "runtimeConfiguration", {
+    value: input.runtimeConfiguration,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
   defineEnvironmentView(snapshot, "internetEnv", internetEnv);
   defineEnvironmentView(snapshot, "runtimeEnv", runtimeEnv);
   defineEnvironmentView(snapshot, "mcpEnv", mcpEnv);

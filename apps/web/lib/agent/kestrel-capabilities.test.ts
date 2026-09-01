@@ -9,6 +9,7 @@ import {
 import {
   assertRunnerFileThreadBinding,
   buildKestrelOneCapabilityDescriptors,
+  parseEmailAttachmentCapabilityRequest,
   parseRunnerKnowledgeCapabilityRequest,
 } from "@/lib/agent/kestrel-capabilities";
 
@@ -41,6 +42,25 @@ test("Thread capability descriptors expose canonical file search and open tools"
     "kestrel_one.search_knowledge_documents",
   ]);
   assert.match(capabilities[0]?.endpoint.url ?? "", /threadId=thread_123/u);
+});
+
+test("receipt-scoped capability descriptors expose only the opaque attachment reader", () => {
+  const capabilities = buildKestrelOneCapabilityDescriptors({
+    request: new Request("https://app.example.test/api/threads/thread_123"),
+    threadId: "thread_123",
+    emailAttachmentReadAvailable: true,
+  });
+  const attachment = capabilities.find(
+    (capability) => capability.name === "kestrel_one.email_get_attachment",
+  );
+  assert.deepEqual(attachment?.input, {
+    type: "object",
+    required: ["attachmentId"],
+    properties: {
+      attachmentId: { type: "string", minLength: 1, maxLength: 200 },
+    },
+  });
+  assert.equal(attachment?.endpoint.url, "https://app.example.test/api/kestrel/tools/email/get-attachment");
 });
 
 test("parseRunnerKnowledgeCapabilityRequest accepts runner bearer auth and tenant", () => {
@@ -136,7 +156,7 @@ test("parseRunnerKnowledgeCapabilityRequest accepts a tenant-bound Environment t
       agentId: "kestrel-one",
       flyAppName: "app-1",
       flyMachineId: "machine-1",
-      capabilities: ["knowledge.search"],
+      capabilities: ["knowledge.search", "kestrel.tools.invoke"],
       issuedAt: now,
       expiresAt: now + 300,
       nonce: "nonce-1",
@@ -187,6 +207,41 @@ test("parseRunnerKnowledgeCapabilityRequest accepts a tenant-bound Environment t
         },
       }),
     })
+  );
+
+  assert.deepEqual(
+    parseEmailAttachmentCapabilityRequest({
+      environmentTicketPublicKey: publicKey,
+      request,
+    }),
+    {
+      version: 1,
+      audience: ENVIRONMENT_ROUTER_AUDIENCE,
+      organizationId: "org_123",
+      environmentId: "environment-1",
+      workspaceId: "workspace-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      actorId: "user-1",
+      agentId: "kestrel-one",
+      flyAppName: "app-1",
+      flyMachineId: "machine-1",
+      capabilities: ["knowledge.search", "kestrel.tools.invoke"],
+      issuedAt: now,
+      expiresAt: now + 300,
+      nonce: "nonce-1",
+    },
+  );
+  assert.throws(() =>
+    parseEmailAttachmentCapabilityRequest({
+      environmentTicketPublicKey: publicKey,
+      request: new Request(request, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-kestrel-tenant-id": "org_other",
+        },
+      }),
+    }),
   );
 });
 

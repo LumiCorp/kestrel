@@ -54,6 +54,16 @@
       "dockerfile": "deploy/fly/kestrel-one-runpod-worker/Dockerfile",
       "smoke": "deploy/fly/kestrel-one-runpod-worker/smoke.sh",
       "rollout": "global-app"
+    },
+    {
+      "role": "browser-worker",
+      "publisher": "fly",
+      "repository": "registry.fly.io/kestrel-one-browser-worker",
+      "app": "kestrel-one-browser-worker",
+      "dockerfile": "deploy/fly/kestrel-one-browser-worker/Dockerfile",
+      "prepare": "browser:runtime:stage:hosted",
+      "smoke": "deploy/fly/kestrel-one-browser-worker/smoke.sh",
+      "rollout": "session"
     }
   ]
 }

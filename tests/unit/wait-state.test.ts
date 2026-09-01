@@ -7,6 +7,7 @@ import {
   readActiveWaitState,
   readWaitResumeStepAgent,
 } from "../../src/runtime/waitState.js";
+import type { RuntimeLocalToolApprovalInteractionV1 } from "../../src/kestrel/contracts/execution.js";
 
 
 test("readActiveWaitState reads canonical waitingFor and ignores legacy shapes", () => {
@@ -76,6 +77,45 @@ test("readActiveWaitState ignores legacy nextAction and exec wait shapes", () =>
   assert.equal(wait, undefined);
 });
 
+test("readActiveWaitState preserves canonical local tool approvals", () => {
+  const interaction = {
+    version: "runner_local_tool_approval_interaction_v1",
+    requestId: "request-local-approval",
+    kind: "approval",
+    eventType: "user.approval",
+    prompt: "Review this action before it runs.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["decision"],
+      properties: {
+        decision: {
+          type: "string",
+          enum: ["decline", "approve_once"],
+        },
+      },
+    },
+    approval: {
+      approvalId: "local-approval",
+      toolName: "desktop.host.open",
+      requestedAt: "2026-08-28T12:00:00.000Z",
+      expiresAt: "2026-08-28T12:05:00.000Z",
+    },
+  } satisfies RuntimeLocalToolApprovalInteractionV1;
+  const wait = readActiveWaitState({
+    waitingFor: buildCanonicalWaitingFor({
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        interaction,
+      },
+      resumeStepAgent: "agent.exec.wait_approval",
+    }),
+  });
+
+  assert.deepEqual(wait?.interaction, interaction);
+});
+
 test("readActiveWaitState does not fall back to legacy exec and top-level wait state", () => {
   const execWait = readActiveWaitState({
     exec: {
@@ -125,7 +165,21 @@ test("buildWaitResumeToken is stable across metadata key order", () => {
   });
 
   assert.equal(left, right);
-  assert.match(left, /agent\.exec\.dispatch/u);
+  assert.match(left, /^sha256:[0-9a-f]{64}$/u);
+});
+
+test("wait resume tokens remain fixed-size for oversized prepared interactions", () => {
+  const token = buildWaitResumeToken({
+    waitFor: {
+      kind: "approval",
+      eventType: "user.approval",
+      metadata: { command: "x".repeat(10_000) },
+    },
+    resumeStepAgent: "agent.exec.dispatch",
+  });
+
+  assert.equal(token.length, 71);
+  assert.match(token, /^sha256:[0-9a-f]{64}$/u);
 });
 
 test("canonical waits preserve every runtime kind and timeout", () => {

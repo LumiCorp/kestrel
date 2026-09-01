@@ -58,7 +58,6 @@ export class RuntimeDelegationService implements DelegationServicePort {
     const childDepth = parentDepth !== undefined ? parentDepth + 1 : 1;
     const maxDepth = normalizePolicyInteger(this.profile.delegation?.maxDepth) ?? DEFAULT_DELEGATION_MAX_DEPTH;
     assertDelegationDepth({ depth: childDepth, maxDepth });
-    this.assertDelegationCapacity(input.parentSessionId);
 
     const now = new Date().toISOString();
     const taskId = `task-${randomUUID()}`;
@@ -344,18 +343,6 @@ export class RuntimeDelegationService implements DelegationServicePort {
     }
   }
 
-  private assertDelegationCapacity(parentSessionId: string): void {
-    const active = [...this.tasks.values()].filter((entry) => (
-        entry.task.parentSessionId === parentSessionId &&
-        (entry.task.status === "PENDING" ||
-          entry.task.status === "RUNNING" ||
-          entry.task.status === "WAITING")
-      ));
-    const maxConcurrent = this.profile.delegation?.maxConcurrentChildSessions ?? 2;
-    if (active.length >= maxConcurrent) {
-      throw new Error(`Delegation limit reached (${maxConcurrent} active child sessions).`);
-    }
-  }
 }
 
 function readAssistantText(value: unknown): string | null {

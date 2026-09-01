@@ -4,8 +4,7 @@ import { projectSafeThreadInteraction } from "./interaction-projection";
 
 test("safe interaction projection exposes lifecycle state without internal evidence", () => {
   const now = new Date();
-  const projected = projectSafeThreadInteraction(
-    {
+  const interaction = {
       id: "interaction-1",
       requestId: "request-1",
       organizationId: "organization-secret",
@@ -19,7 +18,7 @@ test("safe interaction projection exposes lifecycle state without internal evide
       prompt: "Approve?",
       status: "failed",
       requestEnvelope: { approval: { toolName: "kestrel_one.email_send" } },
-      responseEnvelope: { approved: true },
+      responseEnvelope: { decision: "approve_once" },
       runtimeApprovalId: "runtime-secret",
       sourceRuntimeRunId: "runner-secret",
       responseFailureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
@@ -31,7 +30,9 @@ test("safe interaction projection exposes lifecycle state without internal evide
       resumedAt: now,
       createdAt: now,
       updatedAt: now,
-    },
+    } satisfies Parameters<typeof projectSafeThreadInteraction>[0];
+  const projected = projectSafeThreadInteraction(
+    interaction,
     "response-1",
   );
   assert.equal(projected.approvalOutcome?.retryEligible, false);
@@ -40,4 +41,31 @@ test("safe interaction projection exposes lifecycle state without internal evide
     JSON.stringify(projected),
     /runtime-secret|runner-secret|raw runtime failure secret|organization-secret|actor-secret/u,
   );
+
+  const declined = projectSafeThreadInteraction({
+    ...interaction,
+    status: "resolved",
+    responseEnvelope: { decision: "decline" },
+    responseFailureCode: null,
+    effectStatus: "not_started",
+  }, "response-declined");
+  assert.equal(declined.approvalOutcome?.decision, "denied");
+  assert.equal(declined.approvalOutcome?.authorizationState, "denied");
+
+  const expired = projectSafeThreadInteraction({
+    ...interaction,
+    responseEnvelope: null,
+    responseFailureCode: "EXTERNAL_APPROVAL_EXPIRED",
+  }, null);
+  assert.equal(expired.approvalOutcome?.decision, "expired");
+  assert.equal(expired.approvalOutcome?.authorizationState, "expired");
+
+  const committed = projectSafeThreadInteraction({
+    ...interaction,
+    status: "resolved",
+    responseEnvelope: { decision: "approve_once" },
+    responseFailureCode: null,
+    effectStatus: "committed",
+  }, "response-committed");
+  assert.equal(committed.approvalOutcome?.effectState, "committed");
 });

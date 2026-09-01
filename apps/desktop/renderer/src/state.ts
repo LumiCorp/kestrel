@@ -47,6 +47,8 @@ export interface RendererTranscriptLine {
     name: string;
     childSessionId: string;
     sender: "kestrel" | "collaborator" | "system";
+    dialogStatus?: "open" | "closed" | undefined;
+    dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
     status?: "failed" | "cancelled" | undefined;
   } | undefined;
   terminal?: { runId: string; turnId?: string | undefined } | undefined;
@@ -1112,6 +1114,8 @@ function parseDialogTranscriptData(value: unknown): RendererTranscriptLine["dial
     name: dialog.name,
     childSessionId: dialog.childSessionId,
     sender: dialog.sender,
+    ...(dialog.dialogStatus === "open" || dialog.dialogStatus === "closed" ? { dialogStatus: dialog.dialogStatus } : {}),
+    ...(dialog.dialogActivity === "idle" || dialog.dialogActivity === "working" || dialog.dialogActivity === "waiting" || dialog.dialogActivity === "interrupted" ? { dialogActivity: dialog.dialogActivity } : {}),
     ...(dialog.status === "failed" || dialog.status === "cancelled" ? { status: dialog.status } : {}),
   };
 }

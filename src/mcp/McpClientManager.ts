@@ -82,6 +82,10 @@ export class McpClientManager {
   private readonly clientReferenceCounts = new Map<unknown, number>();
   private readonly retiredClients = new Set<unknown>();
   private readonly closedClients = new Set<unknown>();
+  private readonly clientReleaseChains = new Map<unknown, Promise<void>>();
+  private readonly clientCloseAttempts = new Map<unknown, Promise<void>>();
+  private closeAttempt: Promise<void> | undefined;
+  private retireAttempt: Promise<void> | undefined;
   private closing = false;
   private closed = false;
 
@@ -125,7 +129,6 @@ export class McpClientManager {
   }
 
   private async buildAndActivateRefresh(): Promise<McpStatusSnapshot> {
-
     if (this.servers.length === 0) {
       const next = {
         healthy: true,
@@ -291,9 +294,23 @@ export class McpClientManager {
       );
     }
     let references = 1;
+    let releaseChain = Promise.resolve();
     this.retainClient(handle.client);
     return {
-      call: <T>(input: unknown) => callToolHandle<T>(handle, input),
+      call: <T>(input: unknown) => {
+        if (
+          references < 1 ||
+          this.closing ||
+          this.closedClients.has(handle.client) ||
+          this.clientCloseAttempts.has(handle.client)
+        ) {
+          throw createRuntimeFailure(
+            "MCP_PIN_RELEASED",
+            `Pinned MCP tool '${namespacedToolName}' is no longer callable.`,
+          );
+        }
+        return callToolHandle<T>(handle, input);
+      },
       retain: () => {
         if (references < 1) {
           throw createRuntimeFailure(
@@ -301,18 +318,34 @@ export class McpClientManager {
             `Pinned MCP tool '${namespacedToolName}' was already released.`,
           );
         }
-        references += 1;
         this.retainClient(handle.client);
+        references += 1;
       },
       release: async () => {
-        if (references < 1) return;
-        references -= 1;
-        await this.releaseClient(handle.client);
+        const release = releaseChain.then(async () => {
+          if (references < 1) return;
+          await this.releaseClient(handle.client);
+          references -= 1;
+        });
+        releaseChain = release.catch(() => {});
+        await release;
       },
     };
   }
 
   private retainClient(client: unknown): void {
+    if (
+      this.closing ||
+      this.retiredClients.has(client) ||
+      this.closedClients.has(client) ||
+      this.clientReleaseChains.has(client) ||
+      this.clientCloseAttempts.has(client)
+    ) {
+      throw createRuntimeFailure(
+        "MCP_CLIENT_RETIRED",
+        "MCP client ownership cannot be retained after retirement or cleanup has started.",
+      );
+    }
     this.clientReferenceCounts.set(
       client,
       (this.clientReferenceCounts.get(client) ?? 0) + 1,
@@ -320,10 +353,27 @@ export class McpClientManager {
   }
 
   private async releaseClient(client: unknown): Promise<void> {
+    const previous = this.clientReleaseChains.get(client) ?? Promise.resolve();
+    const release = previous.then(() => this.releaseClientReference(client));
+    const tail = release.catch(() => {});
+    this.clientReleaseChains.set(client, tail);
+    try {
+      await release;
+    } finally {
+      if (this.clientReleaseChains.get(client) === tail) {
+        this.clientReleaseChains.delete(client);
+      }
+    }
+  }
+
+  private async releaseClientReference(client: unknown): Promise<void> {
     const next = Math.max(0, (this.clientReferenceCounts.get(client) ?? 0) - 1);
     if (next === 0) {
+      if (this.retiredClients.has(client)) {
+        await this.closeClient(client);
+        this.retiredClients.delete(client);
+      }
       this.clientReferenceCounts.delete(client);
-      if (this.retiredClients.delete(client)) await this.closeClient(client);
       return;
     }
     this.clientReferenceCounts.set(client, next);
@@ -340,13 +390,17 @@ export class McpClientManager {
     this.toolHandles = toolHandles;
     this.serverHandles = serverHandles;
     this.snapshot = snapshot;
-    await Promise.all([...previousClients].map(async (client) => {
-      if ((this.clientReferenceCounts.get(client) ?? 0) > 0) {
-        this.retiredClients.add(client);
-      } else {
-        await this.closeClient(client);
-      }
-    }));
+    await Promise.all(
+      [...previousClients].map(async (client) => {
+        if ((this.clientReferenceCounts.get(client) ?? 0) > 0) {
+          this.retiredClients.add(client);
+        } else {
+          this.retiredClients.add(client);
+          await this.closeClient(client);
+          this.retiredClients.delete(client);
+        }
+      }),
+    );
   }
 
   private retainActiveAfterRefreshFailure(
@@ -361,10 +415,13 @@ export class McpClientManager {
       ...this.snapshot,
       refreshDiagnostic: {
         code,
-        message: candidate.servers
-          .filter((server) => server.enabled && !server.healthy)
-          .map((server) => `${server.serverId}: ${server.error ?? "unhealthy"}`)
-          .join(", ") || "MCP refresh candidate was rejected.",
+        message:
+          candidate.servers
+            .filter((server) => server.enabled && !server.healthy)
+            .map(
+              (server) => `${server.serverId}: ${server.error ?? "unhealthy"}`,
+            )
+            .join(", ") || "MCP refresh candidate was rejected.",
         checkedAt: candidate.checkedAt,
       },
     };
@@ -373,9 +430,24 @@ export class McpClientManager {
 
   private async closeClient(client: unknown): Promise<void> {
     if (this.closedClients.has(client)) return;
-    this.closedClients.add(client);
-    const close = maybeReadFunction(client, "close");
-    if (close !== undefined) await Promise.resolve(close.call(client));
+    const existing = this.clientCloseAttempts.get(client);
+    if (existing !== undefined) {
+      await existing;
+      return;
+    }
+    const attempt = Promise.resolve().then(async () => {
+      const close = maybeReadFunction(client, "close");
+      if (close !== undefined) await Promise.resolve(close.call(client));
+      this.closedClients.add(client);
+    });
+    this.clientCloseAttempts.set(client, attempt);
+    try {
+      await attempt;
+    } finally {
+      if (this.clientCloseAttempts.get(client) === attempt) {
+        this.clientCloseAttempts.delete(client);
+      }
+    }
   }
 
   private async closeActiveAndRetiredClients(): Promise<void> {
@@ -383,11 +455,23 @@ export class McpClientManager {
       ...[...this.serverHandles.values()].map((handle) => handle.client),
       ...this.retiredClients,
     ]);
-    await Promise.all([...clients].map((client) => this.closeClient(client)));
-    this.serverHandles.clear();
-    this.toolHandles.clear();
-    this.retiredClients.clear();
-    this.clientReferenceCounts.clear();
+    const results = await Promise.allSettled(
+      [...clients].map(async (client) => {
+        await this.closeClient(client);
+        for (const [serverId, handle] of this.serverHandles) {
+          if (handle.client === client) this.serverHandles.delete(serverId);
+        }
+        for (const [toolName, handle] of this.toolHandles) {
+          if (handle.client === client) this.toolHandles.delete(toolName);
+        }
+        this.retiredClients.delete(client);
+        this.clientReferenceCounts.delete(client);
+      }),
+    );
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failure !== undefined) throw failure.reason;
   }
 
   statusSnapshot(): McpStatusSnapshot {
@@ -430,32 +514,63 @@ export class McpClientManager {
 
   async close(): Promise<void> {
     if (this.closed) return;
+    if (this.closeAttempt !== undefined) {
+      await this.closeAttempt;
+      return;
+    }
     this.closing = true;
-    const refresh = this.refreshInFlight;
-    if (refresh !== undefined) await refresh.catch(() => {});
-    await this.closeActiveAndRetiredClients();
-    this.closed = true;
-    this.closing = false;
+    const attempt = (async () => {
+      const refresh = this.refreshInFlight;
+      if (refresh !== undefined) await refresh.catch(() => {});
+      await this.closeActiveAndRetiredClients();
+      this.closed = true;
+      this.closing = false;
+    })();
+    this.closeAttempt = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (this.closeAttempt === attempt) this.closeAttempt = undefined;
+    }
   }
 
   async retire(): Promise<void> {
-    if (this.closed || this.closing) return;
+    if (this.closed) return;
+    if (this.retireAttempt !== undefined) {
+      await this.retireAttempt;
+      return;
+    }
     this.closing = true;
-    const clients = new Set(
-      [...this.serverHandles.values()].map((handle) => handle.client),
-    );
-    this.serverHandles.clear();
-    this.toolHandles.clear();
-    await Promise.all([...clients].map(async (client) => {
-      if ((this.clientReferenceCounts.get(client) ?? 0) > 0) {
-        this.retiredClients.add(client);
-      } else {
-        await this.closeClient(client);
+    const attempt = (async () => {
+      const clients = new Set([
+        ...[...this.serverHandles.values()].map((handle) => handle.client),
+        ...this.retiredClients,
+      ]);
+      await Promise.all(
+        [...clients].map(async (client) => {
+          this.retiredClients.add(client);
+          for (const [serverId, handle] of this.serverHandles) {
+            if (handle.client === client) this.serverHandles.delete(serverId);
+          }
+          for (const [toolName, handle] of this.toolHandles) {
+            if (handle.client === client) this.toolHandles.delete(toolName);
+          }
+          if ((this.clientReferenceCounts.get(client) ?? 0) > 0) return;
+          await this.closeClient(client);
+          this.retiredClients.delete(client);
+          this.clientReferenceCounts.delete(client);
+        }),
+      );
+      if (this.clientReferenceCounts.size === 0) {
+        this.closed = true;
+        this.closing = false;
       }
-    }));
-    if (this.clientReferenceCounts.size === 0) {
-      this.closed = true;
-      this.closing = false;
+    })();
+    this.retireAttempt = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (this.retireAttempt === attempt) this.retireAttempt = undefined;
     }
   }
 
@@ -490,10 +605,16 @@ export class McpClientManager {
       );
       if (asRecord(capabilities?.resources)) {
         const listResources = maybeReadFunction(client, "listResources");
-        const listTemplates = maybeReadFunction(client, "listResourceTemplates");
+        const listTemplates = maybeReadFunction(
+          client,
+          "listResourceTemplates",
+        );
         if (listResources) {
           tools.push(
-            ...normalizeListedResources(server, await listResources.call(client)),
+            ...normalizeListedResources(
+              server,
+              await listResources.call(client),
+            ),
           );
         }
         if (listTemplates) {
@@ -525,7 +646,10 @@ export class McpClientManager {
   }
 }
 
-async function callToolHandle<T>(handle: ToolHandle, input: unknown): Promise<T> {
+async function callToolHandle<T>(
+  handle: ToolHandle,
+  input: unknown,
+): Promise<T> {
   const args = asRecord(input) ?? {};
   let output: unknown;
   try {
@@ -560,12 +684,17 @@ async function callToolHandle<T>(handle: ToolHandle, input: unknown): Promise<T>
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message.includes("EXECUTION_AUTH_EXPIRED")
+      (error.message.includes("EXECUTION_AUTH_EXPIRED") ||
+        error.message.includes("TICKET_EXPIRED"))
     ) {
       throw createRuntimeFailure(
         "EXECUTION_AUTH_EXPIRED",
         "Execution authorization expired before provider dispatch.",
-        { subsystem: "tooling", classification: "authorization", recoverable: true },
+        {
+          subsystem: "tooling",
+          classification: "authorization",
+          recoverable: true,
+        },
       );
     }
     throw error;
@@ -577,10 +706,12 @@ async function closeServerHandleMap(
   handles: ReadonlyMap<string, ServerHandle>,
 ): Promise<void> {
   const clients = new Set([...handles.values()].map((handle) => handle.client));
-  await Promise.all([...clients].map(async (client) => {
-    const close = maybeReadFunction(client, "close");
-    if (close !== undefined) await Promise.resolve(close.call(client));
-  }));
+  await Promise.all(
+    [...clients].map(async (client) => {
+      const close = maybeReadFunction(client, "close");
+      if (close !== undefined) await Promise.resolve(close.call(client));
+    }),
+  );
 }
 
 async function loadSdkBindings(): Promise<SdkBindings> {
@@ -806,17 +937,19 @@ function normalizeListedTools(
     const presentation = isHostedGatewayServer(server)
       ? hostedToolPresentation(tool, toolName)
       : resolveToolPresentationMetadata(server, toolName, namespacedToolName);
-    normalized.push(compileMcpDiscoveredToolV1({
-      serverId: server.id,
-      toolName,
-      namespacedToolName,
-      description,
-      inputSchema,
-      ...(outputSchema !== undefined ? { outputSchema } : {}),
-      ...(presentation !== undefined ? { presentation } : {}),
-      protocolKind: "tool",
-      protocolTarget: toolName,
-    }));
+    normalized.push(
+      compileMcpDiscoveredToolV1({
+        serverId: server.id,
+        toolName,
+        namespacedToolName,
+        description,
+        inputSchema,
+        ...(outputSchema !== undefined ? { outputSchema } : {}),
+        ...(presentation !== undefined ? { presentation } : {}),
+        protocolKind: "tool",
+        protocolTarget: toolName,
+      }),
+    );
   }
 
   return normalized;

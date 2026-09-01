@@ -13,8 +13,12 @@ test(
   "Appearance settings keep light and dark palettes independent and durable",
   async ({ page }) => {
     const root = page.locator("html");
-    await page.getByText("Choose light palette", { exact: true }).click();
-    await page.getByText("Choose dark palette", { exact: true }).click();
+    await page
+      .locator("summary:visible", { hasText: "Choose light palette" })
+      .click();
+    await page
+      .locator("summary:visible", { hasText: "Choose dark palette" })
+      .click();
     const lightPalettes = page.getByRole("radiogroup", {
       name: "Light palette",
     });
@@ -44,8 +48,12 @@ test(
     ).toBe(lightBackground);
 
     await page.reload();
-    await page.getByText("Choose light palette", { exact: true }).click();
-    await page.getByText("Choose dark palette", { exact: true }).click();
+    await page
+      .locator("summary:visible", { hasText: "Choose light palette" })
+      .click();
+    await page
+      .locator("summary:visible", { hasText: "Choose dark palette" })
+      .click();
     await expect(root).toHaveAttribute("data-light-palette", "juniper");
     await expect(root).toHaveAttribute("data-dark-palette", "iris");
     await expect(lightPalettes.getByRole("radio", { name: "Juniper" })).toBeChecked();
@@ -82,10 +90,11 @@ test(
     await expect(
       secondPage.getByRole("heading", { level: 1, name: "Appearance" })
     ).toBeVisible();
-    await page.getByText("Choose light palette", { exact: true }).click();
+    await page
+      .locator("summary:visible", { hasText: "Choose light palette" })
+      .click();
     await secondPage
-      .getByText("Choose light palette", { exact: true })
-      .first()
+      .locator("summary:visible", { hasText: "Choose light palette" })
       .click();
 
     await page

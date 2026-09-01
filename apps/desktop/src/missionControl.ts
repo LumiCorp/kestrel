@@ -77,10 +77,12 @@ export async function getDesktopMissionControlProject(input: {
 }
 
 export async function executeDesktopMissionControlAction(input: {
-  adapter: Pick<WebRunnerAdapter, "sendControl">;
   intent: unknown;
   registeredProjectIds: string[];
-  profileId: string;
+  profileForProject: (projectId: string) => Promise<{
+    profileId: string;
+    adapter: Pick<WebRunnerAdapter, "sendControl">;
+  }>;
   actionId: string;
   actionTs: string;
   context: WebRunnerRequestContext;
@@ -101,6 +103,11 @@ export async function executeDesktopMissionControlAction(input: {
       message: "Desktop Mission Control commands require a registered project.",
     });
   }
+  let projectProfile:
+    | Promise<{ profileId: string; adapter: Pick<WebRunnerAdapter, "sendControl"> }>
+    | undefined;
+  const resolveProjectProfile = () =>
+    (projectProfile ??= input.profileForProject(intent.projectId));
   const base = {
     projectId: intent.projectId,
     actionId: input.actionId,
@@ -167,7 +174,7 @@ export async function executeDesktopMissionControlAction(input: {
                         type: "execution.start",
                         attemptId: randomUUID(),
                         initiatedBy: "operator",
-                        profileId: input.profileId,
+                        profileId: (await resolveProjectProfile()).profileId,
                         sessionId: randomUUID(),
                         threadId: undefined,
                       }
@@ -238,7 +245,7 @@ export async function executeDesktopMissionControlAction(input: {
     const sessionId = action.sessionId as string;
     action.threadId = sessionId;
   }
-  const event = await input.adapter.sendControl(
+  const event = await (await resolveProjectProfile()).adapter.sendControl(
     { type: "mission_control.action.execute", action },
     input.context,
   );
@@ -750,10 +757,19 @@ function parseConversationTurn(
 function parseDialogView(value: unknown, index: number): NonNullable<DesktopRuntimeThreadInspection["dialogs"]>[number] {
   const dialog = requireRecord(value, `operator thread view.dialogs[${index}]`);
   if (dialog.status !== "open" && dialog.status !== "closed") throw new Error("operator dialog status is invalid.");
+  const activity = dialog.activity === "idle" || dialog.activity === "working" || dialog.activity === "waiting" || dialog.activity === "interrupted"
+    ? dialog.activity
+    : "idle";
+  const revision = typeof dialog.revision === "number" && Number.isSafeInteger(dialog.revision) && dialog.revision >= 0
+    ? dialog.revision
+    : 0;
   return {
     dialogId: requireString(dialog.dialogId, `operator thread view.dialogs[${index}].dialogId`),
     name: requireString(dialog.name, `operator thread view.dialogs[${index}].name`),
     status: dialog.status,
+    activity,
+    revision,
+    ...(typeof dialog.errorMessage === "string" && dialog.errorMessage.trim().length > 0 ? { errorMessage: dialog.errorMessage } : {}),
     childThreadId: requireString(dialog.childThreadId, `operator thread view.dialogs[${index}].childThreadId`),
     messages: requireArray(dialog.messages, `operator thread view.dialogs[${index}].messages`).map((value, messageIndex) => {
       const message = requireRecord(value, `operator thread view.dialogs[${index}].messages[${messageIndex}]`);
@@ -768,6 +784,7 @@ function parseDialogView(value: unknown, index: number): NonNullable<DesktopRunt
         sender: message.sender,
         text: requireString(message.text, "dialog message.text"),
         createdAt: requireString(message.createdAt, "dialog message.createdAt"),
+        ...(message.dialogActivity === "idle" || message.dialogActivity === "working" || message.dialogActivity === "waiting" || message.dialogActivity === "interrupted" ? { dialogActivity: message.dialogActivity } : {}),
         ...(message.status !== undefined ? { status: message.status } : {}),
       };
     }),
@@ -804,9 +821,13 @@ function parseFollowUpQueue(value: unknown): DesktopRuntimeThreadInspection["fol
         ...(interactionMode === "chat" || interactionMode === "plan" || interactionMode === "build" ? { interactionMode } : {}),
         ...(actSubmode === "strict" || actSubmode === "safe" || actSubmode === "full_auto" ? { actSubmode } : {}),
         ...(source === "human" || source === "dialog" ? { source } : {}),
+        ...(item.dialogId === undefined ? {} : { dialogId: requireString(item.dialogId, "dialogId") }),
+        ...(item.dialogName === undefined ? {} : { dialogName: requireString(item.dialogName, "dialogName") }),
         ...(item.sourceMessageId === undefined
           ? {}
           : { sourceMessageId: requireString(item.sourceMessageId, "sourceMessageId") }),
+        ...(item.dialogStatus === "open" || item.dialogStatus === "closed" ? { dialogStatus: item.dialogStatus } : {}),
+        ...(item.dialogActivity === "idle" || item.dialogActivity === "working" || item.dialogActivity === "waiting" || item.dialogActivity === "interrupted" ? { dialogActivity: item.dialogActivity } : {}),
         createdAt: requireTimestamp(item.createdAt, "createdAt"),
         state: item.state,
       };

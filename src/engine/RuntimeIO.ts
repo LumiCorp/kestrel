@@ -11,6 +11,10 @@ import type { ToolActivationRefV1 } from "../kestrel/contracts/tool-contract.js"
 import type { GuardrailConfig, RuntimeDependencies } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelGatewayStreamEvent, ModelRequest, ModelResponse, ModelUsage, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
 import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
+import { projectGmailMutationActivityInput } from "../apps/gmailMutation.js";
+import { projectMicrosoft365TeamsReadAuditInput } from "../apps/microsoft365TeamsAudit.js";
+import { projectMicrosoft365TeamsSendAuditInput } from "../apps/microsoft365TeamsSendAudit.js";
+import { projectGoogleCalendarAuditInput } from "../apps/googleCalendarAudit.js";
 import type { ProviderReasoningRetentionPolicy } from "../runtime/ProviderReasoningVault.js";
 import {
   attributeModelCallPrice,
@@ -54,8 +58,21 @@ import {
   type LiveExecutionBoundaryStream,
 } from "../security/ExecutionBoundaryPolicy.js";
 import type { ExecutionBoundaryDecisionV1 } from "../kestrel/contracts/execution-boundary-policy.js";
+import type { ModelCallProofV1 } from "../kestrel/contracts/orchestration.js";
 import { deleteTextArtifact } from "../../tools/runtime/artifactStore.js";
 import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
+import {
+  isBrowserToolName,
+  projectBrowserAuditInput,
+  projectBrowserAuditOutput,
+  projectBrowserRunError,
+  projectBrowserRunOutcome,
+} from "../browser/contracts.js";
+import {
+  type EffectiveModelContractV1,
+  type EffectiveModelContractResolverV1,
+  type EffectiveModelPreSpendEvidenceV1,
+} from "../kestrel/effective-model-contract.js";
 
 interface RuntimeIOProgressContext {
   runId: string;
@@ -120,7 +137,7 @@ interface RuntimeIOOptions {
   deps: Pick<
     RuntimeDependencies,
     "store" | "modelGateway" | "toolGateway" | "consoleReporter"
-  > & Partial<Pick<RuntimeDependencies, "reasoningReporter" | "providerReasoningVault">>;
+  > & Partial<Pick<RuntimeDependencies, "reasoningReporter" | "providerReasoningVault" | "effectiveModelContractResolver">>;
   guardrailConfig: GuardrailConfig;
   toolJobQueue: ToolJobQueue;
   toolQueueEnabled: boolean;
@@ -321,7 +338,7 @@ export class RuntimeIO {
     const assemblyId =
       readNonEmptyString(runtimeAssembly?.effectiveAssemblyId) ??
       readNonEmptyString(runtimeAssembly?.bundleId);
-    const providerPayloadHash = hashUnknown(providerRequest);
+    let providerPayloadHash = hashUnknown(providerRequest);
     const componentHash = hashUnknown({
       model: requestedModel,
       provider: requestedProvider,
@@ -341,6 +358,10 @@ export class RuntimeIO {
       threadId,
     });
     const toolManifestHash = Array.isArray(request.tools) ? hashUnknown(request.tools) : undefined;
+    const preSpendEvidence = await describeModelPreSpendEvidence(
+      this.options.deps.effectiveModelContractResolver,
+      providerRequest,
+    );
     const requestEconomicsManifest = buildModelRequestEconomicsManifest({
       request: providerRequest,
       ...(economicsContextSections !== undefined
@@ -420,6 +441,7 @@ export class RuntimeIO {
       componentHash,
       ...(toolManifestHash !== undefined ? { toolManifestHash } : {}),
       ...(assemblyId !== undefined ? { assemblyId } : {}),
+      proof: createPendingModelCallProof(preSpendEvidence),
       metadata: {
         promptRetention: "hash_only",
         ...(modelRole !== undefined ? { modelRole } : {}),
@@ -435,6 +457,45 @@ export class RuntimeIO {
       createdAt: new Date(startedAt).toISOString(),
       status: "REQUESTED",
     });
+    let effectiveAdmission:
+      | { request: ModelRequest; contract: EffectiveModelContractV1 }
+      | undefined;
+    try {
+      effectiveAdmission =
+        this.options.deps.effectiveModelContractResolver === undefined
+          ? undefined
+          : await this.options.deps.effectiveModelContractResolver.admit({
+              request: providerRequest,
+            });
+      if (effectiveAdmission !== undefined) {
+        providerRequest = effectiveAdmission.request;
+        providerPayloadHash = hashUnknown(providerRequest);
+      }
+      await this.options.deps.store.updateModelCallProvenance?.({
+        callId,
+        status: "REQUESTED",
+        providerPayloadHash,
+        proof: createAdmittedModelCallProof(effectiveAdmission?.contract, providerRequest),
+      });
+    } catch (error) {
+      const mappedAdmissionError = this.options.mapError(error);
+      const completedAt = new Date().toISOString();
+      await this.options.deps.store.updateModelCallProvenance?.({
+        callId,
+        status: "FAILED",
+        completedAt,
+        latencyMs: Date.now() - startedAt,
+        proof: createPreSpendRejectedModelCallProof(mappedAdmissionError, preSpendEvidence?.contract, preSpendEvidence?.request),
+        metadata: {
+          promptRetention: "hash_only",
+          ...(modelRole !== undefined ? { modelRole } : {}),
+          modelBudgetClass,
+          ...lifecycleMetadata,
+          error: mappedAdmissionError.code,
+        },
+      });
+      throw error;
+    }
     await this.options.appendRunEvent(
       progress.runId,
       progress.sessionId,
@@ -510,11 +571,31 @@ export class RuntimeIO {
         },
         () => this.callModelWithRecovery<T>({
           request: providerRequest,
+          effectiveModelContract: effectiveAdmission?.contract,
           callId,
           requestedProvider,
           requestedModel,
         }),
       );
+      // The provider request has completed at this boundary. Capture only its
+      // safe usage and pricing evidence before cancellation can stop response
+      // consumption and all later work.
+      const modelUsage = this.options.extractModelUsage(recoveredResult);
+      const economicsUsage = normalizeEconomicsUsage(modelUsage);
+      guardrails.onModelUsage(modelUsage);
+      const modelMetadata = this.options.extractModelMetadata(recoveredResult);
+      const actualProvider = readNonEmptyString(modelMetadata?.provider) ?? requestedProvider;
+      const actualModel = readNonEmptyString(modelMetadata?.model) ?? requestedModel;
+      const actualEconomicsModelProfile = actualProvider !== undefined && actualModel !== undefined && economicsControl !== undefined
+        ? resolveModelEconomicsProfileV1(economicsControl, actualProvider, actualModel)
+        : economicsModelProfile;
+      const pricing = attributeModelCallPrice({
+        usage: economicsUsage,
+        profile: actualEconomicsModelProfile,
+        provider: actualProvider,
+        model: actualModel,
+      });
+      guardrails.onModelCost(pricing.status === "priced" ? pricing.totalCostUsd : undefined);
       throwIfRuntimeIOAborted(progress.signal);
       const responseBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist<T>({
         boundary: "model_action",
@@ -553,15 +634,6 @@ export class RuntimeIO {
       if (this.options.deps.providerReasoningVault !== undefined && isModelResponse(result)) {
         await this.options.deps.providerReasoningVault.captureResponse(result, reasoningContext);
       }
-      const modelUsage = this.options.extractModelUsage(result);
-      const economicsUsage = normalizeEconomicsUsage(modelUsage);
-      guardrails.onModelUsage(modelUsage);
-      const modelMetadata = this.options.extractModelMetadata(result);
-      const actualProvider = readNonEmptyString(modelMetadata?.provider) ?? requestedProvider;
-      const actualModel = readNonEmptyString(modelMetadata?.model) ?? requestedModel;
-      const actualEconomicsModelProfile = actualProvider !== undefined && actualModel !== undefined && economicsControl !== undefined
-        ? resolveModelEconomicsProfileV1(economicsControl, actualProvider, actualModel)
-        : economicsModelProfile;
       const completedAt = new Date().toISOString();
       const latencyMs = Date.now() - startedAt;
       await this.options.persistModelResponseDump({
@@ -578,6 +650,7 @@ export class RuntimeIO {
         status: "COMPLETED",
         completedAt,
         latencyMs,
+        proof: createCompletedModelCallProof(effectiveAdmission?.contract, providerRequest, result),
         metadata: {
           promptRetention: "hash_only",
           ...(modelRole !== undefined ? { modelRole } : {}),
@@ -595,12 +668,7 @@ export class RuntimeIO {
         latencyMs,
         usage: economicsUsage,
         providerReportedInputDeltaTokens: economicsUsage.inputTokens - requestEconomicsManifest.requestCount.tokens,
-        pricing: attributeModelCallPrice({
-          usage: economicsUsage,
-          profile: actualEconomicsModelProfile,
-          provider: actualProvider,
-          model: actualModel,
-        }),
+        pricing,
       });
       await this.options.appendRunEvent(
         progress.runId,
@@ -675,6 +743,9 @@ export class RuntimeIO {
         status: "FAILED",
         completedAt,
         latencyMs,
+        proof: isPreSpendModelFailure(mappedError.code)
+          ? createPreSpendRejectedModelCallProof(mappedError, effectiveAdmission?.contract, providerRequest)
+          : createFailedModelCallProof(effectiveAdmission?.contract, providerRequest, mappedError),
         metadata: {
           promptRetention: "hash_only",
           ...(modelRole !== undefined ? { modelRole } : {}),
@@ -715,12 +786,16 @@ export class RuntimeIO {
 
   private async callModelWithRecovery<T>(input: {
     request: ModelRequest;
+    effectiveModelContract?: import("../kestrel/effective-model-contract.js").EffectiveModelContractV1 | undefined;
     callId: string;
     requestedProvider: string | undefined;
     requestedModel: string | undefined;
   }): Promise<T> {
     try {
       return await this.options.deps.modelGateway.call<T>(input.request, {
+        ...(input.effectiveModelContract !== undefined
+          ? { effectiveModelContract: input.effectiveModelContract }
+          : {}),
         ...(this.options.progress.signal !== undefined
           ? { signal: this.options.progress.signal }
           : {}),
@@ -941,7 +1016,7 @@ export class RuntimeIO {
     guardrails.onToolCall(name);
     const startedAt = Date.now();
     const toolCallId = `tool:${progress.runId}:${randomUUID()}`;
-    let recoverySourceInput = input;
+    let recoverySourceInput = projectToolActivityInput(name, input);
     let queueDepthRun: number | undefined;
     let queueDepthGlobal: number | undefined;
     let queueWaitMs: number | undefined;
@@ -1036,9 +1111,26 @@ export class RuntimeIO {
       );
       preparedToolCall = prepared;
       const effectiveToolInput = prepared.effectiveInput;
-      recoverySourceInput = effectiveToolInput;
+      const activityToolInput = projectToolActivityInput(
+        name,
+        effectiveToolInput,
+      );
+      recoverySourceInput = activityToolInput;
+      const projectedToolInput = projectGmailMutationActivityInput(
+        name,
+        activityToolInput,
+      ) ?? projectMicrosoft365TeamsReadAuditInput(
+        name,
+        activityToolInput,
+      ) ?? projectMicrosoft365TeamsSendAuditInput(
+        name,
+        activityToolInput,
+      ) ?? projectGoogleCalendarAuditInput(
+        name,
+        activityToolInput,
+      ) ?? activityToolInput;
       const toolInputMetadata = {
-        ...buildToolInputEventMetadata(effectiveToolInput),
+        ...buildToolInputEventMetadata(projectedToolInput),
         ...prepared.inputAdapters.reduce(
           (metadata, adapter) => ({ ...metadata, ...adapter.metadata }),
           {} as Record<string, unknown>,
@@ -1051,7 +1143,7 @@ export class RuntimeIO {
         phase: "started",
         toolCallId,
         toolName: name,
-        input: effectiveToolInput,
+        input: projectedToolInput,
         activation: prepared.activation,
       });
       await this.options.emitProgressFromSequence({
@@ -1091,7 +1183,7 @@ export class RuntimeIO {
         stepIndex: progress.stepIndex,
         toolCallId,
         toolName: name,
-        input: effectiveToolInput,
+        input: projectedToolInput,
         sequence: progress.sequence,
         transformText: (text) => {
           toolConsoleStream ??= this.options.executionBoundaryRuntime.openLiveStream({
@@ -1351,7 +1443,7 @@ export class RuntimeIO {
           phase: "failed",
           toolCallId,
           toolName: name,
-          input: effectiveToolInput,
+          input: projectedToolInput,
           output: result,
           error: returnedError,
           durationMs,
@@ -1393,7 +1485,7 @@ export class RuntimeIO {
         phase: "completed",
         toolCallId,
         toolName: name,
-        input: effectiveToolInput,
+        input: projectedToolInput,
         output: result,
         durationMs: Date.now() - startedAt,
         activation: result.activation,
@@ -1402,6 +1494,7 @@ export class RuntimeIO {
       await consoleBridge.emitStatus("completed", result);
       return result;
     } catch (error) {
+      const runtimeError = this.options.mapError(error);
       const failureBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist({
         boundary: "tool_result",
         identity: {
@@ -1415,7 +1508,9 @@ export class RuntimeIO {
         sourceId: `tool-error:${toolCallId}:${name}`,
         value: {
           input: recoverySourceInput,
-          error: this.options.mapError(error),
+          error: isBrowserToolName(name)
+            ? projectBrowserRunError(name, runtimeError)
+            : runtimeError,
         },
         persist: (decision) => this.persistBoundaryDecision(decision),
       });
@@ -1598,6 +1693,95 @@ export class RuntimeIO {
         );
       }
     }
+  }
+
+  async prepareToolForApproval(
+    name: string,
+    input: unknown,
+    approval: {
+      policyRevision: string;
+      authorityRevision: string;
+      capabilities: readonly string[];
+    },
+    intent?: {
+      modelToolCallId?: string | undefined;
+      toolSurfaceSnapshot?: import("../kestrel/contracts/tool-contract.js").ToolSurfaceSnapshotV1 | undefined;
+    },
+  ): Promise<import("../kestrel/contracts/tool-invocation.js").PreparedToolCallV1> {
+    const { progress } = this.options;
+    throwIfRuntimeIOAborted(progress.signal);
+    const sessionState = this.options.getSessionState();
+    const runContext = {
+      runId: progress.runId,
+      sessionId: progress.sessionId,
+      payload: this.options.runtimePayload ?? {},
+      sessionState,
+    };
+    const snapshot = intent?.toolSurfaceSnapshot ??
+      await this.options.deps.toolGateway.createToolSurfaceSnapshot({
+        runContext,
+        toolNames: [name],
+      });
+    const activation = snapshot.tools.find(
+      (candidate) => candidate.descriptor.toolId === name,
+    );
+    if (activation === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_SNAPSHOT_LOOKUP_FAILED",
+        `Tool '${name}' was not exposed in snapshot '${snapshot.snapshotId}'.`,
+        { recoverable: false, toolName: name },
+      );
+    }
+    const rawInput = asPlainRecord(input);
+    if (rawInput === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_INPUT_SCHEMA_FAILED",
+        `Tool '${name}' input must be an object.`,
+        { recoverable: true, toolName: name },
+      );
+    }
+    const callId = `approval:${progress.runId}:${randomUUID()}`;
+    return await this.options.deps.toolGateway.prepareToolCall(
+      {
+        runId: progress.runId,
+        sessionId: progress.sessionId,
+        callId,
+        activation,
+        origin:
+          intent?.modelToolCallId === undefined
+            ? {
+                kind: "trusted_runtime",
+                producerId: "runtime.hosted-approval:v2",
+                adapterId: "runtime.hosted-approval:v2",
+              }
+            : {
+                kind: "model",
+                snapshotId: snapshot.snapshotId,
+                modelToolCallId: intent.modelToolCallId,
+              },
+        rawInput,
+        policy: {
+          decision: "approval_required",
+          policyRevision: approval.policyRevision,
+        },
+        approval: {
+          approvalId: callId,
+          authorityRevision: approval.authorityRevision,
+        },
+        approvalCapabilities: approval.capabilities,
+      },
+      {
+        runContext,
+        runtimeBudgetRemainingMs:
+          this.options.guardrails.budgetSnapshot().remainingMs,
+      },
+    );
+  }
+
+  async releasePreparedToolCall(
+    prepared: import("../kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+  ): Promise<void> {
+    await this.options.deps.toolGateway.releasePreparedToolCall?.(prepared);
   }
 
   private async emitToolUpdate(input: {
@@ -1785,7 +1969,21 @@ export function buildRunToolUpdate(input: {
 }): RunToolUpdateV1 | RunToolUpdateV2 {
   const outputRecord = asPlainRecord(input.output);
   const auditRecord = asPlainRecord(outputRecord?.auditRecord);
-  const activityOutput = auditRecord?.output ?? input.output;
+  const rawActivityOutput = auditRecord?.output ?? input.output;
+  const activityInput = input.input === undefined
+    ? undefined
+    : projectToolActivityInput(input.toolName, input.input);
+  const activityOutput = rawActivityOutput === undefined
+    ? undefined
+    : projectBrowserAuditOutput(input.toolName, rawActivityOutput) ??
+      rawActivityOutput;
+  const activityOutcome = projectBrowserRunOutcome(
+    input.toolName,
+    input.outcome,
+  );
+  const activityError = isBrowserToolName(input.toolName) && input.error !== undefined
+    ? projectBrowserRunError(input.toolName, input.error)
+    : input.error;
   const shared = {
     runId: input.runId,
     sessionId: input.sessionId,
@@ -1799,18 +1997,19 @@ export function buildRunToolUpdate(input: {
     displayName: formatToolDisplayName(input.toolName),
     toolFamily: readToolFamily(input.toolName),
     provider: readToolProvider(input.toolName),
-    ...(input.input !== undefined ? { input: sanitizeToolActivityValue(input.input) } : {}),
+    ...(input.input !== undefined ? { input: sanitizeToolActivityValue(activityInput) } : {}),
     ...(input.output !== undefined ? { output: sanitizeToolActivityValue(activityOutput) } : {}),
-    ...(asPlainRecord(outputRecord?.presentation) !== undefined
+    ...(!isBrowserToolName(input.toolName) &&
+    asPlainRecord(outputRecord?.presentation) !== undefined
       ? { presentation: outputRecord?.presentation as RunToolUpdateV1["presentation"] }
       : {}),
-    ...(input.error !== undefined
+    ...(activityError !== undefined
       ? {
           error: {
-            code: input.error.code,
-            message: input.error.message,
-            ...(input.error.details !== undefined
-              ? { details: sanitizeToolActivityValue(input.error.details) as Record<string, unknown> }
+            code: activityError.code,
+            message: activityError.message,
+            ...(activityError.details !== undefined
+              ? { details: sanitizeToolActivityValue(activityError.details) as Record<string, unknown> }
               : {}),
           },
         }
@@ -1823,8 +2022,22 @@ export function buildRunToolUpdate(input: {
         version: "v2",
         ...shared,
         activation: input.activation,
-        ...(input.outcome === undefined ? {} : { outcome: input.outcome }),
+        ...(activityOutcome === undefined ? {} : { outcome: activityOutcome }),
       };
+}
+
+function projectToolActivityInput(toolName: string, value: unknown): unknown {
+  if (!isBrowserToolName(toolName)) return value;
+  try {
+    return projectBrowserAuditInput(toolName, value) ?? {
+      operation: toolName,
+    };
+  } catch {
+    return {
+      operation: toolName,
+      inputStatus: "invalid",
+    };
+  }
 }
 
 export function buildRunToolEvent(update: RunToolUpdateV1 | RunToolUpdateV2): {
@@ -2007,6 +2220,201 @@ function redactModelResponseForDiagnostics(value: unknown): unknown {
         ...safe,
         reasoning: "[PROVIDER_REASONING_NOT_RETAINED]",
       };
+}
+
+async function describeModelPreSpendEvidence(
+  resolver: EffectiveModelContractResolverV1 | undefined,
+  request: ModelRequest,
+): Promise<EffectiveModelPreSpendEvidenceV1 | undefined> {
+  if (resolver?.describePreSpendAttempt === undefined) return undefined;
+  try {
+    return await resolver.describePreSpendAttempt({ request });
+  } catch {
+    // Evidence generation must not replace the owning admission decision. The
+    // resulting row remains explicitly legacy/unknown if a resolver cannot
+    // describe the rejected attempt safely.
+    return undefined;
+  }
+}
+
+function createPendingModelCallProof(
+  preSpendEvidence: EffectiveModelPreSpendEvidenceV1 | undefined,
+): ModelCallProofV1 {
+  return {
+    version: "model_call_proof_v1",
+    evidence: preSpendEvidence?.contract === undefined ? "legacy" : "captured",
+    admission: "pending",
+    ...(preSpendEvidence?.contract !== undefined ? { effectiveContract: preSpendEvidence.contract } : {}),
+    capabilities: preSpendEvidence === undefined ? [] : readRequiredModelCapabilities(preSpendEvidence.request),
+    terminal: "pending",
+    validation: "not_requested",
+  };
+}
+
+function createAdmittedModelCallProof(
+  contract: EffectiveModelContractV1 | undefined,
+  request: ModelRequest,
+): ModelCallProofV1 {
+  const capturedContract = contract?.status === "qualified" ? contract : undefined;
+  return {
+    version: "model_call_proof_v1",
+    evidence: capturedContract === undefined ? "legacy" : "captured",
+    admission: "admitted",
+    ...(capturedContract !== undefined ? { effectiveContract: capturedContract } : {}),
+    capabilities: readRequiredModelCapabilities(request),
+    terminal: "pending",
+    validation: "not_requested",
+  };
+}
+
+function createPreSpendRejectedModelCallProof(
+  error: RuntimeError,
+  contract?: EffectiveModelContractV1 | undefined,
+  request?: ModelRequest | undefined,
+): ModelCallProofV1 {
+  const failureCode = readNonEmptyString(error.code);
+  const capturedContract = contract?.status === "qualified" ? contract : undefined;
+  return {
+    version: "model_call_proof_v1",
+    evidence: capturedContract === undefined ? "legacy" : "captured",
+    admission: "pre_spend_rejected",
+    ...(capturedContract !== undefined ? { effectiveContract: capturedContract } : {}),
+    capabilities: request === undefined ? [] : readRequiredModelCapabilities(request),
+    terminal: "pre_spend_rejected",
+    validation: "failed",
+    ...(failureCode !== undefined ? { failureCode } : {}),
+    ...(readProviderRequestId(error) !== undefined
+      ? { providerRequestId: readProviderRequestId(error) }
+      : {}),
+  };
+}
+
+function isPreSpendModelFailure(code: string): boolean {
+  return code === "HARNESS_ECONOMICS_CONTEXT_ADMISSION_BLOCKED";
+}
+
+function createCompletedModelCallProof(
+  contract: EffectiveModelContractV1 | undefined,
+  request: ModelRequest,
+  response: unknown,
+): ModelCallProofV1 {
+  const providerRequestId = readProviderRequestId(response);
+  const validation = asPlainRecord(asPlainRecord(response)?.validation)?.state;
+  const capturedContract = contract?.status === "qualified" ? contract : undefined;
+  return {
+    version: "model_call_proof_v1",
+    evidence: capturedContract === undefined ? "legacy" : "captured",
+    admission: "admitted",
+    ...(capturedContract !== undefined ? { effectiveContract: capturedContract } : {}),
+    capabilities: readRequiredModelCapabilities(request),
+    terminal: "completed",
+    validation: validation === "passed" ? "passed" : "not_requested",
+    ...(providerRequestId !== undefined ? { providerRequestId } : {}),
+  };
+}
+
+function createFailedModelCallProof(
+  contract: EffectiveModelContractV1 | undefined,
+  request: ModelRequest,
+  error: RuntimeError,
+): ModelCallProofV1 {
+  const failureCode = readNonEmptyString(error.code);
+  const terminal = classifyModelCallFailure(failureCode, error);
+  const providerRequestId = readProviderRequestId(error);
+  const capturedContract = contract?.status === "qualified" ? contract : undefined;
+  return {
+    version: "model_call_proof_v1",
+    evidence: capturedContract === undefined ? "legacy" : "captured",
+    admission: "admitted",
+    ...(capturedContract !== undefined ? { effectiveContract: capturedContract } : {}),
+    capabilities: readRequiredModelCapabilities(request),
+    terminal,
+    validation: terminal === "verifier_rejected" ? "failed" : "not_requested",
+    ...(failureCode !== undefined ? { failureCode } : {}),
+    ...(providerRequestId !== undefined ? { providerRequestId } : {}),
+  };
+}
+
+function readRequiredModelCapabilities(request: ModelRequest): ModelCallProofV1["capabilities"] {
+  const requestRecord = asPlainRecord(request);
+  const requirements = asPlainRecord(requestRecord?.requirements);
+  const output = asPlainRecord(requirements?.output);
+  const tools = asPlainRecord(requirements?.tools);
+  const streaming = asPlainRecord(requirements?.streaming);
+  const capabilities: ModelCallProofV1["capabilities"] = [];
+  if (output?.kind === "json_object" || output?.kind === "json_schema") {
+    capabilities.push("structured_output");
+  }
+  if (output?.assurance === "provider_strict_schema") capabilities.push("strict_schema");
+  if (tools?.choice !== undefined && tools.choice !== "none") capabilities.push("tools");
+  if (tools?.choice === "required" || tools?.choice === "named") {
+    capabilities.push("required_tool_choice");
+  }
+  if (tools?.strictArguments === true) capabilities.push("strict_tool_inputs");
+  if (streaming?.terminalBehavior === "required") capabilities.push("streaming_terminal");
+  return capabilities;
+}
+
+function classifyModelCallFailure(
+  code: string | undefined,
+  error: RuntimeError,
+): ModelCallProofV1["terminal"] {
+  const terminalState = readNonEmptyString(asPlainRecord(error.details)?.terminalState);
+  if (
+    code === "RUN_CANCELLED" ||
+    code === "IO_MODEL_TIMEOUT" ||
+    code === "MODEL_TIMEOUT" ||
+    code === "MODEL_NETWORK_DNS" ||
+    code === "MODEL_NETWORK_ERROR" ||
+    terminalState === "interrupted"
+  ) {
+    return "interrupted";
+  }
+  if (
+    terminalState === "refused" ||
+    terminalState === "incomplete" ||
+    terminalState === "truncated" ||
+    terminalState === "malformed" ||
+    code === "MODEL_AUTH_ERROR" ||
+    code === "MODEL_RATE_LIMITED"
+  ) {
+    return "provider_rejected";
+  }
+  if (code !== undefined && MODEL_RESPONSE_VERIFICATION_FAILURE_CODES.has(code)) {
+    return "verifier_rejected";
+  }
+  return "provider_rejected";
+}
+
+const MODEL_RESPONSE_VERIFICATION_FAILURE_CODES = new Set([
+  "MODEL_ENDPOINT_MISMATCH",
+  "MODEL_CONTINUATION_KIND_UNSUPPORTED",
+  "MODEL_CONTINUATION_PROVIDER_MISMATCH",
+  "MODEL_MALFORMED_RESPONSE",
+  "MODEL_NAMED_TOOL_CALL_MISSING",
+  "MODEL_NAMED_TOOL_CALL_UNEXPECTED",
+  "MODEL_OUTPUT_NOT_JSON_OBJECT",
+  "MODEL_OUTPUT_SCHEMA_INVALID",
+  "MODEL_REQUIRED_TOOL_CALL_MISSING",
+  "MODEL_RESPONSE_SCHEMA_INVALID",
+  "MODEL_RESPONSE_SCHEMA_MISSING",
+  "MODEL_STREAM_TERMINAL_EVIDENCE_MISSING",
+  "MODEL_STRUCTURED_OUTPUT_MISSING",
+  "MODEL_TOOL_ARGUMENTS_INVALID",
+  "MODEL_TOOL_CALL_ID_DUPLICATE",
+  "MODEL_TOOL_CALL_ID_MISSING",
+  "MODEL_TOOL_CALL_UNEXPECTED",
+  "MODEL_TOOL_PARALLELISM_FORBIDDEN",
+  "MODEL_TOOL_PARALLELISM_REQUIRED",
+  "MODEL_TOOL_SCHEMA_INVALID",
+  "MODEL_TOOL_UNKNOWN",
+]);
+
+function readProviderRequestId(value: unknown): string | undefined {
+  const record = asPlainRecord(value);
+  const details = asPlainRecord(record?.details);
+  const provider = asPlainRecord(record?.provider);
+  return readBoundedMetadataString(details?.requestId) ?? readBoundedMetadataString(provider?.requestId);
 }
 
 function readProviderReasoningRetention(value: unknown): ProviderReasoningRetentionPolicy {

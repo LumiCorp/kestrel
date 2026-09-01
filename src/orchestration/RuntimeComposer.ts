@@ -8,6 +8,7 @@ import type {
   ThreadAssemblyRecord,
   ThreadRecord,
 } from "./contracts.js";
+import { selectLatestThreadAssemblyRecord } from "./threadAssemblyOrdering.js";
 import type { AssemblyChangeCause } from "../kestrel/contracts/orchestration.js";
 
 import type { AssemblyCatalog } from "./AssemblyCatalog.js";
@@ -50,7 +51,7 @@ export class RuntimeComposer {
       ) {
         return existing;
       }
-      const record: ThreadAssemblyRecord = {
+      const record = await this.store.appendThreadAssemblyRecord({
         recordId: `assembly-record-${randomUUID()}`,
         threadId: input.thread.threadId,
         bundleId: defaultBundle.bundleId,
@@ -61,8 +62,7 @@ export class RuntimeComposer {
           previousRecordId: existing.record.recordId,
         },
         createdAt: new Date().toISOString(),
-      };
-      await this.store.appendThreadAssemblyRecord(record);
+      });
       return { record, bundle: defaultBundle };
     }
 
@@ -83,7 +83,7 @@ export class RuntimeComposer {
       bundle = defaultBundle;
     }
 
-    const record: ThreadAssemblyRecord = {
+    const record = await this.store.appendThreadAssemblyRecord({
       recordId: `assembly-record-${randomUUID()}`,
       threadId: input.thread.threadId,
       bundleId: bundle?.bundleId ?? "implicit/legacy",
@@ -93,8 +93,7 @@ export class RuntimeComposer {
         implicitLegacy: bundle === undefined,
       },
       createdAt: new Date().toISOString(),
-    };
-    await this.store.appendThreadAssemblyRecord(record);
+    });
     return {
       record,
       ...(bundle !== undefined ? { bundle } : {}),
@@ -106,7 +105,7 @@ export class RuntimeComposer {
     bundle?: AssemblyBundleRecord | undefined;
   } | null> {
     const records = await this.store.listThreadAssemblyRecords(threadId);
-    const record = selectLatestAssemblyRecord(records);
+    const record = selectLatestThreadAssemblyRecord(records);
     if (record === undefined) {
       return null;
     }
@@ -479,7 +478,7 @@ export class RuntimeComposer {
     record: ThreadAssemblyRecord;
     bundle: AssemblyBundleRecord;
   }> {
-    const record: ThreadAssemblyRecord = {
+    const record = await this.store.appendThreadAssemblyRecord({
       recordId: `assembly-record-${randomUUID()}`,
       threadId: input.threadId,
       bundleId: input.bundle.bundleId,
@@ -487,8 +486,7 @@ export class RuntimeComposer {
       authority: input.authority,
       ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
       createdAt: new Date().toISOString(),
-    };
-    await this.store.appendThreadAssemblyRecord(record);
+    });
     return {
       record,
       bundle: input.bundle,
@@ -583,18 +581,6 @@ function readModelOverride(runtimeAssembly: Record<string, unknown> | undefined)
 
 function readPromptVariantOverride(runtimeAssembly: Record<string, unknown> | undefined): string | undefined {
   return typeof runtimeAssembly?.promptVariant === "string" ? runtimeAssembly.promptVariant : undefined;
-}
-
-function selectLatestAssemblyRecord(
-  records: ThreadAssemblyRecord[],
-): ThreadAssemblyRecord | undefined {
-  let latest: ThreadAssemblyRecord | undefined;
-  for (const record of records) {
-    if (latest === undefined || record.createdAt >= latest.createdAt) {
-      latest = record;
-    }
-  }
-  return latest;
 }
 
 function sameStrings(left: string[], right: string[]): boolean {

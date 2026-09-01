@@ -15,8 +15,13 @@ import { handleModelRelay } from "./model-relay.js";
 import { handleAppRelay } from "./app-relay.js";
 import { PreviewRelay } from "./preview-relay.js";
 import { handleWorkspaceIdle } from "./workspace-idle.js";
+import { handleBrowserRevisionControl } from "./browser-revision.js";
+import { handleBrowserViewerControl } from "./browser-viewer.js";
+import { handleBrowserUpload } from "./browser-upload.js";
+import { handleBrowserDownload } from "./browser-download.js";
+import { HostedBrowserEgressRegistry } from "./browser-egress.js";
 
-const ENVIRONMENT_GATEWAY_CONTRACT_REVISION = 2;
+const ENVIRONMENT_GATEWAY_CONTRACT_REVISION = 3;
 const port = readPort(process.env.PORT);
 const publicKey = process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "";
 const expectedAppName = required(
@@ -37,6 +42,10 @@ const gatewayConfig = new EnvironmentGatewayConfigClient({
     process.env.KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN,
     "KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN"
   ),
+});
+const browserEgress = new HostedBrowserEgressRegistry({
+  gatewayMachineId: required(process.env.FLY_MACHINE_ID, "FLY_MACHINE_ID"),
+  appName: expectedAppName,
 });
 const previewRelay = new PreviewRelay({
   expectedAppName,
@@ -113,12 +122,67 @@ const server = createServer(async (request, response) => {
     }
     return;
   }
+  if (request.method === "POST" && pathname === "/internal/browser/revision") {
+    await handleBrowserRevisionControl({
+      request,
+      response,
+      publicKey,
+      environmentId,
+      expectedAppName,
+    });
+    return;
+  }
+  if (request.method === "POST" && pathname === "/internal/browser/viewer") {
+    await handleBrowserViewerControl({
+      request,
+      response,
+      publicKey,
+      environmentId,
+      expectedAppName,
+    });
+    return;
+  }
+  if (
+    request.method === "POST" &&
+    (pathname === "/internal/browser/upload/prepare" ||
+      pathname === "/internal/browser/upload/bytes")
+  ) {
+    await handleBrowserUpload({
+      request,
+      response,
+      publicKey,
+      environmentId,
+      expectedAppName,
+      prepare: pathname.endsWith("/prepare"),
+    });
+    return;
+  }
+  if (
+    request.method === "POST" &&
+    (pathname === "/internal/browser/download/prepare" ||
+      pathname === "/internal/browser/download/bytes" ||
+      pathname === "/internal/browser/download/release")
+  ) {
+    await handleBrowserDownload({
+      request,
+      response,
+      publicKey,
+      environmentId,
+      expectedAppName,
+    });
+    return;
+  }
   if (pathname.startsWith("/internal/models/")) {
     await handleModelRelay({ request, response, config: gatewayConfig });
     return;
   }
   if (pathname.startsWith("/internal/apps/")) {
-    await handleAppRelay({ request, response, config: gatewayConfig });
+    await handleAppRelay({
+      request,
+      response,
+      config: gatewayConfig,
+      browserEgress,
+    });
     return;
   }
   if (pathname === "/internal/workspaces/idle") {
@@ -172,7 +236,10 @@ server.listen(port);
 
 const shutdown = () => {
   gatewayConfig.stop();
-  void previewRelay.close().finally(() => server.close());
+  void Promise.allSettled([
+    previewRelay.close(),
+    browserEgress.closeAll(),
+  ]).finally(() => server.close());
 };
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);

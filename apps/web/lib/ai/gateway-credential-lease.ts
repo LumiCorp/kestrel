@@ -16,14 +16,14 @@ export * from "./gateway-credential-lease-contract";
 
 export async function issueGatewayCredentialLease(
   input: GatewayCredentialLeaseRequest,
-  now = new Date()
+  now = new Date(),
 ): Promise<GatewayCredentialLease> {
   const [row] = await knowledgeDb
     .select({ gateway: schema.aiGateways, model: schema.aiGatewayModels })
     .from(schema.aiGatewayModels)
     .innerJoin(
       schema.aiGateways,
-      eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId)
+      eq(schema.aiGateways.id, schema.aiGatewayModels.gatewayId),
     )
     .where(
       and(
@@ -34,13 +34,13 @@ export async function issueGatewayCredentialLease(
             eq(schema.aiGateways.organizationId, input.organizationId),
             or(
               isNull(schema.aiGateways.environmentId),
-              eq(schema.aiGateways.environmentId, input.environmentId)
-            )
-          )
+              eq(schema.aiGateways.environmentId, input.environmentId),
+            ),
+          ),
         ),
         eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
-        eq(schema.aiGatewayModels.rawModelId, input.rawModelId)
-      )
+        eq(schema.aiGatewayModels.rawModelId, input.rawModelId),
+      ),
     )
     .limit(1);
 
@@ -48,17 +48,37 @@ export async function issueGatewayCredentialLease(
     throw new GatewayCredentialLeaseError(
       "GATEWAY_MODEL_NOT_APPROVED",
       "The requested gateway model is unavailable or not approved.",
-      404
+      404,
     );
   }
   assertGatewayCredentialLeaseEligible(row);
+  if (
+    input.routeBinding?.rawModelId !== undefined &&
+    input.routeBinding.rawModelId !== input.rawModelId
+  ) {
+    throw new GatewayCredentialLeaseError(
+      "GATEWAY_CREDENTIAL_ROUTE_MISMATCH",
+      "The requested credential lease does not match its bound model route.",
+      409,
+    );
+  }
+  if (
+    input.routeBinding?.status === "qualified" &&
+    input.routeBinding.credentialRevision !== row.gateway.credentialRevision
+  ) {
+    throw new GatewayCredentialLeaseError(
+      "GATEWAY_CREDENTIAL_ROUTE_MISMATCH",
+      "The requested credential lease has stale route credential evidence.",
+      409,
+    );
+  }
   if (row.gateway.deploymentId) {
     const deployment = await knowledgeDb.query.aiDeployments.findFirst({
       where: and(
         eq(schema.aiDeployments.id, row.gateway.deploymentId),
         eq(schema.aiDeployments.organizationId, input.organizationId),
         eq(schema.aiDeployments.environmentId, input.environmentId),
-        eq(schema.aiDeployments.status, "ready")
+        eq(schema.aiDeployments.status, "ready"),
       ),
       columns: { id: true },
     });
@@ -66,7 +86,7 @@ export async function issueGatewayCredentialLease(
       throw new GatewayCredentialLeaseError(
         "GATEWAY_DEPLOYMENT_NOT_READY",
         "The requested managed model deployment is unavailable.",
-        409
+        409,
       );
     }
   }
@@ -76,14 +96,14 @@ export async function issueGatewayCredentialLease(
     const connection = await knowledgeDb.query.aiProviderConnections.findFirst({
       where: eq(
         schema.aiProviderConnections.id,
-        row.gateway.providerConnectionId
+        row.gateway.providerConnectionId,
       ),
     });
     if (!connection) {
       throw new GatewayCredentialLeaseError(
         "GATEWAY_CREDENTIAL_MISSING",
         "The managed provider connection is unavailable.",
-        503
+        503,
       );
     }
     apiKey = resolveRunPodProviderApiKey(connection);
@@ -101,6 +121,9 @@ export async function issueGatewayCredentialLease(
       rawModelId: row.model.rawModelId,
       metadata: row.model.metadata,
     },
+    ...(input.routeBinding !== undefined
+      ? { routeBinding: input.routeBinding }
+      : {}),
     apiKey,
     now,
   });

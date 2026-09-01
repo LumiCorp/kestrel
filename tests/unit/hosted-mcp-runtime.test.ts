@@ -169,7 +169,7 @@ test("hosted MCP tools are scoped to a run grant and use only gateway authorizat
     );
     assert.deepEqual(
       registry.getCapabilityManifest({ runContext })[0]?.approvalCapabilities,
-      []
+      ["mcp.invoke"]
     );
     const result = await callTool(registry,
       "github.issues.list",

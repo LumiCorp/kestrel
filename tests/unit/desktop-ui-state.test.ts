@@ -14,11 +14,12 @@ import {
 } from "../../src/desktopShell/contracts.js";
 
 
-test("Desktop bridge v8 exposes onboarding, update, workspace, attachment, and operator-control contracts", () => {
-  assert.equal(DESKTOP_BRIDGE_VERSION, "8");
+test("Desktop bridge v9 exposes onboarding, update, workspace, attachment, browser-viewer, and operator-control contracts", () => {
+  assert.equal(DESKTOP_BRIDGE_VERSION, "9");
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("onboarding"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("updates"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("attachments"), true);
+  assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("browser_viewer"), true);
   assert.equal(DESKTOP_BRIDGE_CAPABILITIES.includes("operator_control"), true);
   assert.deepEqual(parseDesktopOperatorControlRequest({
     action: "reply",

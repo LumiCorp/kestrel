@@ -3,6 +3,7 @@ import { z } from "zod";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import type { DbThread } from "@/lib/knowledge/db-types";
 import { parseUrlElicitation } from "@/lib/mcp/interaction-protocol";
+import type { RuntimeApprovalPolicyView } from "@/lib/turns/client-contract";
 
 export const MOBILE_API_VERSION = "1";
 
@@ -170,10 +171,11 @@ export function mobileInteractionDto(
     status: string;
     requestEnvelope: Record<string, unknown>;
     createdAt: Date;
+    approvalPolicy?: RuntimeApprovalPolicyView;
     approvalOutcome?: {
-      decision: "approved" | "denied";
-      authorizationState: "pending" | "accepted" | "failed";
-      effectState: "not_started" | "started" | "unknown";
+      decision: "approved" | "denied" | "expired";
+      authorizationState: "pending" | "accepted" | "denied" | "expired" | "failed";
+      effectState: "not_started" | "started" | "committed" | "unknown";
       failureCode?: string;
       publicMessage?: string;
       retryEligible: boolean;
@@ -195,13 +197,66 @@ export function mobileInteractionDto(
         }
       : {};
   if (kind === "sampling" || kind === "mcp_sampling" || kind === "approval") {
+    const isCanonicalHostedApproval =
+      kind === "approval" &&
+      interaction.requestEnvelope.version ===
+        "runner_hosted_tool_approval_interaction_v4";
+    const version = isCanonicalHostedApproval
+      ? ("runner_hosted_tool_approval_interaction_v4" as const)
+      : ("legacy" as const);
+    const approval = asRecord(interaction.requestEnvelope.approval);
+    const presentation = asRecord(approval?.presentation);
+    const policy = asRecord(presentation?.policy);
+    const browserDomainGrant = asRecord(presentation?.browserDomainGrant);
+    const isBrowserDomainGrant =
+      approval?.toolName === "browser.request_grant" &&
+      browserDomainGrant?.version === "browser_domain_grant_approval_v1" &&
+      typeof browserDomainGrant.canonicalDomain === "string" &&
+      typeof browserDomainGrant.requestingActorId === "string" &&
+      browserDomainGrant.requestingActorId.length > 0 &&
+      typeof browserDomainGrant.environmentId === "string" &&
+      browserDomainGrant.environmentId.length > 0 &&
+      browserDomainGrant.scope === "apex_and_subdomains" &&
+      browserDomainGrant.port === 443 &&
+      browserDomainGrant.actionLabel === "Allow and remember";
+    const currentApprovalActionable =
+      interaction.approvalPolicy !== undefined &&
+      interaction.approvalPolicy.environmentApprovalMode !== "deny" &&
+      interaction.approvalPolicy.projectApprovalMode !== "deny" &&
+      interaction.approvalPolicy.subjectApprovalMode !== "deny" &&
+      interaction.approvalPolicy.approvalResourceAvailable !== false;
+    const rememberEligible =
+      version === "runner_hosted_tool_approval_interaction_v4" &&
+      !isBrowserDomainGrant &&
+      policy?.rememberApprovalEligible === true &&
+      interaction.approvalPolicy?.rememberApprovalEligible === true &&
+      currentApprovalActionable;
     return {
       id,
       kind: "approval" as const,
-      title: "Allow this agent request?",
+      version,
+      decisions:
+        ["failed", "resolved", "cancelled"].includes(interaction.status)
+          ? ([] as const)
+          : kind === "approval" &&
+              interaction.source === "runtime" &&
+              !isCanonicalHostedApproval
+            ? ([] as const)
+          : rememberEligible
+          ? (["decline", "approve_once", "remember_approval"] as const)
+          : version === "runner_hosted_tool_approval_interaction_v4"
+            ? currentApprovalActionable
+              ? (["decline", "approve_once"] as const)
+              : (["decline"] as const)
+          : (["approve", "deny"] as const),
+      title: isBrowserDomainGrant
+        ? "Allow this Browser domain?"
+        : "Allow this agent request?",
       prompt:
-        prompt ??
-        "The agent requested a protected operation. Review and allow or deny it.",
+        isBrowserDomainGrant
+          ? `Person ${browserDomainGrant.requestingActorId as string} in Environment ${browserDomainGrant.environmentId as string}: allow ${browserDomainGrant.canonicalDomain as string} (HTTPS apex and subdomains, port 443) now and remember it for eligible Projects in that Environment.`
+          : prompt ??
+            "The agent requested a protected operation. Review and allow or deny it.",
       fields: [],
       createdAt: interaction.createdAt.toISOString(),
       ...lifecycle,
@@ -224,6 +279,8 @@ export function mobileInteractionDto(
     return {
       id,
       kind: "approval" as const,
+      version: "legacy" as const,
+      decisions: ["approve", "deny"] as const,
       title: "Allow this external step?",
       prompt: urlRequest.message,
       fields: [],

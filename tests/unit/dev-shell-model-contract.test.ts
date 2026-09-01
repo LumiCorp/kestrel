@@ -60,3 +60,13 @@ test("canonical and packaged exec_command contracts carry the exact hard timeout
 test("bounded dev.shell.run no longer recommends persistent development servers", () => {
   assert.doesNotMatch(devShellRunTool.definition.description, /dev servers/u);
 });
+
+test("Build mode carries the exact-path Git commit contract", () => {
+  assert.match(BUILD_MODE_DELIBERATOR_PROMPT, /git status --short/u);
+  assert.match(BUILD_MODE_DELIBERATOR_PROMPT, /git add -- <paths>/u);
+  assert.match(BUILD_MODE_DELIBERATOR_PROMPT, /git diff --cached --name-status/u);
+  assert.match(BUILD_MODE_DELIBERATOR_PROMPT, /git rev-parse HEAD/u);
+  assert.match(BUILD_MODE_DELIBERATOR_PROMPT, /report hash and residual files/u);
+  assert.match(BUILD_MODE_DELIBERATOR_PROMPT, /Never broad-stage generated dependencies or unrelated files/u);
+  assert.match(BUILD_MODE_DELIBERATOR_PROMPT, /silently change `\.gitignore`/u);
+});

@@ -43,6 +43,7 @@ docker run --detach \
   --env KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN=gateway-smoke-token \
   --env KESTREL_ENVIRONMENT_ID=environment-smoke \
   --env KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY=gateway-smoke-public-key \
+  --env FLY_MACHINE_ID=gateway-smoke-machine \
   --entrypoint /bin/sh \
   "$image" -c 'node /tmp/control-fixture.mjs & fixture=$!; for i in $(seq 1 50); do node -e '\''const net=require("node:net");const s=net.connect(18081,"127.0.0.1",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))'\'' && exec node apps/environment-router/dist/server.js; kill -0 "$fixture" 2>/dev/null || exit 1; sleep .1; done; exit 1' >/dev/null
 
@@ -54,7 +55,7 @@ node -e '
   const health = JSON.parse(process.argv[1]);
   if (
     health.ok !== true ||
-    health.runtimeContractRevision !== 2 ||
+    health.runtimeContractRevision !== 3 ||
     health.configurationReady !== true ||
     health.gatewayConfig?.activeVersion !== 3 ||
     !health.gatewayConfig?.acceptedVersions?.includes(3)

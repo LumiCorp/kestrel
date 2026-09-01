@@ -542,7 +542,9 @@ async function waitForDaemon(input: {
     try {
       const inspected = await inspectWithExpected(
         {
-          env: { KESTREL_CORE_HOME: input.homePath },
+          // inspectWithExpected only reads the resolved Core home here. Keep the
+          // complete process environment shape while overriding that one value.
+          env: { ...process.env, KESTREL_CORE_HOME: input.homePath },
           coreVersion: input.expectedBuildIdentity.suiteVersion,
           buildIdentity: input.expectedBuildIdentity,
           isPidAlive: input.isPidAlive,

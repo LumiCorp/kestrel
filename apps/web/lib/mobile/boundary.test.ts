@@ -50,6 +50,39 @@ test("mobile OpenAPI contract contains every implemented companion route", () =>
   ]);
 });
 
+test("mobile approval contract publishes separate App and canonical hosted decisions", () => {
+  const resolve = contract.components.schemas.ResolveInteractionInput as {
+    properties?: { decision?: { enum?: string[] } };
+  };
+  assert.deepEqual(resolve.properties?.decision?.enum, [
+    "approve",
+    "deny",
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ]);
+  const interaction = contract.components.schemas.MobileInteraction as {
+    required?: string[];
+    properties?: {
+      version?: { enum?: string[] };
+      decisions?: { items?: { enum?: string[] } };
+    };
+  };
+  assert.equal(interaction.required?.includes("version"), false);
+  assert.equal(interaction.required?.includes("decisions"), false);
+  assert.deepEqual(interaction.properties?.version?.enum, [
+    "legacy",
+    "runner_hosted_tool_approval_interaction_v4",
+  ]);
+  assert.deepEqual(interaction.properties?.decisions?.items?.enum, [
+    "approve",
+    "deny",
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ]);
+});
+
 test("every Thread mutation returns the authoritative snapshot", () => {
   const mutations = [
     ["/threads", "post", ["200", "202"]],

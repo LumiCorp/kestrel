@@ -7,6 +7,7 @@ import {
 } from "./gateway-utils";
 import { getMatchingRunPodValidationEvidence } from "./runpod-connection-test";
 import type { GatewayCredentialStatus } from "./gateway-credential-health";
+import type { ModelCredentialRouteBindingV2 } from "../../../../src/kestrel/contracts/model-route";
 
 export const GATEWAY_CREDENTIAL_LEASE_VERSION =
   "gateway-credential-lease-v3" as const;
@@ -18,6 +19,7 @@ export type GatewayCredentialLeaseRequest = {
   organizationId: string;
   environmentId: string;
   rawModelId: string;
+  routeBinding?: ModelCredentialRouteBindingV2 | undefined;
 };
 
 export type GatewayCredentialLease = {
@@ -27,6 +29,7 @@ export type GatewayCredentialLease = {
   organizationId: string;
   environmentId: string;
   rawModelId: string;
+  routeBinding?: ModelCredentialRouteBindingV2 | undefined;
   provider: Exclude<GatewayProtocolProvider, "replicate">;
   protocol: GatewayLanguageProtocol;
   baseUrl: string | null;
@@ -70,7 +73,7 @@ export function assertGatewayCredentialLeaseEligible(input: {
     throw new GatewayCredentialLeaseError(
       "GATEWAY_CREDENTIAL_NOT_READY",
       "The requested gateway credential must be validated before use.",
-      409
+      409,
     );
   }
   if (
@@ -82,7 +85,7 @@ export function assertGatewayCredentialLeaseEligible(input: {
     throw new GatewayCredentialLeaseError(
       "GATEWAY_MODEL_NOT_APPROVED",
       "The requested gateway model is unavailable or not approved.",
-      404
+      404,
     );
   }
   const runPodValidationEvidence =
@@ -97,7 +100,7 @@ export function assertGatewayCredentialLeaseEligible(input: {
     throw new GatewayCredentialLeaseError(
       "GATEWAY_MODEL_NOT_VALIDATED",
       "The requested RunPod model has not passed Kestrel validation.",
-      409
+      409,
     );
   }
 }
@@ -111,7 +114,7 @@ export function authorizeGatewayCredentialBroker(input: {
     throw new GatewayCredentialLeaseError(
       "GATEWAY_CREDENTIAL_BROKER_NOT_CONFIGURED",
       "Gateway credential broker authentication is not configured.",
-      503
+      503,
     );
   }
   const prefix = "Bearer ";
@@ -119,12 +122,12 @@ export function authorizeGatewayCredentialBroker(input: {
     throw new GatewayCredentialLeaseError(
       "GATEWAY_CREDENTIAL_BROKER_UNAUTHORIZED",
       "Gateway credential broker authorization is required.",
-      401
+      401,
     );
   }
   const supplied = Buffer.from(
     input.authorization.slice(prefix.length),
-    "utf8"
+    "utf8",
   );
   const expected = Buffer.from(expectedToken, "utf8");
   if (
@@ -134,7 +137,7 @@ export function authorizeGatewayCredentialBroker(input: {
     throw new GatewayCredentialLeaseError(
       "GATEWAY_CREDENTIAL_BROKER_UNAUTHORIZED",
       "Gateway credential broker authorization is invalid.",
-      401
+      401,
     );
   }
 }
@@ -148,15 +151,26 @@ export function buildGatewayCredentialLease(input: {
     baseUrl: string | null;
   };
   model: { rawModelId: string; metadata: unknown };
+  routeBinding?: ModelCredentialRouteBindingV2 | undefined;
   apiKey: string | null;
   now: Date;
 }): GatewayCredentialLease {
   const provider = input.gateway.provider;
+  if (
+    input.routeBinding !== undefined &&
+    input.routeBinding.provider !== provider
+  ) {
+    throw new GatewayCredentialLeaseError(
+      "GATEWAY_CREDENTIAL_ROUTE_MISMATCH",
+      "The requested credential lease does not match its bound model provider.",
+      409,
+    );
+  }
   if (!input.apiKey && provider !== "ollama") {
     throw new GatewayCredentialLeaseError(
       "GATEWAY_CREDENTIAL_MISSING",
       "The approved gateway does not have a configured credential.",
-      503
+      503,
     );
   }
   const protocol =
@@ -173,7 +187,7 @@ export function buildGatewayCredentialLease(input: {
     throw new GatewayCredentialLeaseError(
       "GATEWAY_ENDPOINT_INVALID",
       "The RunPod gateway endpoint is invalid.",
-      409
+      409,
     );
   }
   return {
@@ -183,6 +197,9 @@ export function buildGatewayCredentialLease(input: {
     organizationId: input.organizationId,
     environmentId: input.environmentId,
     rawModelId: input.model.rawModelId,
+    ...(input.routeBinding !== undefined
+      ? { routeBinding: input.routeBinding }
+      : {}),
     provider,
     protocol,
     baseUrl:
@@ -191,7 +208,7 @@ export function buildGatewayCredentialLease(input: {
         : normalizeRunnerAnthropicBaseUrl(configuredBaseUrl),
     apiKey: input.apiKey,
     expiresAt: new Date(
-      input.now.getTime() + GATEWAY_CREDENTIAL_LEASE_TTL_MS
+      input.now.getTime() + GATEWAY_CREDENTIAL_LEASE_TTL_MS,
     ).toISOString(),
   };
 }
@@ -208,7 +225,7 @@ function normalizeRunnerAnthropicBaseUrl(value: string | null) {
 
 function normalizeRunnerOpenAIBaseUrl(
   value: string | null,
-  provider: Exclude<GatewayProtocolProvider, "replicate">
+  provider: Exclude<GatewayProtocolProvider, "replicate">,
 ) {
   const normalized = value?.trim().replace(/\/+$/u, "") || null;
   if (!normalized) {
@@ -223,7 +240,7 @@ function normalizeRunnerOpenAIBaseUrl(
 }
 
 function getDefaultGatewayBaseUrl(
-  provider: Exclude<GatewayProtocolProvider, "replicate">
+  provider: Exclude<GatewayProtocolProvider, "replicate">,
 ) {
   switch (provider) {
     case "lumi":

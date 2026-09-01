@@ -20,6 +20,7 @@ import type {
   RunConsoleUpdateV1,
   RunLogEntry,
   RunToolUpdateV1,
+  RunToolUpdateV2,
   ToolExecutionClass,
   WorkspaceCheckpointCleanupPolicy,
   WorkspaceCheckpointCleanupResult,
@@ -144,6 +145,9 @@ export type OrdinaryConversationTurn = Omit<
   | "resumeBlockedRun"
   | "resumeRequestId"
   | "recoveryOptionId"
+  | "decision"
+  | "decidingActor"
+  | "preparedApprovalCleanup"
   | "stepAgent"
 >;
 
@@ -178,7 +182,11 @@ export interface ExecutionProfileResolveCommandPayload {
     | "workspace_hosted";
   managedConfiguration?: Record<string, unknown> | undefined;
   authoringProfileId?: string | undefined;
+  exactToolNames?: string[] | undefined;
 }
+
+export type EffectiveToolDecisionV1 =
+  import("../../src/mode/contracts.js").EffectiveToolDecisionV1;
 
 export interface RunCancelCommandPayload {
   sessionId: string;
@@ -673,7 +681,7 @@ export interface RunAgentProgressEventPayload {
 }
 
 export interface RunToolEventPayload {
-  update: RunToolUpdateV1;
+  update: RunToolUpdateV1 | RunToolUpdateV2;
 }
 
 export interface RunCancelledEventPayload {
@@ -720,6 +728,9 @@ export interface SessionDescribedEventPayload {
   threadId?: string | undefined;
   currentStepAgent?: string | undefined;
   updatedAt?: string | undefined;
+  interactionMode?: import("../../src/mode/contracts.js").InteractionMode | undefined;
+  actSubmode?: import("../../src/mode/contracts.js").ActSubmode | undefined;
+  modeResolution?: import("../../src/mode/contracts.js").ModeResolutionV1 | undefined;
   waitFor?: RunCompletedEventPayload["result"]["output"]["waitFor"] | undefined;
   activeAssembly?: OperatorAssemblySummary | undefined;
   operatorInbox?: OperatorInboxSummary | undefined;
@@ -846,6 +857,7 @@ export interface OperatorControlledEventPayload {
   inbox?: OperatorInboxSnapshot | undefined;
   view?: OperatorThreadView | undefined;
   result?: RunTurnResult | undefined;
+  modeResolution?: import("../../src/mode/contracts.js").ModeResolutionV1 | undefined;
 }
 
 export interface ProfileListedEventPayload {
@@ -873,7 +885,9 @@ export interface ExecutionProfileResolvedEventPayload {
       | "workspace_hosted";
     version: number;
   };
+  hostedApprovalProducerProtocol?: "v4" | undefined;
   resolvedProfile: TuiProfile;
+  exactToolDecisions?: Record<string, EffectiveToolDecisionV1> | undefined;
 }
 
 export interface TaskUpdatedEventPayload {

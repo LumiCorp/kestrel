@@ -84,6 +84,15 @@ test("Thread shell keeps document fixed while the transcript scrolls", async ({
 
   await page.goto(`/threads/${threadId}`);
   await expect(page.getByRole("heading", { name: "New Thread" })).toBeVisible();
+  const transcript = page.locator('[data-slot="thread-transcript"]:visible');
+  await expect(transcript).toContainText(
+    "Transcript geometry line 120: enough content to require an internal scroll surface.",
+  );
+  await expect
+    .poll(() =>
+      transcript.evaluate((element) => element.scrollHeight > element.clientHeight)
+    )
+    .toBe(true);
 
   const metrics = await page.evaluate(() => {
     const readBox = (selector: string) => {
@@ -126,7 +135,6 @@ test("Thread shell keeps document fixed while the transcript scrolls", async ({
   expect(metrics.transcript.overflowY).toBe("auto");
   expect(metrics.windowScrollY).toBe(0);
 
-  const transcript = page.locator('[data-slot="thread-transcript"]');
   await transcript.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });

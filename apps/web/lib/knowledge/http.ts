@@ -53,6 +53,10 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     status = 403;
   } else if (
     code === "PROJECT_CONTEXT_CONFLICT" ||
+    code === "EMAIL_TRIGGER_ADDRESS_CONFLICT" ||
+    code === "EMAIL_TRIGGER_PUBLIC_ALIAS" ||
+    code === "EMAIL_TRIGGER_REVISION_CONFLICT" ||
+    code === "EMAIL_TRIGGER_NOT_READY" ||
     code === "PROJECT_SKILL_CONFLICT" ||
     code === "PROJECT_LAST_OWNER" ||
     code === "GITHUB_APPROVAL_REQUIRED" ||
@@ -69,6 +73,9 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     code === "APP_CONNECTION_SCOPE_INVALID" ||
     code === "APP_CAPABILITY_NOT_AVAILABLE" ||
     code === "APP_POLICY_WIDENS_ENVIRONMENT" ||
+    code === "WORKFLOW_MODEL_UNAVAILABLE" ||
+    code === "WORKFLOW_MODEL_UNSUPPORTED" ||
+    code === "WORKFLOW_TOOL_UNAVAILABLE" ||
     code === "MCP_INTERACTION_CONFLICT" ||
     code === "TURN_CONFLICT" ||
     code === "QUEUE_PAUSED" ||
@@ -137,7 +144,10 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     }, { status });
   }
 
-  const body = details ? { error: message, details } : { error: message };
+  const workflowCode = code?.startsWith("WORKFLOW_") ? code : null;
+  const body = details
+    ? { error: message, details, ...(workflowCode ? { code: workflowCode } : {}) }
+    : { error: message, ...(workflowCode ? { code: workflowCode } : {}) };
 
   return NextResponse.json(body, { status });
 }

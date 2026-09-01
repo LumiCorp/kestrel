@@ -21,10 +21,129 @@ import type {
   InternetSearchResultItem,
   TavilyInternetProvider,
 } from "../../tools/internet/contracts.js";
+import { parseDurablePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
 import {
+  authorizeWorkflowRunToolCall,
   type McpToolProvider,
   UnifiedToolRegistry,
 } from "../../tools/runtime/UnifiedToolRegistry.js";
+
+const workflowAuthority = {
+  version: "runner_workflow_run_authority_v2" as const,
+  organizationId: "org-1",
+  environmentId: "env-1",
+  projectId: "project-1",
+  workflowId: "workflow-1",
+  workflowVersionId: "version-1",
+  workflowRunId: "workflow-run-1",
+  activationActorId: "user-1",
+  manifestDigest: "sha256:manifest",
+  manifest: {
+    version: "workflow_capability_manifest_v2" as const,
+    nativeTools: [{
+      toolId: "fs.read_text",
+      descriptorContractRevision: "any-file-revision",
+      authorityRevision: "authority-1",
+    }],
+    actions: [{
+      nodeId: "command-1",
+      toolId: "exec_command",
+      descriptorContractRevision: "descriptor-1",
+      approvalAuthorityRevision: "authority-1",
+      fixedInput: { command: "pnpm run report", cwd: ".", envNames: [], envMode: "inherit" },
+      inputBindings: {},
+      rememberedApprovalScope: {
+        kind: "exec_command_exact" as const,
+        command: "pnpm run report",
+        cwd: ".",
+        envNames: [],
+        envMode: "inherit",
+      },
+    }],
+  },
+  activeStep: { kind: "kestrel" as const, nodeId: "kestrel-1" },
+};
+
+test("workflow run authority allows files and exact explicit commands but rejects drift", () => {
+  const runContext = {
+    runId: "turn-run-1",
+    sessionId: "session-1",
+    payload: { workflowRunAuthority: workflowAuthority },
+    sessionState: {},
+  };
+  const actionRunContext = {
+    ...runContext,
+    payload: {
+      workflowRunAuthority: {
+        ...workflowAuthority,
+        activeStep: {
+          kind: "action" as const,
+          nodeId: "command-1",
+          resolvedInput: { command: "pnpm run report", cwd: ".", envNames: [], envMode: "inherit" },
+        },
+      },
+    },
+  };
+  assert.equal(authorizeWorkflowRunToolCall({
+    runContext,
+    toolId: "fs.read_text",
+    descriptorContractRevision: "any-file-revision",
+    effectiveInput: { path: "notes.txt" },
+    execCommandContinuation: false,
+  }), true);
+  assert.equal(authorizeWorkflowRunToolCall({
+    runContext,
+    toolId: "effect_result_lookup",
+    toolFamily: "runtime",
+    descriptorContractRevision: "runtime-revision",
+    effectiveInput: { idempotencyKey: "effect-1" },
+    execCommandContinuation: false,
+  }), true);
+  assert.equal(authorizeWorkflowRunToolCall({
+    runContext: actionRunContext,
+    toolId: "exec_command",
+    descriptorContractRevision: "descriptor-1",
+    effectiveInput: { command: "pnpm run report", cwd: ".", envNames: [], envMode: "inherit" },
+    execCommandContinuation: false,
+  }), true);
+  assert.throws(() => authorizeWorkflowRunToolCall({
+    runContext: actionRunContext,
+    toolId: "exec_command",
+    descriptorContractRevision: "descriptor-1",
+    effectiveInput: { command: "pnpm run report -- --force", cwd: ".", envNames: [], envMode: "inherit" },
+    execCommandContinuation: false,
+  }), (error) => error instanceof RuntimeFailure && error.code === "WORKFLOW_RUN_AUTHORITY_EXCEEDED");
+  assert.throws(() => authorizeWorkflowRunToolCall({
+    runContext: actionRunContext,
+    toolId: "internet.search",
+    descriptorContractRevision: "descriptor-2",
+    effectiveInput: { query: "unplanned" },
+    execCommandContinuation: false,
+  }), (error) => error instanceof RuntimeFailure && error.code === "WORKFLOW_RUN_AUTHORITY_EXCEEDED");
+});
+
+test("workflow Kestrel steps expose only activated workspace file tools", () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: [
+      "fs.read_text",
+      "exec_command",
+      "evidence.extract",
+      "internet.search",
+      "dialog.open",
+    ],
+  });
+  const runContext = {
+    runId: "turn-run-1",
+    sessionId: "session-1",
+    payload: { workflowRunAuthority: workflowAuthority },
+    sessionState: {},
+  };
+
+  assert.deepEqual(
+    registry.getModelTools({ runContext }).map((tool) => tool.name),
+    ["fs.read_text"],
+  );
+});
 import { isAgentToolResult } from "../../tools/toolResult.js";
 import {
   executeTestToolCall,
@@ -630,6 +749,166 @@ test("UnifiedToolRegistry turns Project App ask policy into a runtime approval g
   ]);
 });
 
+test("UnifiedToolRegistry carries hosted command policy into the canonical manifest", () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["exec_command"],
+    context: {
+      kestrelOne: {
+        appApprovalModes: { exec_command: "ask" },
+        appApprovalPolicies: {
+          exec_command: {
+            environment: "auto",
+            project: "ask",
+            minimum: "auto",
+          },
+        },
+      },
+    },
+  });
+  const capability = registry
+    .getCapabilityManifest()
+    .find((candidate) => candidate.name === "exec_command");
+
+  assert.deepEqual(capability?.approvalCapabilities, [
+    "shell.exec",
+    "external.confirm",
+  ]);
+  assert.equal(capability?.approvalDisposition?.mode, "ask");
+  assert.equal(
+    capability?.approvalDisposition?.reasonCode,
+    "project_restriction",
+  );
+  assert.equal(capability?.approvalAuthority?.kind, "hosted_app_policy");
+});
+
+test("UnifiedToolRegistry prepares an exact remembered command as a durable allow call", async () => {
+  const runContext = createToolRunContext({
+    runId: "run-remembered-command",
+    sessionId: "session-remembered-command",
+    payload: {
+      hostedApprovalAuthority: {
+        organizationId: "org-1",
+        environmentId: "environment-1",
+        projectId: "project-1",
+        threadId: "thread-1",
+      },
+      actor: {
+        actorType: "end_user",
+        actorId: "user-1",
+        tenantId: "org-1",
+      },
+      workspace: {
+        workspaceRoot: "/workspace",
+        sourceWorkspaceRoot: "/workspace",
+      },
+    },
+  });
+  const policy = {
+    appApprovalModes: { exec_command: "ask" as const },
+    appApprovalPolicies: {
+      exec_command: {
+        environment: "ask" as const,
+        minimum: "auto" as const,
+      },
+    },
+  };
+  const baselineRegistry = new UnifiedToolRegistry({
+    allowlist: ["exec_command"],
+    context: { kestrelOne: policy },
+  });
+  const baselineCapability = baselineRegistry
+    .getCapabilityManifest({ runContext })
+    .find((candidate) => candidate.name === "exec_command")!;
+  const baselineSnapshot = await baselineRegistry.createToolSurfaceSnapshot({
+    runContext,
+    toolNames: ["exec_command"],
+  });
+  const baselineActivation = baselineSnapshot.tools.find(
+    (candidate) => candidate.descriptor.toolId === "exec_command",
+  )!;
+  const effectiveInput = (await baselineRegistry.inspectToolCall!(
+    {
+      activation: baselineActivation,
+      origin: {
+        kind: "trusted_runtime",
+        producerId: "kestrel.tests:v1",
+        adapterId: "kestrel.tests.direct:v1",
+      },
+      rawInput: { command: "printf ok", cwd: "." },
+    },
+    { runContext },
+  )).effectiveInput;
+  const evidence = {
+    version: "remembered_tool_approval_evidence_v1" as const,
+    organizationId: "org-1",
+    environmentId: "environment-1",
+    projectId: "project-1",
+    threadId: "thread-1",
+    actorUserId: "user-1",
+    toolIdentity: {
+      version: "stable_tool_approval_identity_v1" as const,
+      toolId: "exec_command",
+      descriptorContractRevision: baselineCapability.descriptorRef!.contractRevision,
+      approvalAuthorityRevision: baselineCapability.approvalAuthority!.revision,
+    },
+    scope: {
+      kind: "exec_command_exact" as const,
+      command: effectiveInput.command as string,
+      cwd: effectiveInput.cwd as string,
+      envNames: Array.isArray(effectiveInput.envNames)
+        ? [...effectiveInput.envNames] as string[]
+        : [],
+      envMode: effectiveInput.envMode as string,
+    },
+    sourceInteractionId: "interaction-remembered-command",
+  };
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["exec_command"],
+    context: {
+      kestrelOne: {
+        ...policy,
+        rememberedToolApprovalEvidence: [evidence],
+      },
+    },
+  });
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    runContext,
+    toolNames: ["exec_command"],
+  });
+  const activation = snapshot.tools.find(
+    (candidate) => candidate.descriptor.toolId === "exec_command",
+  )!;
+  const prepared = await registry.prepareToolCall(
+    {
+      runId: runContext.runId,
+      sessionId: runContext.sessionId,
+      callId: "remembered-command-call",
+      activation,
+      origin: {
+        kind: "trusted_runtime",
+        producerId: "kestrel.tests:v1",
+        adapterId: "kestrel.tests.direct:v1",
+      },
+      rawInput: { command: "printf ok", cwd: "." },
+      policy: {
+        decision: "approval_required",
+        policyRevision: baselineCapability.approvalAuthority!.revision,
+      },
+      approval: {
+        authorityRevision: baselineCapability.approvalAuthority!.revision,
+      },
+      approvalCapabilities: baselineCapability.approvalCapabilities,
+    },
+    { runContext },
+  );
+
+  assert.equal(prepared.policy.decision, "allow");
+  assert.equal(prepared.stableAuthority, undefined);
+  assert.equal(prepared.stableToolIdentity, undefined);
+  assert.equal(prepared.executionRequirements, undefined);
+  assert.doesNotThrow(() => parseDurablePreparedToolCallV1(prepared));
+});
+
 test("UnifiedToolRegistry lets explicit Automatic App policy override a tool default", () => {
   const toolName = "kestrel_one.google_calendar_create_event";
   const registry = new UnifiedToolRegistry({
@@ -697,6 +976,202 @@ test("UnifiedToolRegistry preserves hosted App policy provenance", () => {
     "subject_restriction",
   );
   assert.equal(capability?.approvalAuthority?.kind, "hosted_app_policy");
+});
+
+test("UnifiedToolRegistry applies exact remembered thread evidence to eligible Ask First", () => {
+  const toolName = "internet.search";
+  const runContext = createToolRunContext({
+    runId: "run-remembered-1",
+    sessionId: "session-remembered-1",
+    payload: {
+      hostedApprovalAuthority: {
+        organizationId: "org-1",
+        environmentId: "environment-1",
+        projectId: "project-1",
+        threadId: "thread-1",
+      },
+      actor: {
+        actorType: "end_user",
+        actorId: "user-1",
+        tenantId: "org-1",
+      },
+    },
+  });
+  const policy = {
+    appApprovalModes: { [toolName]: "ask" as const },
+    appApprovalPolicies: {
+      [toolName]: {
+        environment: "ask" as const,
+        minimum: "auto" as const,
+      },
+    },
+  };
+  const baselineRegistry = new UnifiedToolRegistry({
+    allowlist: [toolName],
+    context: { kestrelOne: policy },
+  });
+  const baseline = baselineRegistry
+    .getCapabilityManifest({ runContext })
+    .find((candidate) => candidate.name === toolName);
+  assert.notEqual(baseline?.descriptorRef, undefined);
+  assert.notEqual(baseline?.approvalAuthority, undefined);
+  const toolIdentity = {
+    version: "stable_tool_approval_identity_v1" as const,
+    toolId: toolName,
+    descriptorContractRevision: baseline!.descriptorRef!.contractRevision,
+    approvalAuthorityRevision: baseline!.approvalAuthority!.revision,
+  };
+  const evidence = {
+    version: "remembered_tool_approval_evidence_v1" as const,
+    organizationId: "org-1",
+    environmentId: "environment-1",
+    projectId: "project-1",
+    threadId: "thread-1",
+    actorUserId: "user-1",
+    toolIdentity,
+        scope: { kind: "tool_identity" as const },
+    sourceInteractionId: "interaction-1",
+  };
+  const rememberedRegistry = new UnifiedToolRegistry({
+    allowlist: [toolName],
+    context: {
+      kestrelOne: {
+        ...policy,
+        rememberedToolApprovalEvidence: [evidence],
+      },
+    },
+  });
+  const remembered = rememberedRegistry
+    .getCapabilityManifest({ runContext })
+    .find((candidate) => candidate.name === toolName);
+  assert.equal(remembered?.approvalDisposition?.mode, "auto");
+  assert.equal(
+    remembered?.approvalDisposition?.reasonCode,
+    "remembered_thread",
+  );
+  assert.deepEqual(remembered?.approvalCapabilities, undefined);
+
+  for (const mismatchedEvidence of [
+    { ...evidence, threadId: "thread-2" },
+    { ...evidence, actorUserId: "user-2" },
+    { ...evidence, projectId: "project-2" },
+    { ...evidence, environmentId: "environment-2" },
+    {
+      ...evidence,
+      toolIdentity: { ...toolIdentity, toolId: "internet.crawl" },
+    },
+    {
+      ...evidence,
+      toolIdentity: {
+        ...toolIdentity,
+        descriptorContractRevision: `sha256:${"b".repeat(64)}`,
+      },
+    },
+    {
+      ...evidence,
+      toolIdentity: {
+        ...toolIdentity,
+        approvalAuthorityRevision: "changed-authority",
+      },
+    },
+  ]) {
+    const mismatchRegistry = new UnifiedToolRegistry({
+      allowlist: [toolName],
+      context: {
+        kestrelOne: {
+          ...policy,
+          rememberedToolApprovalEvidence: [mismatchedEvidence],
+        },
+      },
+    });
+    const mismatch = mismatchRegistry
+      .getCapabilityManifest({ runContext })
+      .find((candidate) => candidate.name === toolName);
+    assert.equal(mismatch?.approvalDisposition?.mode, "ask");
+    assert.equal(
+      mismatch?.approvalDisposition?.reasonCode,
+      "environment_policy",
+    );
+  }
+});
+
+test("UnifiedToolRegistry keeps stable approval identity across runs and preserves stricter policy", () => {
+  const toolName = "internet.search";
+  const makeRunContext = (runId: string) =>
+    createToolRunContext({
+      runId,
+      sessionId: `session-${runId}`,
+      payload: {
+        hostedApprovalAuthority: {
+          organizationId: "org-1",
+          environmentId: "environment-1",
+          projectId: "project-1",
+          threadId: "thread-1",
+        },
+        actor: {
+          actorType: "end_user",
+          actorId: "user-1",
+          tenantId: "org-1",
+        },
+      },
+    });
+  const policy = {
+    appApprovalModes: { [toolName]: "ask" as const },
+    appApprovalPolicies: {
+      [toolName]: {
+        environment: "auto" as const,
+        subject: "ask" as const,
+        minimum: "auto" as const,
+      },
+    },
+  };
+  const baselineRegistry = new UnifiedToolRegistry({
+    allowlist: [toolName],
+    context: { kestrelOne: policy },
+  });
+  const first = baselineRegistry
+    .getCapabilityManifest({ runContext: makeRunContext("run-1") })
+    .find((candidate) => candidate.name === toolName)!;
+  const second = baselineRegistry
+    .getCapabilityManifest({ runContext: makeRunContext("run-2") })
+    .find((candidate) => candidate.name === toolName)!;
+  assert.equal(
+    first.approvalAuthority?.revision,
+    second.approvalAuthority?.revision,
+  );
+  const evidence = {
+    version: "remembered_tool_approval_evidence_v1" as const,
+    organizationId: "org-1",
+    environmentId: "environment-1",
+    projectId: "project-1",
+    threadId: "thread-1",
+    actorUserId: "user-1",
+    toolIdentity: {
+      version: "stable_tool_approval_identity_v1" as const,
+      toolId: toolName,
+      descriptorContractRevision: first.descriptorRef!.contractRevision,
+      approvalAuthorityRevision: first.approvalAuthority!.revision,
+    },
+        scope: { kind: "tool_identity" as const },
+    sourceInteractionId: "interaction-1",
+  };
+  const rememberedRegistry = new UnifiedToolRegistry({
+    allowlist: [toolName],
+    context: {
+      kestrelOne: {
+        ...policy,
+        rememberedToolApprovalEvidence: [evidence],
+      },
+    },
+  });
+  const capability = rememberedRegistry
+    .getCapabilityManifest({ runContext: makeRunContext("run-3") })
+    .find((candidate) => candidate.name === toolName);
+  assert.equal(capability?.approvalDisposition?.mode, "ask");
+  assert.equal(
+    capability?.approvalDisposition?.reasonCode,
+    "subject_restriction",
+  );
 });
 
 test("UnifiedToolRegistry inspection validates without reserving a prepared execution", async () => {
@@ -827,7 +1302,7 @@ test("UnifiedToolRegistry renews and retries exactly once after a pre-dispatch e
     );
     if (authorization === `Bearer ${initialTicket}`) {
       return Response.json(
-        { error: { code: "EXECUTION_AUTH_EXPIRED" } },
+        { error: { code: "TICKET_EXPIRED" } },
         { status: 401 },
       );
     }
@@ -2300,6 +2775,11 @@ test("UnifiedToolRegistry carries source-write authority and write roots for def
   const registry = new UnifiedToolRegistry({
     allowlist: ["dev.shell.run"],
     context: {
+      fileSystem: {
+        workspaceRoot: "/workspace",
+        tempRoots: [],
+        readOnlyRoots: [],
+      },
       devShell: {
         enabled: true,
       },
@@ -2335,7 +2815,6 @@ test("UnifiedToolRegistry carries source-write authority and write roots for def
         sessionId: "session-1",
         payload: {
           workspace: {
-            workspaceRoot: "/workspace",
             managedWorktreeRequired: false,
             workspaceAuthority: {
               mode: "draft_workspace",
@@ -2747,6 +3226,8 @@ test("UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn
     allowlist: [
       "dialog.open",
       "dialog.send",
+      "dialog.read",
+      "dialog.list",
       "dialog.close",
       "agent.spawn",
       "delegate.spawn_child",
@@ -2757,6 +3238,12 @@ test("UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn
           throw new Error("not called");
         },
         async send() {
+          throw new Error("not called");
+        },
+        async read() {
+          throw new Error("not called");
+        },
+        async list() {
           throw new Error("not called");
         },
         async close() {
@@ -2775,7 +3262,7 @@ test("UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn
 
   assert.deepEqual(
     registry.getModelTools().map((tool) => tool.name),
-    ["dialog.open", "dialog.send", "dialog.close"],
+    ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"],
   );
 });
 
@@ -2807,7 +3294,7 @@ test("Kestrel-One profile exposes only model-visible collaborator dialogs", asyn
           toolName.startsWith("delegate.") ||
           toolName === "agent.spawn",
       ),
-    ["dialog.open", "dialog.send", "dialog.close"],
+    ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"],
   );
 });
 
@@ -2851,7 +3338,7 @@ test("every canonical Kestrel One environment exposes dialogs without legacy del
             name.startsWith("delegate.") ||
             name === "agent.spawn",
         ),
-      ["dialog.open", "dialog.send", "dialog.close"],
+      ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"],
     );
   }
 });
@@ -2915,6 +3402,12 @@ test("dialog.open validates its minimal name and message contract", async () => 
         async send() {
           throw new Error("not called");
         },
+        async read() {
+          throw new Error("not called");
+        },
+        async list() {
+          throw new Error("not called");
+        },
         async close() {
           throw new Error("not called");
         },
@@ -2948,34 +3441,27 @@ test("dialog.open validates its minimal name and message contract", async () => 
       }),
     /parentSessionId/,
   );
+  await assert.rejects(
+    () =>
+      validateToolInput(registry, "dialog.open", {
+        name: "Peregrine",
+        message: "Investigate failing tests",
+        agentId: "external-agent",
+      }),
+    /agentId/,
+  );
 });
 
-test("dialog.open uses active thread identity and forbids nested dialogs", async () => {
-  const requests: unknown[] = [];
-  const now = new Date().toISOString();
+test("dialog cursor schemas reject empty and ambiguous pagination inputs", async () => {
   const registry = new UnifiedToolRegistry({
-    allowlist: ["dialog.open"],
+    allowlist: ["dialog.read", "dialog.list"],
     context: {
       dialogService: {
-        async open(input) {
-          requests.push(input);
-          return {
-            dialogId: "dialog-child",
-            name: input.name,
-            parentSessionId: input.parentSessionId,
-            status: "open",
-            active: true,
-            childSessionId: "child-session",
-            createdAt: now,
-            updatedAt: now,
-          };
-        },
-        async send() {
-          throw new Error("not called");
-        },
-        async close() {
-          throw new Error("not called");
-        },
+        async open() { throw new Error("not called"); },
+        async send() { throw new Error("not called"); },
+        async read() { throw new Error("not called"); },
+        async list() { throw new Error("not called"); },
+        async close() { throw new Error("not called"); },
       },
     },
     mcpManager: new MockMcpProvider({
@@ -2985,6 +3471,80 @@ test("dialog.open uses active thread identity and forbids nested dialogs", async
       tools: [],
     }),
   });
+  await registry.refresh();
+
+  assert.deepEqual(
+    await validateToolInput(registry, "dialog.read", { dialogId: "dialog-1" }),
+    { dialogId: "dialog-1" },
+  );
+  assert.deepEqual(
+    await validateToolInput(registry, "dialog.read", {
+      dialogId: "dialog-1",
+      afterCursor: "cursor-1",
+    }),
+    { dialogId: "dialog-1", afterCursor: "cursor-1" },
+  );
+  await assert.rejects(
+    () => validateToolInput(registry, "dialog.read", { dialogId: "dialog-1", afterCursor: "" }),
+    /Invalid dialog\.read/u,
+  );
+  await assert.rejects(
+    () => validateToolInput(registry, "dialog.read", {
+      dialogId: "dialog-1",
+      afterCursor: "cursor-1",
+      beforeCursor: "cursor-2",
+    }),
+    /Invalid dialog\.read/u,
+  );
+  await assert.rejects(
+    () => validateToolInput(registry, "dialog.list", { cursor: "" }),
+    /Invalid dialog\.list/u,
+  );
+});
+
+test("dialog.open uses active thread identity and forbids nested dialogs", async () => {
+  const requests: unknown[] = [];
+  const now = new Date().toISOString();
+  const dialogService = {
+    async open(input: { name: string; parentSessionId: string }) {
+      requests.push(input);
+      return {
+        dialogId: "dialog-child",
+        created: true,
+        name: input.name,
+        parentSessionId: input.parentSessionId,
+        status: "open" as const,
+        activity: "working" as const,
+        active: true,
+        childSessionId: "child-session",
+        createdAt: now,
+        updatedAt: now,
+      };
+    },
+    async send() {
+      throw new Error("not called");
+    },
+    async read() {
+      throw new Error("not called");
+    },
+    async list() {
+      throw new Error("not called");
+    },
+    async close() {
+      throw new Error("not called");
+    },
+  };
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["dialog.open"],
+    context: {},
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+  });
+  registry.bindOrchestrationServices({ dialogService });
   await registry.refresh();
   const result = await callTool(
     registry,
@@ -3045,7 +3605,7 @@ test("dialog.open uses active thread identity and forbids nested dialogs", async
     String(
       (nested.auditRecord.error as { message?: string } | undefined)?.message,
     ),
-    /Only Kestrel can open collaborator dialogs/,
+    /Only Kestrel in the main conversation can open collaborators/,
   );
 });
 

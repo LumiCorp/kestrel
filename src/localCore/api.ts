@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createReadStream, existsSync } from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import {
   chmod,
@@ -19,6 +20,7 @@ import {
   createRunnerServiceHttpHandler,
   type RunnerServiceHttpHandler,
 } from "../../cli/runner/RunnerService.js";
+import { createDurableSessionDescriber } from "../../cli/runner/DurableSessionDescriber.js";
 import { HistoryStore } from "../../cli/history/HistoryStore.js";
 import { UiStateStore } from "../../cli/ink/persistence/UiStateStore.js";
 import {
@@ -52,14 +54,19 @@ import {
 } from "../replay/RunReplayService.js";
 import { buildRuntimeReplayBundle } from "../replay/RuntimeReplayBundle.js";
 import type {
+  DesktopBrowserPersonalDomainsV1,
   DesktopManagedProjectRun,
   DesktopPackageManager,
   DesktopProjectRegistration,
 } from "../desktopShell/contracts.js";
 import {
+  DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
+  DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
   DESKTOP_UI_STATE_MAX_BYTES,
+  parseDesktopBrowserViewerInputRequest,
   parseDesktopUiStateV1,
 } from "../desktopShell/contracts.js";
+import { parseDesktopBrowserPersonalDomains } from "../desktopShell/browserPersonalDomains.js";
 import type {
   EnsureLocalCoreReadyOptions,
   LocalCoreBuildIdentityV1,
@@ -81,7 +88,10 @@ import {
 } from "./connection.js";
 import { LocalCoreClient } from "./client.js";
 import { LocalCoreDesktopEnvironmentManager } from "./desktopEnvironmentConnector.js";
-import { LocalCoreKestrelOneAccountManager } from "./kestrelOneAccount.js";
+import {
+  KestrelOneReceivingAuthorizationError,
+  LocalCoreKestrelOneAccountManager,
+} from "./kestrelOneAccount.js";
 import {
   createDesktopProjectRunLedger,
   DesktopProjectRunRegistry,
@@ -93,8 +103,20 @@ import {
 } from "./desktopAttachments.js";
 import { syncDesktopThreadWorkspace } from "./desktopThreadWorkspace.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
-import { createLocalCoreRunnerRuntimeFactory } from "./executionRuntime.js";
 import {
+  createLocalCoreDevShellStoreBinding,
+  createLocalCoreRunnerRuntimeFactory,
+} from "./executionRuntime.js";
+import {
+  DesktopBrowserService,
+  type DesktopBrowserServiceOptions,
+} from "./desktopBrowserService.js";
+import { createLocalCoreDesktopBrowserViewerEventSink } from "./desktopBrowserViewerEvidence.js";
+import { LocalCoreDesktopBrowserAuthorityResolver } from "./desktopBrowserAuthority.js";
+import type { BrowserServicePort } from "../browser/contracts.js";
+import { getDesktopBrowserRuntimeExecutableRelativePaths } from "../browser/runtimeReleaseManifest.js";
+import {
+  mutateLocalCoreLocalSettings,
   patchLocalCoreLocalSettings,
   readLocalCoreLocalSettings,
 } from "./localSettings.js";
@@ -130,6 +152,10 @@ import type {
   LocalCoreToolReadiness,
 } from "./providerReadiness.js";
 import { createLocalCoreRuntimeEnvironmentResolver } from "./runtimeEnvironment.js";
+import {
+  LocalCoreModelReadinessStore,
+  qualifyLocalCoreModelReadiness,
+} from "./modelReadiness.js";
 import {
   LocalCoreRuntimeConfigurationError,
   LocalCoreRuntimeConfigurationStore,
@@ -181,6 +207,14 @@ export interface StartLocalCoreApiServerOptions extends EnsureLocalCoreReadyOpti
    * production Keychain backend is activated with the Desktop migration.
    */
   credentialStore?: LocalCoreCredentialStore | undefined;
+  /**
+   * Test-only transport injection for the explicit, operator-triggered model
+   * readiness refresh. Production deliberately uses the installed adapter's
+   * fetch transport.
+   */
+  modelQualificationFetchImpl?: typeof fetch | undefined;
+  /** Test/embedding override. Production constructs the packaged Desktop host. */
+  browserService?: BrowserServicePort | undefined;
 }
 
 interface LocalCoreExecutionBundle {
@@ -216,12 +250,14 @@ export async function startLocalCoreApiServer(
   }
   const home = resolveKestrelCoreHome(options.env, options.platform);
   const paths = resolveLocalCorePaths(home.homePath);
-  const buildIdentity = options.buildIdentity ?? {
-    version: "local_core_build_identity_v1",
-    buildId: `sha256:${createHash("sha256").update(`local-core-api:${options.coreVersion}`).digest("hex")}`,
-    suiteVersion: options.coreVersion,
-    source: "source_tree",
-  } satisfies LocalCoreBuildIdentityV1;
+  const buildIdentity =
+    options.buildIdentity ??
+    ({
+      version: "local_core_build_identity_v1",
+      buildId: `sha256:${createHash("sha256").update(`local-core-api:${options.coreVersion}`).digest("hex")}`,
+      suiteVersion: options.coreVersion,
+      source: "source_tree",
+    } satisfies LocalCoreBuildIdentityV1);
   const runtimeConfigurationStore = new LocalCoreRuntimeConfigurationStore(
     home.homePath,
     {
@@ -245,6 +281,7 @@ export async function startLocalCoreApiServer(
   let socketPrepared = false;
   let executionBundle: LocalCoreExecutionBundle | undefined;
   let projectRunRegistry: DesktopProjectRunRegistry | undefined;
+  let desktopBrowserService: DesktopBrowserService | undefined;
   let server: http.Server | undefined;
   let heartbeat: NodeJS.Timeout | undefined;
   let idleTimeout: NodeJS.Timeout | undefined;
@@ -255,6 +292,8 @@ export async function startLocalCoreApiServer(
   let admissionClosed = false;
   let quiescedShutdownAccepted = false;
   let closePromise: Promise<void> | undefined;
+  const browserAuthorityCriticalSection =
+    new LocalCoreBrowserAuthorityCriticalSection();
   const projectRunEventClients = new Set<ProjectRunEventClient>();
   const mcpOAuthSessions = options.credentialStore?.available
     ? new LocalCoreMcpOAuthSessionManager({
@@ -276,10 +315,20 @@ export async function startLocalCoreApiServer(
     credentialStore:
       options.credentialStore ?? new UnavailableLocalCoreCredentialStore(),
     coreVersion: options.coreVersion,
+    beforeAuthorityRemoval: async (scope) => {
+      await desktopBrowserService?.closeAuthority(scope);
+    },
+    withAuthorityMutation: async (action) =>
+      await browserAuthorityCriticalSection.run(action),
   });
   const kestrelOneAccount = new LocalCoreKestrelOneAccountManager({
     credentialStore:
       options.credentialStore ?? new UnavailableLocalCoreCredentialStore(),
+    beforeCredentialReplace: async () => {
+      await desktopBrowserService?.close();
+    },
+    withCredentialReplacement: async (action) =>
+      await browserAuthorityCriticalSection.run(action),
   });
 
   try {
@@ -299,17 +348,6 @@ export async function startLocalCoreApiServer(
     await rm(paths.apiSocketPath, { force: true });
     socketPrepared = true;
     const token = await ensureApiToken(paths.apiTokenPath);
-    try {
-      executionBundle = await createExecutionBundle({
-        status,
-        options,
-        token,
-        runtimeConfigurationStore,
-      });
-    } catch (error) {
-      status = markExecutionUnavailable(status, error);
-    }
-
     projectRunRegistry = new DesktopProjectRunRegistry({
       ledger: createDesktopProjectRunLedger({
         ledgerPath: path.join(
@@ -324,6 +362,33 @@ export async function startLocalCoreApiServer(
     await withLocalCoreDaemonStoreOwnership(async () => {
       await projectRunRegistry!.hydrate();
     });
+    const browserService =
+      options.browserService ??
+      createPackagedDesktopBrowserService({
+        homePath: home.homePath,
+        repoRoot: options.repoRoot,
+        projectRunRegistry,
+        account: kestrelOneAccount,
+        desktopEnvironments,
+        platform: options.platform ?? process.platform,
+        withAuthorityAdmission: async (action) =>
+          await browserAuthorityCriticalSection.run(action),
+      });
+    if (browserService instanceof DesktopBrowserService) {
+      desktopBrowserService = browserService;
+      await browserService.initialize();
+    }
+    try {
+      executionBundle = await createExecutionBundle({
+        status,
+        options,
+        token,
+        runtimeConfigurationStore,
+        browserService,
+      });
+    } catch (error) {
+      status = markExecutionUnavailable(status, error);
+    }
 
     const beginMaintenance = <T>(input: {
       kind: LocalCoreMaintenanceOperation["kind"];
@@ -506,6 +571,7 @@ export async function startLocalCoreApiServer(
               options,
               token,
               runtimeConfigurationStore,
+              browserService,
             });
             executionBundle = nextBundle;
             return next;
@@ -556,6 +622,7 @@ export async function startLocalCoreApiServer(
               token,
               runtimeConfigurationStore,
               runtimeConfiguration,
+              browserService,
             });
             executionBundle = nextBundle;
             return runtimeConfiguration;
@@ -609,6 +676,7 @@ export async function startLocalCoreApiServer(
               options,
               token,
               runtimeConfigurationStore,
+              browserService,
             });
             if (nextBundle === undefined) {
               throw new Error(
@@ -656,10 +724,8 @@ export async function startLocalCoreApiServer(
     };
 
     server = http.createServer(async (request, response) => {
-      const pathname = new URL(
-        request.url ?? "/",
-        "http://local-core",
-      ).pathname;
+      const pathname = new URL(request.url ?? "/", "http://local-core")
+        .pathname;
       if (
         admissionClosed &&
         pathname !== "/v1/health" &&
@@ -724,6 +790,7 @@ export async function startLocalCoreApiServer(
           googleWorkspaceOAuthSessions,
           desktopEnvironments,
           kestrelOneAccount,
+          desktopBrowserService,
         });
       });
     });
@@ -764,6 +831,7 @@ export async function startLocalCoreApiServer(
         await googleWorkspaceOAuthSessions?.close();
         await kestrelOneAccount.close();
         await desktopEnvironments.close();
+        await desktopBrowserService?.close();
         const activeExecution = executionBundle;
         executionBundle = undefined;
         await closeServer({
@@ -777,6 +845,9 @@ export async function startLocalCoreApiServer(
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
           cancelActiveWork: !quiescedShutdownAccepted,
+          releaseInProcessAuthority: () => {
+            activeLocalCoreAuthorities.delete(authorityKey);
+          },
         });
       })().finally(() => {
         activeLocalCoreAuthorities.delete(authorityKey);
@@ -790,10 +861,10 @@ export async function startLocalCoreApiServer(
         idleTimeout = undefined;
       }
       if (
-        options.idleTimeoutMs === undefined
-        || options.idleTimeoutMs <= 0
-        || closePromise !== undefined
-        || admissionClosed
+        options.idleTimeoutMs === undefined ||
+        options.idleTimeoutMs <= 0 ||
+        closePromise !== undefined ||
+        admissionClosed
       ) {
         return;
       }
@@ -833,6 +904,7 @@ export async function startLocalCoreApiServer(
     await googleWorkspaceOAuthSessions?.close();
     await kestrelOneAccount.close();
     await desktopEnvironments.close();
+    await desktopBrowserService?.close();
     if (idleTimeout !== undefined) {
       clearTimeout(idleTimeout);
     }
@@ -862,6 +934,7 @@ async function createExecutionBundle(input: {
   token: string;
   runtimeConfigurationStore: LocalCoreRuntimeConfigurationStore;
   runtimeConfiguration?: LocalCoreRuntimeConfigurationV1 | undefined;
+  browserService?: BrowserServicePort | undefined;
 }): Promise<LocalCoreExecutionBundle | undefined> {
   if (input.status.state === "blocked") {
     return;
@@ -877,7 +950,9 @@ async function createExecutionBundle(input: {
   const storeHandle = await ensureLocalCoreStore({
     homePath: input.status.home.homePath,
     mode: input.status.dbMode === "external" ? "external" : "pglite",
-    tenantId: normalizeString((input.options.env ?? process.env).KESTREL_TENANT_ID),
+    tenantId: normalizeString(
+      (input.options.env ?? process.env).KESTREL_TENANT_ID,
+    ),
     ...(input.status.dbMode !== "external" && repoRoot !== undefined
       ? { migrationsDir: path.join(repoRoot, "db", "migrations") }
       : {}),
@@ -911,6 +986,10 @@ async function createExecutionBundle(input: {
     runtimeFactory = createLocalCoreRunnerRuntimeFactory(storeHandle.store, {
       runtimeEnvironmentResolver,
       homePath: input.status.home.homePath,
+      devShellStoreBinding: createLocalCoreDevShellStoreBinding(storeHandle),
+      ...(input.browserService === undefined
+        ? {}
+        : { browserService: input.browserService }),
       ...(input.options.credentialStore !== undefined
         ? { credentialStore: input.options.credentialStore }
         : {}),
@@ -928,13 +1007,23 @@ async function createExecutionBundle(input: {
     ),
     profileSourcePolicy: "registered-only",
     eventJournal,
-    ...(storeHandle.store.readExactEffectResult === undefined || storeHandle.store.claimExactEffectCancellation === undefined ? {} : {
-      exactEffectResultStore: {
-        readExactEffectResult: storeHandle.store.readExactEffectResult.bind(storeHandle.store),
-        claimExactEffectCancellation: storeHandle.store.claimExactEffectCancellation.bind(storeHandle.store),
-      },
-      exactEffectResultTenantId: (input.options.env ?? process.env).KESTREL_TENANT_ID,
-    }),
+    sessionDescriber: createDurableSessionDescriber(storeHandle.store),
+    ...(storeHandle.store.readExactEffectResult === undefined ||
+    storeHandle.store.claimExactEffectCancellation === undefined
+      ? {}
+      : {
+          exactEffectResultStore: {
+            readExactEffectResult: storeHandle.store.readExactEffectResult.bind(
+              storeHandle.store,
+            ),
+            claimExactEffectCancellation:
+              storeHandle.store.claimExactEffectCancellation.bind(
+                storeHandle.store,
+              ),
+          },
+          exactEffectResultTenantId: (input.options.env ?? process.env)
+            .KESTREL_TENANT_ID,
+        }),
   });
   try {
     await handler.ready();
@@ -1053,6 +1142,128 @@ async function listenOnSocket(
   });
 }
 
+export type PackagedDesktopBrowserServiceRuntimeDependencies = Pick<
+  DesktopBrowserServiceOptions,
+  "engine" | "createProxy" | "now" | "randomId" | "scheduleExpiry"
+>;
+
+export function createPackagedDesktopBrowserService(input: {
+  homePath: string;
+  repoRoot?: string | undefined;
+  projectRunRegistry: DesktopBrowserServiceOptions["projectRunRegistry"];
+  account: Pick<LocalCoreKestrelOneAccountManager, "account">;
+  desktopEnvironments: Pick<LocalCoreDesktopEnvironmentManager, "snapshot">;
+  platform: NodeJS.Platform;
+  withAuthorityAdmission: <T>(action: () => Promise<T>) => Promise<T>;
+  /** Process adapters for composition tests; evidence ownership remains internal. */
+  runtimeDependencies?:
+    | PackagedDesktopBrowserServiceRuntimeDependencies
+    | undefined;
+}): DesktopBrowserService | undefined {
+  if (input.platform !== "darwin") return;
+  const resourcesRoot = resolvePackagedDesktopBrowserResourcesRoot({
+    repoRoot: input.repoRoot,
+    platform: input.platform,
+  });
+  if (resourcesRoot === undefined) return;
+  const relative = getDesktopBrowserRuntimeExecutableRelativePaths();
+  const engineExecutablePath = path.join(
+    resourcesRoot,
+    relative.engineExecutablePath,
+  );
+  const chromeExecutablePath = path.join(
+    resourcesRoot,
+    relative.chromeExecutablePath,
+  );
+  if (!existsSync(engineExecutablePath) || !existsSync(chromeExecutablePath))
+    return;
+  const attachmentStore = new DesktopAttachmentStore(input.homePath);
+  return new DesktopBrowserService({
+    homePath: input.homePath,
+    engineExecutablePath,
+    chromeExecutablePath,
+    projectRunRegistry: input.projectRunRegistry,
+    authorityResolver: new LocalCoreDesktopBrowserAuthorityResolver({
+      homePath: input.homePath,
+      account: input.account,
+      environments: input.desktopEnvironments,
+    }),
+    viewerEvents: createLocalCoreDesktopBrowserViewerEventSink({
+      homePath: input.homePath,
+    }),
+    attachmentStore,
+    uploadStream: {
+      async open(request) {
+        request.signal?.throwIfAborted();
+        const [attachment] = await attachmentStore.resolve(
+          request.threadId,
+          [request.attachmentId],
+        );
+        if (
+          attachment === undefined ||
+          attachment.sizeBytes > request.maximumBytes ||
+          typeof attachment.path !== "string"
+        ) {
+          throw new Error("Desktop Browser attachment stream is unavailable.");
+        }
+        return createReadStream(attachment.path, {
+          ...(request.signal ? { signal: request.signal } : {}),
+        });
+      },
+    },
+    nativeAuthenticationHandoff: true,
+    withAuthorityAdmission: input.withAuthorityAdmission,
+    engine: input.runtimeDependencies?.engine,
+    createProxy: input.runtimeDependencies?.createProxy,
+    now: input.runtimeDependencies?.now,
+    randomId: input.runtimeDependencies?.randomId,
+    scheduleExpiry: input.runtimeDependencies?.scheduleExpiry,
+  });
+}
+
+export class LocalCoreBrowserAuthorityCriticalSection {
+  readonly #scope = new AsyncLocalStorage<symbol>();
+  #owner: symbol | undefined;
+  #tail: Promise<void> = Promise.resolve();
+
+  async run<T>(action: () => Promise<T>): Promise<T> {
+    const inherited = this.#scope.getStore();
+    if (inherited !== undefined && inherited === this.#owner) {
+      return await action();
+    }
+    const token = Symbol("local-core-browser-authority");
+    const result = this.#tail.then(async () => {
+      this.#owner = token;
+      try {
+        return await this.#scope.run(token, action);
+      } finally {
+        this.#owner = undefined;
+      }
+    });
+    this.#tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await result;
+  }
+}
+
+export function resolvePackagedDesktopBrowserResourcesRoot(input: {
+  repoRoot?: string | undefined;
+  platform: NodeJS.Platform;
+}): string | undefined {
+  if (input.platform !== "darwin") return;
+  const repoRoot = normalizeString(input.repoRoot);
+  if (
+    repoRoot === undefined ||
+    path.basename(repoRoot) !== "payload" ||
+    path.basename(path.dirname(repoRoot)) !== "kestrel-runtime"
+  ) {
+    return;
+  }
+  return path.dirname(path.dirname(repoRoot));
+}
+
 async function cleanupFailedLocalCoreStartup(input: {
   server?: http.Server | undefined;
   executionHandler?: RunnerServiceHttpHandler | undefined;
@@ -1106,9 +1317,11 @@ function buildLocalCoreSystemLifecycle(input: {
   maintenanceOperation: LocalCoreMaintenanceOperation | undefined;
 }): LocalCoreSystemLifecycle {
   const blockers: LocalCoreSystemLifecycle["blockers"] = [];
-  const activeProjectRunCount = input.projectRunRegistry.listRuns().filter(
-    (run) => run.status === "running" || run.status === "stopping",
-  ).length;
+  const activeProjectRunCount = input.projectRunRegistry
+    .listRuns()
+    .filter(
+      (run) => run.status === "running" || run.status === "stopping",
+    ).length;
   if (activeProjectRunCount > 0) {
     blockers.push({
       code: "LOCAL_CORE_PROJECT_RUNS_ACTIVE",
@@ -1219,6 +1432,7 @@ async function handleRequest(input: {
     | undefined;
   desktopEnvironments: LocalCoreDesktopEnvironmentManager;
   kestrelOneAccount: LocalCoreKestrelOneAccountManager;
+  desktopBrowserService?: DesktopBrowserService | undefined;
 }): Promise<void> {
   try {
     const method = input.request.method ?? "GET";
@@ -1238,6 +1452,201 @@ async function handleRequest(input: {
         ),
       );
       return;
+    }
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/browser/personal-domain-revisions/adopt"
+    ) {
+      const body = requireObjectBody(
+        await readJsonBody(input.request),
+        "Desktop Browser revision adoption",
+      );
+      const allowedAdoptionKeys = new Set([
+        "accountId",
+        "environmentId",
+        "personalRevision",
+        "threadId",
+        "sessionId",
+      ]);
+      if (
+        Object.keys(body).some((key) => !allowedAdoptionKeys.has(key)) ||
+        !Object.hasOwn(body, "accountId") ||
+        !Object.hasOwn(body, "environmentId") ||
+        !Object.hasOwn(body, "personalRevision")
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "DESKTOP_BROWSER_REVISION_INVALID",
+          "Desktop Browser revision adoption fields are invalid.",
+        );
+      }
+      const hasThreadId =
+        typeof body.threadId === "string" && body.threadId.trim().length > 0;
+      const hasSessionId =
+        typeof body.sessionId === "string" && body.sessionId.trim().length > 0;
+      if (
+        hasThreadId !== hasSessionId ||
+        (body.threadId !== undefined && !hasThreadId) ||
+        (body.sessionId !== undefined && !hasSessionId)
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "DESKTOP_BROWSER_REVISION_INVALID",
+          "Desktop Browser exact adoption requires threadId and sessionId together.",
+        );
+      }
+      const personalRevision = body.personalRevision;
+      if (
+        !Number.isSafeInteger(personalRevision) ||
+        (personalRevision as number) < 0
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "DESKTOP_BROWSER_REVISION_INVALID",
+          "Desktop Browser personal revision is invalid.",
+        );
+      }
+      const accountId = normalizeString(body.accountId);
+      const environmentId = normalizeString(body.environmentId);
+      if (accountId === undefined || environmentId === undefined) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "DESKTOP_BROWSER_REVISION_INVALID",
+          "Desktop Browser revision adoption identity is invalid.",
+        );
+      }
+      if (
+        input.desktopBrowserService === undefined &&
+        (hasThreadId || hasSessionId)
+      ) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "DESKTOP_BROWSER_UNAVAILABLE",
+          "The exact Desktop Browser Session is unavailable for revision adoption.",
+        );
+      }
+      writeJson(input.response, 200, {
+        ok: true,
+        adoption:
+          input.desktopBrowserService === undefined
+            ? {
+                personalRevision: personalRevision as number,
+                closedUnauthorizedConnections: 0,
+              }
+            : await input.desktopBrowserService.adoptPersonalRevision({
+                accountId,
+                environmentId,
+                personalRevision: personalRevision as number,
+                ...(hasThreadId
+                  ? { threadId: (body.threadId as string).trim() }
+                  : {}),
+                ...(hasSessionId
+                  ? { sessionId: (body.sessionId as string).trim() }
+                  : {}),
+              }),
+      });
+      return;
+    }
+
+    if (method === "POST" && url.pathname.startsWith("/v1/browser/viewer/")) {
+      const service = input.desktopBrowserService;
+      if (service === undefined) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "DESKTOP_BROWSER_UNAVAILABLE",
+          "The Desktop Browser viewer is unavailable.",
+        );
+      }
+      const action = url.pathname.slice("/v1/browser/viewer/".length);
+      const body = parseDesktopBrowserViewerApiBody(
+        await readJsonBody(input.request),
+        action,
+      );
+      if (action === "connect") {
+        writeJson(input.response, 200, {
+          ok: true,
+          viewer: await service.connectViewer(body),
+        });
+        return;
+      }
+      const exact = requireExactDesktopBrowserViewerApiBody(body);
+      if (action === "frame") {
+        writeJson(input.response, 200, {
+          ok: true,
+          frame: await service.readViewerFrame(exact),
+        });
+        return;
+      }
+      if (action === "accept") {
+        writeJson(input.response, 200, {
+          ok: true,
+          viewer: await service.acceptViewerTakeover(exact),
+        });
+        return;
+      }
+      if (action === "renew") {
+        const leaseId = requireDesktopBrowserViewerApiText(
+          body.leaseId,
+          "leaseId",
+        );
+        writeJson(input.response, 200, {
+          ok: true,
+          viewer: await service.renewViewerInputLease({ ...exact, leaseId }),
+        });
+        return;
+      }
+      if (action === "input") {
+        const parsedInput = parseDesktopBrowserViewerInputRequest({
+          version: DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
+          threadId: exact.threadId,
+          projectId: exact.projectId,
+          sessionId: exact.sessionId,
+          generation: exact.generation,
+          connectionId: exact.connectionId,
+          leaseId: body.leaseId,
+          input: body.viewerInput,
+        });
+        writeJson(input.response, 200, {
+          ok: true,
+          viewer: await service.sendViewerInput({
+            ...exact,
+            leaseId: parsedInput.leaseId,
+            viewerInput: parsedInput.input,
+          }),
+        });
+        return;
+      }
+      if (action === "return") {
+        const leaseId = requireDesktopBrowserViewerApiText(
+          body.leaseId,
+          "leaseId",
+        );
+        writeJson(input.response, 200, {
+          ok: true,
+          viewer: await service.returnViewerControl({ ...exact, leaseId }),
+        });
+        return;
+      }
+      if (action === "disconnect") {
+        await service.disconnectViewer(exact);
+        writeJson(input.response, 200, { ok: true });
+        return;
+      }
+      if (action === "authority-lost") {
+        await service.loseViewerAuthority(exact);
+        writeJson(input.response, 200, { ok: true });
+        return;
+      }
+      if (action === "close") {
+        await service.closeViewerSession(exact);
+        writeJson(input.response, 200, { ok: true });
+        return;
+      }
+      throw new LocalCoreApiRequestError(
+        404,
+        "DESKTOP_BROWSER_VIEWER_ACTION_INVALID",
+        "The Desktop Browser viewer action is invalid.",
+      );
     }
 
     if (method === "GET" && url.pathname === "/v1/status") {
@@ -1319,6 +1728,61 @@ async function handleRequest(input: {
       writeJson(input.response, 200, {
         ok: true,
         account: await input.kestrelOneAccount.signOut(),
+      });
+      return;
+    }
+    const kestrelOneReceiving = url.pathname.match(
+      /^\/v1\/kestrel-one\/organizations\/([^/]+)\/email\/receiving$/u,
+    );
+    if (method === "GET" && kestrelOneReceiving) {
+      writeJson(input.response, 200, {
+        ok: true,
+        connection: await input.kestrelOneAccount.receivingConnection(
+          decodeURIComponent(kestrelOneReceiving[1] ?? ""),
+        ),
+      });
+      return;
+    }
+    if (method === "PUT" && kestrelOneReceiving) {
+      const body = await readJsonBody(input.request);
+      const record = requireObjectBody(
+        body,
+        "Kestrel One receiving configuration",
+      );
+      writeJson(input.response, 200, {
+        ok: true,
+        connection: await input.kestrelOneAccount.saveReceivingConnection({
+          organizationId: decodeURIComponent(kestrelOneReceiving[1] ?? ""),
+          receivingDomainId: normalizeRequiredStringField(
+            record,
+            "receivingDomainId",
+          ),
+          ...(typeof record.apiKey === "string" && record.apiKey.trim()
+            ? { apiKey: record.apiKey.trim() }
+            : {}),
+        }),
+      });
+      return;
+    }
+    const kestrelOneReceivingDomains = url.pathname.match(
+      /^\/v1\/kestrel-one\/organizations\/([^/]+)\/email\/receiving\/domains$/u,
+    );
+    if (method === "POST" && kestrelOneReceivingDomains) {
+      const body = await readJsonBody(input.request);
+      const record = requireObjectBody(
+        body,
+        "Kestrel One receiving domain request",
+      );
+      writeJson(input.response, 200, {
+        ok: true,
+        domains: await input.kestrelOneAccount.inspectReceivingDomains({
+          organizationId: decodeURIComponent(
+            kestrelOneReceivingDomains[1] ?? "",
+          ),
+          ...(typeof record.apiKey === "string" && record.apiKey.trim()
+            ? { apiKey: record.apiKey.trim() }
+            : {}),
+        }),
       });
       return;
     }
@@ -1501,7 +1965,7 @@ async function handleRequest(input: {
       let settings: Record<string, unknown>;
       if (patch.modelPolicy !== undefined) {
         await input.updateRuntimeConfiguration(async () => {
-          await patchLocalCoreLocalSettings(
+          await patchLocalCoreSettings(
             input.status.home.homePath,
             patch.localSettings,
           );
@@ -1516,7 +1980,7 @@ async function handleRequest(input: {
         );
       } else {
         settings = await input.withRuntimeConfigurationMutation(async () => {
-          await patchLocalCoreLocalSettings(
+          await patchLocalCoreSettings(
             input.status.home.homePath,
             patch.localSettings,
           );
@@ -1601,6 +2065,12 @@ async function handleRequest(input: {
       const body = await readJsonBody(input.request);
       const secret = parseCredentialMutationBody(body);
       await credentialStore.set(credentialId, secret);
+      if (isModelProviderCredential(credentialId)) {
+        await input.updateRuntimeConfiguration(
+          async () =>
+            await input.runtimeConfigurationStore.update((current) => current),
+        );
+      }
       writeJson(input.response, 200, {
         ok: true,
         credentials: await readLocalCoreCredentialStoreStatus(credentialStore),
@@ -1612,6 +2082,12 @@ async function handleRequest(input: {
         input.ensureOptions.credentialStore ??
         new UnavailableLocalCoreCredentialStore();
       const deleted = await credentialStore.delete(credentialId);
+      if (deleted && isModelProviderCredential(credentialId)) {
+        await input.updateRuntimeConfiguration(
+          async () =>
+            await input.runtimeConfigurationStore.update((current) => current),
+        );
+      }
       writeJson(input.response, 200, {
         ok: true,
         deleted,
@@ -1714,10 +2190,14 @@ async function handleRequest(input: {
         string,
         unknown
       >;
+      const { isGoogleWorkspacePack } =
+        await import("../apps/googleWorkspace.js");
       if (
         !Array.isArray(body.packs) ||
-        body.packs.length !== 1 ||
-        body.packs[0] !== "calendar"
+        body.packs.length === 0 ||
+        body.packs.some(
+          (pack) => typeof pack !== "string" || !isGoogleWorkspacePack(pack),
+        )
       )
         throw new LocalCoreApiRequestError(
           400,
@@ -1726,7 +2206,9 @@ async function handleRequest(input: {
         );
       const verification = await new LocalCoreGoogleWorkspaceService({
         credentialStore,
-      }).verify(["calendar"]);
+      }).verify([
+        ...new Set(body.packs),
+      ] as import("../apps/googleWorkspace.js").GoogleWorkspacePack[]);
       writeJson(input.response, 200, { ok: true, verification });
       return;
     }
@@ -1872,9 +2354,55 @@ async function handleRequest(input: {
         ok: true,
         executionConfig: await resolveLocalCoreDesktopExecutionConfig(
           input.status.home.homePath,
-          { runtimeConfiguration },
+          {
+            runtimeConfiguration,
+            ...(input.ensureOptions.credentialStore === undefined
+              ? {}
+              : { credentialStore: input.ensureOptions.credentialStore }),
+            baseEnv: input.ensureOptions.env ?? process.env,
+          },
         ),
       });
+      return;
+    }
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/desktop/model-readiness/refresh"
+    ) {
+      const body = await readJsonBody(input.request);
+      if (
+        typeof body !== "object" ||
+        body === null ||
+        Array.isArray(body) ||
+        Object.keys(body).length !== 0
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_MODEL_READINESS_REFRESH_INVALID",
+          "Local Core model readiness refresh does not accept request fields.",
+        );
+      }
+      const runtimeConfiguration = await input.runtimeConfigurationStore.read();
+      const executionConfig = await resolveLocalCoreDesktopExecutionConfig(
+        input.status.home.homePath,
+        {
+          runtimeConfiguration,
+          ...(input.ensureOptions.credentialStore === undefined
+            ? {}
+            : { credentialStore: input.ensureOptions.credentialStore }),
+          baseEnv: input.ensureOptions.env ?? process.env,
+        },
+      );
+      const readiness = await qualifyLocalCoreModelReadiness({
+        readiness: executionConfig.modelReadiness,
+        ...(input.ensureOptions.modelQualificationFetchImpl === undefined
+          ? {}
+          : { fetchImpl: input.ensureOptions.modelQualificationFetchImpl }),
+      });
+      await new LocalCoreModelReadinessStore(input.status.home.homePath).append(
+        readiness,
+      );
+      writeJson(input.response, 200, { ok: true, modelReadiness: readiness });
       return;
     }
     if (
@@ -1961,20 +2489,27 @@ async function handleRequest(input: {
       const attachmentStore = new DesktopAttachmentStore(
         input.status.home.homePath,
       );
-      const attachment = data !== undefined
-        ? await attachmentStore.import({
-            threadId,
-            filename,
-            data: decodeStrictBase64(data),
-            ...(normalizeString(record.mimeType) !== undefined ? { mimeType: normalizeString(record.mimeType) } : {}),
-            ...(normalizeString(record.sha256) !== undefined ? { sha256: normalizeString(record.sha256) } : {}),
-          })
-        : await attachmentStore.importPath({
-            threadId,
-            filename,
-            sourcePath: sourcePath as string,
-            ...(normalizeString(record.mimeType) !== undefined ? { mimeType: normalizeString(record.mimeType) } : {}),
-          });
+      const attachment =
+        data !== undefined
+          ? await attachmentStore.import({
+              threadId,
+              filename,
+              data: decodeStrictBase64(data),
+              ...(normalizeString(record.mimeType) !== undefined
+                ? { mimeType: normalizeString(record.mimeType) }
+                : {}),
+              ...(normalizeString(record.sha256) !== undefined
+                ? { sha256: normalizeString(record.sha256) }
+                : {}),
+            })
+          : await attachmentStore.importPath({
+              threadId,
+              filename,
+              sourcePath: sourcePath as string,
+              ...(normalizeString(record.mimeType) !== undefined
+                ? { mimeType: normalizeString(record.mimeType) }
+                : {}),
+            });
       writeJson(input.response, 201, { ok: true, attachment });
       return;
     }
@@ -2008,10 +2543,17 @@ async function handleRequest(input: {
       writeJson(input.response, 200, { ok: true, attachments });
       return;
     }
-    if (method === "POST" && url.pathname === "/v1/desktop/attachments/submit") {
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/desktop/attachments/submit"
+    ) {
       const body = await readJsonBody(input.request);
       if (typeof body !== "object" || body === null || Array.isArray(body)) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment submission body must be an object.");
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+          "Attachment submission body must be an object.",
+        );
       }
       const record = body as Record<string, unknown>;
       const threadId = normalizeString(record.threadId);
@@ -2019,10 +2561,20 @@ async function handleRequest(input: {
       const attachmentIds = Array.isArray(record.attachmentIds)
         ? record.attachmentIds.flatMap((id) => normalizeString(id) ?? [])
         : undefined;
-      if (threadId === undefined || messageId === undefined || attachmentIds === undefined) {
-        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId, messageId, and attachmentIds are required.");
+      if (
+        threadId === undefined ||
+        messageId === undefined ||
+        attachmentIds === undefined
+      ) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
+          "threadId, messageId, and attachmentIds are required.",
+        );
       }
-      await new DesktopAttachmentStore(input.status.home.homePath).markSubmitted(threadId, attachmentIds, messageId);
+      await new DesktopAttachmentStore(
+        input.status.home.homePath,
+      ).markSubmitted(threadId, attachmentIds, messageId);
       writeJson(input.response, 200, { ok: true });
       return;
     }
@@ -2267,7 +2819,10 @@ async function handleRequest(input: {
       });
       return;
     }
-    if (method === "GET" && url.pathname === "/v1/desktop/conversation-activity") {
+    if (
+      method === "GET" &&
+      url.pathname === "/v1/desktop/conversation-activity"
+    ) {
       const sessionId = normalizeString(url.searchParams.get("sessionId"));
       if (sessionId === undefined) {
         throw new LocalCoreApiRequestError(
@@ -2647,13 +3202,22 @@ async function handleRequest(input: {
   } catch (error) {
     const requestError =
       error instanceof LocalCoreApiRequestError ? error : undefined;
+    const receivingAuthorizationError =
+      error instanceof KestrelOneReceivingAuthorizationError
+        ? error
+        : undefined;
     const runtimeConfigurationError =
       error instanceof LocalCoreRuntimeConfigurationError ? error : undefined;
     writeJson(
       input.response,
-      requestError?.statusCode ?? 500,
+      requestError?.statusCode ??
+        receivingAuthorizationError?.statusCode ??
+        500,
       errorBody(
         requestError?.code ??
+          (receivingAuthorizationError
+            ? "KESTREL_ONE_RECEIVING_AUTHORIZATION_REJECTED"
+            : undefined) ??
           runtimeConfigurationError?.code ??
           "LOCAL_CORE_API_ERROR",
         error instanceof Error ? error.message : String(error),
@@ -2763,6 +3327,152 @@ function normalizeRequiredStringField(value: unknown, field: string): string {
   return candidate;
 }
 
+function requireObjectBody(
+  value: unknown,
+  label: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+interface DesktopBrowserViewerApiBody {
+  principalId: string;
+  threadId: string;
+  projectId: string;
+  sessionId?: string | undefined;
+  generation?: number | undefined;
+  connectionId?: string | undefined;
+  leaseId?: unknown;
+  viewerInput?: unknown;
+}
+
+function parseDesktopBrowserViewerApiBody(
+  value: unknown,
+  action: string,
+): DesktopBrowserViewerApiBody {
+  const body = requireObjectBody(value, "Desktop Browser viewer request");
+  const allowed = new Set([
+    "principalId",
+    "threadId",
+    "projectId",
+    "sessionId",
+    "generation",
+    "connectionId",
+    ...(action === "renew" || action === "return" || action === "input"
+      ? ["leaseId"]
+      : []),
+    ...(action === "input" ? ["viewerInput"] : []),
+  ]);
+  if (Object.keys(body).some((key) => !allowed.has(key))) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "DESKTOP_BROWSER_VIEWER_INVALID",
+      "Desktop Browser viewer request fields are invalid.",
+    );
+  }
+  const principalId = requireDesktopBrowserViewerApiText(
+    body.principalId,
+    "principalId",
+  );
+  const threadId = requireDesktopBrowserViewerApiText(body.threadId, "threadId");
+  const projectId = requireDesktopBrowserViewerApiText(
+    body.projectId,
+    "projectId",
+  );
+  const sessionId =
+    body.sessionId === undefined
+      ? undefined
+      : requireDesktopBrowserViewerApiText(body.sessionId, "sessionId");
+  const connectionId =
+    body.connectionId === undefined
+      ? undefined
+      : requireDesktopBrowserViewerApiText(body.connectionId, "connectionId");
+  const generation = body.generation;
+  if (
+    generation !== undefined &&
+    (!Number.isSafeInteger(generation) || (generation as number) < 1)
+  ) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "DESKTOP_BROWSER_VIEWER_INVALID",
+      "Desktop Browser viewer generation is invalid.",
+    );
+  }
+  if (
+    action === "connect" &&
+    [sessionId, generation, connectionId].some(
+      (identity) => identity !== undefined,
+    ) &&
+    [sessionId, generation, connectionId].some(
+      (identity) => identity === undefined,
+    )
+  ) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "DESKTOP_BROWSER_VIEWER_INVALID",
+      "Desktop Browser viewer expected identity must be exact when present.",
+    );
+  }
+  return {
+    principalId,
+    threadId,
+    projectId,
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(generation === undefined ? {} : { generation: generation as number }),
+    ...(connectionId === undefined ? {} : { connectionId }),
+    ...(body.leaseId === undefined ? {} : { leaseId: body.leaseId }),
+    ...(body.viewerInput === undefined ? {} : { viewerInput: body.viewerInput }),
+  };
+}
+
+function requireExactDesktopBrowserViewerApiBody(
+  body: DesktopBrowserViewerApiBody,
+): DesktopBrowserViewerApiBody & {
+  sessionId: string;
+  generation: number;
+  connectionId: string;
+} {
+  if (
+    body.sessionId === undefined ||
+    body.generation === undefined ||
+    body.connectionId === undefined
+  ) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "DESKTOP_BROWSER_VIEWER_INVALID",
+      "Desktop Browser viewer exact identity is incomplete.",
+    );
+  }
+  return {
+    ...body,
+    sessionId: body.sessionId,
+    generation: body.generation,
+    connectionId: body.connectionId,
+  };
+}
+
+function requireDesktopBrowserViewerApiText(
+  value: unknown,
+  label: string,
+): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 512 ||
+    value !== value.trim() ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "DESKTOP_BROWSER_VIEWER_INVALID",
+      `Desktop Browser viewer ${label} is invalid.`,
+    );
+  }
+  return value;
+}
+
 function normalizeRequiredIntegerField(value: unknown, field: string): number {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Request body must be an object with '${field}'.`);
@@ -2843,7 +3553,9 @@ function normalizeReplayQueryEventTypes(
       "Replay query field 'eventTypes' must be a non-empty array of non-empty strings.",
     );
   }
-  return [...new Set(value.map((entry) => (entry as string).trim()))] as ReplayQuery["eventTypes"];
+  return [
+    ...new Set(value.map((entry) => (entry as string).trim())),
+  ] as ReplayQuery["eventTypes"];
 }
 
 function normalizeReplayQueryString(
@@ -3104,6 +3816,114 @@ async function readSettings(
   };
 }
 
+async function patchLocalCoreSettings(
+  homePath: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  if (Object.keys(patch).length === 0) return;
+  await mutateLocalCoreLocalSettings(homePath, (current) => {
+    if (Object.hasOwn(patch, "browserPersonalDomains")) {
+      assertCurrentDesktopBrowserPersonalDomainTransition(
+        current.browserPersonalDomains,
+        patch.browserPersonalDomains,
+      );
+    }
+    return {
+      settings: { ...current, ...patch },
+      result: undefined,
+    };
+  });
+}
+
+function assertCurrentDesktopBrowserPersonalDomainTransition(
+  currentValue: unknown,
+  nextValue: unknown,
+): void {
+  const empty: DesktopBrowserPersonalDomainsV1 = {
+    version: DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
+    partitions: [],
+  };
+  const current = parseDesktopBrowserPersonalDomains(currentValue ?? empty);
+  const next = parseDesktopBrowserPersonalDomains(nextValue);
+  const currentByScope = new Map(
+    current.partitions.map((partition) => [
+      `${partition.accountId}\u0000${partition.environmentId}`,
+      partition,
+    ]),
+  );
+  const nextByScope = new Map(
+    next.partitions.map((partition) => [
+      `${partition.accountId}\u0000${partition.environmentId}`,
+      partition,
+    ]),
+  );
+  const stale =
+    current.partitions.length !== next.partitions.length ||
+    next.partitions.some((partition) => {
+      const prior = currentByScope.get(
+        `${partition.accountId}\u0000${partition.environmentId}`,
+      );
+      if (prior === undefined) return true;
+      if (JSON.stringify(prior) === JSON.stringify(partition)) return false;
+      return (
+        partition.revision !== prior.revision + 1 ||
+        !isExplicitDesktopBrowserPersonalDomainRevocation(prior, partition)
+      );
+    });
+  if (stale) {
+    throw new LocalCoreApiRequestError(
+      409,
+      "LOCAL_CORE_BROWSER_SETTINGS_STALE",
+      "Browser personal-domain settings may only apply a current explicit revocation.",
+    );
+  }
+}
+
+function isExplicitDesktopBrowserPersonalDomainRevocation(
+  prior: DesktopBrowserPersonalDomainsV1["partitions"][number],
+  next: DesktopBrowserPersonalDomainsV1["partitions"][number],
+): boolean {
+  if (
+    prior.accountId !== next.accountId ||
+    prior.environmentId !== next.environmentId ||
+    prior.domains.length !== next.domains.length
+  ) {
+    return false;
+  }
+  const nextByDomain = new Map(
+    next.domains.map((record) => [record.authority.canonicalDomain, record]),
+  );
+  let revoked = 0;
+  for (const record of prior.domains) {
+    const replacement = nextByDomain.get(record.authority.canonicalDomain);
+    if (replacement === undefined) return false;
+    if (JSON.stringify(record) === JSON.stringify(replacement)) continue;
+    const {
+      state: _priorState,
+      updatedAt: _priorUpdatedAt,
+      revokedAt: _priorRevokedAt,
+      ...priorStable
+    } = record;
+    const {
+      state: _nextState,
+      updatedAt: _nextUpdatedAt,
+      revokedAt: _nextRevokedAt,
+      ...nextStable
+    } = replacement;
+    if (
+      record.state !== "active" ||
+      record.revokedAt !== undefined ||
+      replacement.state !== "revoked" ||
+      replacement.revokedAt !== replacement.updatedAt ||
+      JSON.stringify(priorStable) !== JSON.stringify(nextStable)
+    ) {
+      return false;
+    }
+    revoked += 1;
+  }
+  return revoked > 0;
+}
+
 async function resolveCoreOwnedReadyOptions(
   homePath: string,
   options: StartLocalCoreApiServerOptions,
@@ -3289,12 +4109,14 @@ async function runtimeCredentialReadiness(
       available: credentialStatus?.available ?? true,
     }),
     ollama: {
-      ready: true,
+      // A reachable catalog and the absence of a credential requirement do
+      // not prove that this exact route can satisfy an execution role.
+      ready: false,
       credential: "not_required",
       beta: true,
     },
     lmstudio: {
-      ready: true,
+      ready: false,
       credential: "not_required",
       beta: true,
     },
@@ -3331,6 +4153,16 @@ function isCredentialConfigured(
   return (
     status.credentials.find((credential) => credential.id === id)?.configured ??
     false
+  );
+}
+
+function isModelProviderCredential(
+  credentialId: LocalCoreCredentialId,
+): boolean {
+  return (
+    credentialId === "provider.openrouter.default" ||
+    credentialId === "provider.openai.default" ||
+    credentialId === "provider.anthropic.default"
   );
 }
 
@@ -3497,6 +4329,7 @@ async function closeServer(input: {
   projectRunRegistry: DesktopProjectRunRegistry;
   projectRunEventClients: Set<ProjectRunEventClient>;
   cancelActiveWork: boolean;
+  releaseInProcessAuthority: () => void;
 }): Promise<void> {
   const errors: Error[] = [];
   if (input.heartbeat !== undefined) {
@@ -3537,6 +4370,7 @@ async function closeServer(input: {
   await closeLocalCoreStore(input.homePath).catch((error) => {
     errors.push(asError(error));
   });
+  input.releaseInProcessAuthority();
   await rm(input.socketPath, { force: true }).catch((error) => {
     errors.push(asError(error));
   });

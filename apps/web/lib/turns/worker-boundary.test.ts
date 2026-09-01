@@ -99,6 +99,52 @@ test(
 );
 
 test(
+  "prepared cleanup bypasses ordinary exhaustion through explicit reconciliation",
+  async () => {
+    const [queueSource, runtimeSource] = await Promise.all([
+      readFile(new URL("./queue.ts", import.meta.url), "utf8"),
+      readFile(new URL("./process-runtime.ts", import.meta.url), "utf8"),
+    ]);
+
+    assert.match(queueSource, /isPreparedApprovalCleanupRetryError/u);
+    assert.match(queueSource, /cleanupReconciliation \? 0 : 3/u);
+    assert.match(queueSource, /nextPreparedApprovalCleanupRetrySchedule/u);
+    assert.match(queueSource, /startAfter: cleanupRetrySchedule\.startAfter/u);
+    assert.match(queueSource, /cleanupReconciliationAttempt:/u);
+    assert.match(queueSource, /cleanupResumeRunning/u);
+    assert.match(queueSource, /shouldPreservePreparedApprovalCleanupExecution/u);
+    assert.match(
+      runtimeSource,
+      /runtimeTerminalObserved && environmentExecutionId[\s\S]*preserveRunningExecution: true/u,
+    );
+    assert.match(
+      runtimeSource,
+      /interruptedCleanup &&[\s\S]*!interrupted\.environmentExecutionId[\s\S]*resetDurablePreparedApprovalCleanupForRetry/u,
+    );
+    assert.match(
+      runtimeSource,
+      /preparedApprovalCleanup &&[\s\S]*runnerRunStartedObserved &&[\s\S]*!runtimeStartedRecorded[\s\S]*resetDurablePreparedApprovalCleanupForRetry/u,
+    );
+    assert.match(
+      runtimeSource,
+      /onUiChunk\(chunk\)[\s\S]*workerInterrupted \|\| preparedApprovalCleanup[\s\S]*return/u,
+    );
+    assert.match(
+      runtimeSource,
+      /const assistantMessages = preparedApprovalCleanup[\s\S]*\? \[\][\s\S]*: messagesForPersistence\.filter/u,
+    );
+    assert.match(
+      queueSource,
+      /hasDurablePreparedApprovalCleanupPending[\s\S]*reconcileDurablePreparedApprovalCleanupForRetry/u,
+    );
+    assert.match(
+      queueSource,
+      /isPreparedApprovalCleanupRetryError\(error\)[\s\S]*sendTurn\(boss, turnId, \{[\s\S]*cleanupReconciliation: true[\s\S]*continue/u,
+    );
+  },
+);
+
+test(
   "the running worker reconciles missing jobs and interrupted turns",
   async () => {
     const queueSource = await readFile(
@@ -135,6 +181,7 @@ test("the turn worker owns scheduled prompt dispatch, execution, and recovery", 
   assert.match(queueSource, /recoverQueuedProjectPromptScheduleRuns/u);
   assert.match(queueSource, /hasNonterminalProjectPromptScheduleJob/u);
   assert.match(queueSource, /failProjectPromptScheduleRun/u);
+  assert.match(queueSource, /reconcileConfiguredReceivingWebhooks/u);
 });
 
 test("scheduled prompt materialization stays on its locked database transaction", async () => {
@@ -172,10 +219,10 @@ test("scheduled prompt materialization stays on its locked database transaction"
 });
 
 test("scheduled and Test turns enter the ordinary worker as autonomous turns", async () => {
-  const runtimeSource = await readFile(
-    new URL("./process-runtime.ts", import.meta.url),
-    "utf8",
-  );
+  const [runtimeSource, agentRuntimeSource] = await Promise.all([
+    readFile(new URL("./process-runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("../agent/kestrel-runtime.ts", import.meta.url), "utf8"),
+  ]);
 
   assert.match(runtimeSource, /projectPromptScheduleRuns\.findFirst/u);
   assert.match(runtimeSource, /eq\(table\.turnId, turn\.id\)/u);
@@ -186,6 +233,10 @@ test("scheduled and Test turns enter the ordinary worker as autonomous turns", a
     /readBooleanField\(turnContract\?\.data, "noninteractive"\)/u,
   );
   assert.match(runtimeSource, /scheduleRun !== undefined/u);
+  assert.match(runtimeSource, /workflowRunAuthority: turnContract\.data\.workflowRunAuthority/u);
+  assert.match(agentRuntimeSource, /workflowRunAuthority\?: Record<string, unknown>/u);
+  assert.match(agentRuntimeSource, /workflowRunAuthority: input\.workflowRunAuthority/u);
+  assert.match(agentRuntimeSource, /noninteractive: input\.noninteractive/u);
 });
 
 test(
@@ -220,8 +271,18 @@ test(
       queueSource,
       /localConcurrency: PROJECT_PROMPT_SCHEDULE_LOCAL_CONCURRENCY,/u,
     );
-    assert.match(queueSource, /localConcurrency: turnWorkerConcurrency,/u);
-    assert.match(queueSource, /groupConcurrency: 1,/u);
+    const durableWorkerStart = queueSource.indexOf(
+      "await boss.work(\n      DURABLE_THREAD_TURN_QUEUE,",
+    );
+    const durableWorkerEnd = queueSource.indexOf(
+      "      async (jobs:",
+      durableWorkerStart,
+    );
+    assert.ok(durableWorkerStart >= 0, "durable turn worker must be registered");
+    assert.ok(durableWorkerEnd > durableWorkerStart, "durable worker options must precede its handler");
+    const durableWorkerOptions = queueSource.slice(durableWorkerStart, durableWorkerEnd);
+    assert.match(durableWorkerOptions, /localConcurrency: turnWorkerConcurrency,/u);
+    assert.match(durableWorkerOptions, /groupConcurrency: 1,/u);
   },
 );
 
@@ -232,15 +293,12 @@ test(
       new URL("./queue.ts", import.meta.url),
       "utf8",
     );
-    const directDrainCalls = queueSource.match(
-      /await drainMobilePushOutbox\(\)\.catch\(reportPushFailure\);/gu,
-    );
-
-    assert.equal(directDrainCalls?.length, 1);
     assert.match(
       queueSource,
       /const runWorkerMaintenance = createWorkerMaintenance/u,
     );
+    assert.match(queueSource, /drainMobilePush: drainMobilePushOutbox/u);
+    assert.match(queueSource, /reportMobilePushFailure: reportPushFailure/u);
     assert.match(queueSource, /await runWorkerMaintenance\(\);/u);
   },
 );
@@ -255,11 +313,36 @@ test(
 
     assert.match(
       runtimeSource,
-      /const completionStatus = terminalTurnStatus\(terminal\.status\)/u,
+      /let completionStatus = terminalTurnStatus\(terminal\.status\)/u,
     );
     assert.doesNotMatch(
       runtimeSource,
       /const completionStatus = workerInterrupted/u,
+    );
+  },
+);
+
+test(
+  "terminal persistence recovery retains captured messages and telemetry",
+  async () => {
+    const runtimeSource = await readFile(
+      new URL("./process-runtime.ts", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(
+      runtimeSource,
+      /runtimeTerminalObserved && terminal\.messages\.length > 0/u,
+    );
+    assert.match(runtimeSource, /messages: terminal\.messages/u);
+    assert.match(runtimeSource, /replayChunks: terminal\.replayChunks/u);
+    assert.match(
+      runtimeSource,
+      /capturedTerminalPresentation \?\?[\s\S]*buildFailurePresentation/u,
+    );
+    assert.match(
+      runtimeSource,
+      /const fallbackStatus = stopped \? "cancelled" as const : "failed" as const/u,
     );
   },
 );
@@ -317,7 +400,8 @@ test(
     assert.match(runtimeSource, /scheduleCancellationDeadline/u);
     assert.match(runtimeSource, /shouldInterruptDurableTurnAtRuntimeEvent/u);
     assert.match(runtimeSource, /status: stopped \? "cancelled" : "failed"/u);
-    assert.match(storeSource, /interruptMode: "safe_boundary_deadline"/u);
+    assert.match(storeSource, /"prepared_cleanup_after_release"/u);
+    assert.match(storeSource, /"safe_boundary_deadline"/u);
     assert.match(storeSource, /interruptDeadlineAt:/u);
   },
 );
@@ -406,6 +490,25 @@ test(
     assert.match(queueSource, /if \(!jobId\)/u);
   },
 );
+
+test("terminal receipt jobs retain evidence without blocking a new attempt", async () => {
+  const queueSource = await readFile(
+    new URL("./queue.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(queueSource, /id:\s*receiptId/u);
+  assert.match(queueSource, /singletonKey: receiptId/u);
+  assert.match(queueSource, /kestrel:email-receipt-dispatch:/u);
+  assert.match(
+    queueSource,
+    /\["queued", "hydrating", "admitted"\]\.includes/u,
+  );
+  assert.match(
+    queueSource,
+    /boss\.work\(\s*EMAIL_DELIVERY_RECEIPT_QUEUE/u,
+  );
+});
 
 test(
   "the worker entrypoint starts without top-level await",
@@ -543,6 +646,18 @@ test(
     assert.match(
       devAllSource,
       /export KESTREL_BUILD_ID="\$\{KESTREL_BUILD_ID:-local-dev\}"/u,
+    );
+    assert.match(
+      devAllSource,
+      /LOCAL_RECEIVING_BUILD_REVISION=.*git -C "\$ROOT_DIR\/\.\.\/\.\." rev-parse --verify 'HEAD\^\{commit\}'/u,
+    );
+    assert.match(
+      devAllSource,
+      /KESTREL_EMAIL_RECEIVING_RELEASE_EVIDENCE_REVISION:-\$LOCAL_RECEIVING_BUILD_REVISION/u,
+    );
+    assert.match(
+      devAllSource,
+      /KESTREL_EMAIL_RECEIVING_SECURITY_REVIEW_REVISION:-\$LOCAL_RECEIVING_BUILD_REVISION/u,
     );
     assert.match(devAllSource, /TURN_WORKER_PID=\$!/u);
     assert.match(devAllSource, /KNOWLEDGE_WORKER_PID=\$!/u);

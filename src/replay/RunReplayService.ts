@@ -17,11 +17,16 @@ import type {
   DelegationRecord,
   InteractionRequestRecord,
   ModelCallProvenanceRecord,
+  ModelCallRequiredCapabilityV1,
   SpecialistDefinitionRecord,
   ThreadCompactionEventRecord,
   ThreadAssemblyRecord,
   ThreadRecord,
 } from "../kestrel/contracts/orchestration.js";
+import {
+  parseEffectiveModelContractV1,
+  type EffectiveModelContractV1,
+} from "../kestrel/effective-model-contract.js";
 import type { ReplayStore } from "../kestrel/contracts/store.js";
 import { readAssemblyCompatibilityMetadata } from "../orchestration/AssemblyCompatibility.js";
 import {
@@ -529,6 +534,7 @@ export interface ReplayModelProvenanceSummary {
   callCount: number;
   actionCallCount: number;
   maintenanceCallCount: number;
+  metrics: ReplayModelCallProofMetrics;
   calls: Array<{
     callId: string;
     runId: string;
@@ -539,11 +545,57 @@ export interface ReplayModelProvenanceSummary {
     provider?: string | undefined;
 	    providerPayloadHash: string;
 	    componentHash: string;
-	    sourceBucketHashes?: Record<string, string> | undefined;
-	    metadata?: ReplayModelProvenanceMetadata | undefined;
+    sourceBucketHashes?: Record<string, string> | undefined;
+    metadata?: ReplayModelProvenanceMetadata | undefined;
+    /**
+     * The call-scoped, sanitized admission and terminal proof. This is never
+     * resolved against the current registration catalog during replay.
+     */
+    proof: ReplayModelCallProof;
     status: ModelCallProvenanceRecord["status"];
     latencyMs?: number | undefined;
   }>;
+}
+
+export interface ReplayModelCallProofMetrics {
+  admitted: number;
+  preSpendRejected: number;
+  verifierRejected: number;
+  interrupted: number;
+  requiredToolCallMissing: number;
+  byDimension: ReplayModelCallProofMetricDimension[];
+}
+
+export interface ReplayModelCallProofMetricDimension {
+  provider?: string | undefined;
+  model?: string | undefined;
+  runtimeRole?: string | undefined;
+  endpointCodec?: string | undefined;
+  capability?: ModelCallRequiredCapabilityV1 | undefined;
+  admitted: number;
+  preSpendRejected: number;
+  verifierRejected: number;
+  interrupted: number;
+  requiredToolCallMissing: number;
+}
+
+export interface ReplayModelCallProof {
+  version: "model_call_proof_v1";
+  evidence: "captured" | "legacy";
+  admission: "pending" | "admitted" | "pre_spend_rejected" | "unknown_legacy";
+  effectiveContract?: EffectiveModelContractV1 | undefined;
+  capabilities: ModelCallRequiredCapabilityV1[];
+  terminal:
+    | "pending"
+    | "completed"
+    | "pre_spend_rejected"
+    | "provider_rejected"
+    | "verifier_rejected"
+    | "interrupted"
+    | "unknown_legacy";
+  validation: "not_requested" | "passed" | "failed" | "unknown_legacy";
+  failureCode?: string | undefined;
+  providerRequestId?: string | undefined;
 }
 
 interface ReplayContext {
@@ -1349,6 +1401,7 @@ export class RunReplayService {
           : {}),
         providerPayloadHash: readString(metadata.providerPayloadHash) ?? "",
         componentHash: readString(metadata.componentHash) ?? "",
+        proof: legacyReplayModelCallProof(),
         status: "REQUESTED" as const,
       }));
     const storedCalls =
@@ -1374,6 +1427,7 @@ export class RunReplayService {
           ...(sanitizeModelProvenanceMetadata(call.metadata) !== undefined
             ? { metadata: sanitizeModelProvenanceMetadata(call.metadata) }
             : {}),
+          proof: toReplayModelCallProof(call.proof),
           status: call.status,
           ...(call.latencyMs !== undefined ? { latencyMs: call.latencyMs } : {}),
         }))
@@ -1383,6 +1437,7 @@ export class RunReplayService {
       callCount: calls.length,
       actionCallCount: calls.filter((call) => readModelBudgetClassFromReplayCall(call) === "action").length,
       maintenanceCallCount: calls.filter((call) => readModelBudgetClassFromReplayCall(call) === "maintenance").length,
+      metrics: buildReplayModelCallProofMetrics(calls),
       calls,
     };
   }
@@ -2957,6 +3012,163 @@ function readModelBudgetClassFromReplayCall(call: {
     return explicit;
   }
   return call.phase === "agent.compaction" ? "maintenance" : "action";
+}
+
+function buildReplayModelCallProofMetrics(
+  calls: ReadonlyArray<ReplayModelProvenanceSummary["calls"][number]>,
+): ReplayModelCallProofMetrics {
+  const total: ReplayModelCallProofMetrics = {
+    admitted: 0,
+    preSpendRejected: 0,
+    verifierRejected: 0,
+    interrupted: 0,
+    requiredToolCallMissing: 0,
+    byDimension: [],
+  };
+  const dimensions = new Map<string, ReplayModelCallProofMetricDimension>();
+  for (const call of calls) {
+    incrementReplayModelCallProofMetric(total, call.proof);
+    const contract = call.proof.effectiveContract;
+    const provider = call.provider ?? contract?.providerId;
+    const model = call.model ?? contract?.modelId;
+    const shared = {
+      ...(provider !== undefined ? { provider } : {}),
+      ...(model !== undefined ? { model } : {}),
+      ...(contract?.runtimeRole !== undefined ? { runtimeRole: contract.runtimeRole } : {}),
+      ...(contract?.endpointCodec !== undefined ? { endpointCodec: contract.endpointCodec } : {}),
+    };
+    const capabilityDimensions = call.proof.capabilities.length === 0
+      ? [undefined]
+      : [undefined, ...call.proof.capabilities];
+    for (const capability of capabilityDimensions) {
+      const dimension = {
+        ...shared,
+        ...(capability !== undefined ? { capability } : {}),
+      };
+      const key = JSON.stringify(dimension);
+      const current = dimensions.get(key) ?? {
+        ...dimension,
+        admitted: 0,
+        preSpendRejected: 0,
+        verifierRejected: 0,
+        interrupted: 0,
+        requiredToolCallMissing: 0,
+      };
+      incrementReplayModelCallProofMetric(current, call.proof);
+      dimensions.set(key, current);
+    }
+  }
+  total.byDimension = [...dimensions.values()].sort((left, right) =>
+    JSON.stringify(left).localeCompare(JSON.stringify(right)),
+  );
+  return total;
+}
+
+function incrementReplayModelCallProofMetric(
+  metrics: Pick<
+    ReplayModelCallProofMetrics,
+    "admitted" | "preSpendRejected" | "verifierRejected" | "interrupted" | "requiredToolCallMissing"
+  >,
+  proof: ReplayModelCallProof,
+): void {
+  if (proof.admission === "admitted") metrics.admitted += 1;
+  if (proof.admission === "pre_spend_rejected") metrics.preSpendRejected += 1;
+  if (proof.terminal === "verifier_rejected") metrics.verifierRejected += 1;
+  if (proof.terminal === "interrupted") metrics.interrupted += 1;
+  if (proof.failureCode === "MODEL_REQUIRED_TOOL_CALL_MISSING") {
+    metrics.requiredToolCallMissing += 1;
+  }
+}
+
+function legacyReplayModelCallProof(): ReplayModelCallProof {
+  return {
+    version: "model_call_proof_v1",
+    evidence: "legacy",
+    admission: "unknown_legacy",
+    capabilities: [],
+    terminal: "unknown_legacy",
+    validation: "unknown_legacy",
+  };
+}
+
+/**
+ * Replay only the closed, secret-free proof vocabulary. A bad or legacy proof
+ * is deliberately less informative rather than being repaired from mutable
+ * registrations or unbounded persisted data.
+ */
+function toReplayModelCallProof(value: unknown): ReplayModelCallProof {
+  const proof = asRecord(value);
+  if (
+    proof?.version !== "model_call_proof_v1" ||
+    proof.evidence !== "captured" ||
+    !isModelCallAdmission(proof.admission) ||
+    !isModelCallTerminal(proof.terminal) ||
+    !isModelCallValidation(proof.validation)
+  ) {
+    return legacyReplayModelCallProof();
+  }
+
+  const effectiveContract = readReplayEffectiveModelContract(proof.effectiveContract);
+  return {
+    version: "model_call_proof_v1",
+    evidence: "captured",
+    admission: proof.admission,
+    ...(effectiveContract !== undefined ? { effectiveContract } : {}),
+    capabilities: readReplayModelCallCapabilities(proof.capabilities),
+    terminal: proof.terminal,
+    validation: proof.validation,
+    ...(readBoundedReplayMetadataString(proof.failureCode) !== undefined
+      ? { failureCode: readBoundedReplayMetadataString(proof.failureCode) }
+      : {}),
+    ...(readBoundedReplayMetadataString(proof.providerRequestId) !== undefined
+      ? { providerRequestId: readBoundedReplayMetadataString(proof.providerRequestId) }
+      : {}),
+  };
+}
+
+function readReplayEffectiveModelContract(value: unknown): EffectiveModelContractV1 | undefined {
+  if (value === undefined) {
+    return;
+  }
+  try {
+    return parseEffectiveModelContractV1(value);
+  } catch {
+    return;
+  }
+}
+
+function isModelCallAdmission(
+  value: unknown,
+): value is ReplayModelCallProof["admission"] {
+  return value === "pending" || value === "admitted" || value === "pre_spend_rejected";
+}
+
+function isModelCallTerminal(
+  value: unknown,
+): value is Exclude<ReplayModelCallProof["terminal"], "unknown_legacy"> {
+  return value === "pending" || value === "completed" || value === "pre_spend_rejected" ||
+    value === "provider_rejected" || value === "verifier_rejected" || value === "interrupted";
+}
+
+function isModelCallValidation(
+  value: unknown,
+): value is Exclude<ReplayModelCallProof["validation"], "unknown_legacy"> {
+  return value === "not_requested" || value === "passed" || value === "failed";
+}
+
+function readReplayModelCallCapabilities(
+  value: unknown,
+): ReplayModelCallProof["capabilities"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const capabilities = value.filter(
+    (capability): capability is ReplayModelCallProof["capabilities"][number] =>
+      capability === "structured_output" || capability === "strict_schema" ||
+      capability === "tools" || capability === "required_tool_choice" ||
+      capability === "strict_tool_inputs" || capability === "streaming_terminal",
+  );
+  return [...new Set(capabilities)];
 }
 
 function sanitizeModelProvenanceMetadata(

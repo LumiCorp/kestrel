@@ -1,4 +1,4 @@
-import type { RunnerInteractionRequestV1 } from "@kestrel-agents/protocol";
+import type { RunnerInteractionRequest } from "@kestrel-agents/protocol";
 import type { RunnerTelemetry } from "@kestrel-agents/sdk";
 import type {
   ConversationAgentProgressPresentation,
@@ -24,12 +24,13 @@ export type KestrelCitationPresentation = ConversationCitationPresentation;
 export type KestrelArtifactPresentation = ConversationArtifactPresentation;
 
 export type KestrelInteractionKind =
-  | RunnerInteractionRequestV1["kind"]
+  | RunnerInteractionRequest["kind"]
   | "mcp_sampling"
   | "mcp_elicitation";
 
 export type KestrelInteractionPresentation = ConversationInteractionPresentation<
-  RunnerInteractionRequestV1["approval"]
+  RunnerInteractionRequest["approval"],
+  RunnerInteractionRequest["version"]
 >;
 export type KestrelStatusPresentation = ConversationStatusPresentation;
 export type KestrelDialogMessagePresentation = ConversationDialogMessagePresentation;

@@ -42,7 +42,10 @@ export {
   createOpenAiHttpError,
   mapOpenAiTransportError,
 } from "./openai/OpenAiErrors.js";
-export { buildOpenAiHttpRequest, mapOpenAiResponse } from "./openai/OpenAiMapper.js";
+export {
+  buildOpenAiHttpRequest,
+  mapOpenAiResponse,
+} from "./openai/OpenAiMapper.js";
 export { createOpenAiInvoker } from "./openai/OpenAiInvoker.js";
 export {
   createOpenAiModelGatewayFromEnv,
@@ -94,6 +97,11 @@ export {
   type OpenRouterGatewayFactoryOptions,
 } from "./openrouter/createOpenRouterModelGateway.js";
 export {
+  assertExactModelQualificationGateway,
+  createExactModelQualificationGateway,
+  type ExactModelQualificationGateway,
+} from "./ExactModelQualificationGateway.js";
+export {
   MODEL_PROVIDER_ADAPTERS_V1,
   MODEL_PROVIDER_IDENTITIES_V1,
   getModelProviderAdapterV1,
@@ -103,6 +111,7 @@ export type {
   ProviderAdapterFactoryOptionsV1,
   ProviderAdapterFactoryV1,
   ProviderAdapterRegistrationV1,
+  ProviderCodecEnvelopeV1,
   ProviderConformanceFixtureV1,
 } from "./ProviderRegistry.js";
 export {

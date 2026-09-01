@@ -35,44 +35,80 @@ export function createOpenAiHttpError(
     `${providerLabel} request failed (${status}).`;
 
   if (status === 401 || status === 403) {
-    return new OpenAiModelError("MODEL_AUTH_ERROR", `${providerLabel} auth failed (${status}): ${message}`, status, {
-      bodyText,
-      ...(parsedBody !== undefined ? { parsedBody } : {}),
-    }, retryAfterMs);
+    return new OpenAiModelError(
+      "MODEL_AUTH_ERROR",
+      `${providerLabel} auth failed (${status}): ${message}`,
+      status,
+      {
+        bodyText,
+        ...(parsedBody !== undefined ? { parsedBody } : {}),
+      },
+      retryAfterMs,
+    );
   }
 
   if (status === 408) {
-    return new OpenAiModelError("MODEL_TIMEOUT", `${providerLabel} request timed out (408): ${message}`, status, {
-      bodyText,
-      ...(parsedBody !== undefined ? { parsedBody } : {}),
-    }, retryAfterMs);
+    return new OpenAiModelError(
+      "MODEL_TIMEOUT",
+      `${providerLabel} request timed out (408): ${message}`,
+      status,
+      {
+        bodyText,
+        ...(parsedBody !== undefined ? { parsedBody } : {}),
+      },
+      retryAfterMs,
+    );
   }
 
   if (status === 429) {
-    return new OpenAiModelError("MODEL_RATE_LIMITED", `${providerLabel} rate limited (429): ${message}`, status, {
-      bodyText,
-      ...(parsedBody !== undefined ? { parsedBody } : {}),
-    }, retryAfterMs);
+    return new OpenAiModelError(
+      "MODEL_RATE_LIMITED",
+      `${providerLabel} rate limited (429): ${message}`,
+      status,
+      {
+        bodyText,
+        ...(parsedBody !== undefined ? { parsedBody } : {}),
+      },
+      retryAfterMs,
+    );
   }
 
   if (status === 500 || status === 502 || status === 503 || status === 504) {
-    return new OpenAiModelError("MODEL_PROVIDER_ERROR", `${providerLabel} server error (${status}): ${message}`, status, {
-      bodyText,
-      ...(parsedBody !== undefined ? { parsedBody } : {}),
-    }, retryAfterMs);
+    return new OpenAiModelError(
+      "MODEL_PROVIDER_ERROR",
+      `${providerLabel} server error (${status}): ${message}`,
+      status,
+      {
+        bodyText,
+        ...(parsedBody !== undefined ? { parsedBody } : {}),
+      },
+      retryAfterMs,
+    );
   }
 
-  return new OpenAiModelError("MODEL_BAD_RESPONSE", `${providerLabel} request failed (${status}): ${message}`, status, {
-    bodyText,
-    ...(parsedBody !== undefined ? { parsedBody } : {}),
-  }, retryAfterMs);
+  return new OpenAiModelError(
+    "MODEL_BAD_RESPONSE",
+    `${providerLabel} request failed (${status}): ${message}`,
+    status,
+    {
+      bodyText,
+      ...(parsedBody !== undefined ? { parsedBody } : {}),
+    },
+    retryAfterMs,
+  );
 }
 
-export function createOpenAiBadResponseError(message: string): OpenAiModelError {
-  return new OpenAiModelError("MODEL_BAD_RESPONSE", message);
+export function createOpenAiBadResponseError(
+  message: string,
+  code = "MODEL_BAD_RESPONSE",
+): OpenAiModelError {
+  return new OpenAiModelError(code, message);
 }
 
-export function mapOpenAiTransportError(error: unknown, providerLabel = "OpenAI"): OpenAiModelError {
+export function mapOpenAiTransportError(
+  error: unknown,
+  providerLabel = "OpenAI",
+): OpenAiModelError {
   if (error instanceof OpenAiModelError) {
     return error;
   }
@@ -84,20 +120,23 @@ export function mapOpenAiTransportError(error: unknown, providerLabel = "OpenAI"
     );
   }
 
-  return new OpenAiModelError("MODEL_PROVIDER_ERROR", `Unknown ${providerLabel} transport error`);
+  return new OpenAiModelError(
+    "MODEL_PROVIDER_ERROR",
+    `Unknown ${providerLabel} transport error`,
+  );
 }
 
 function safeParseJson(value: string): Record<string, unknown> | undefined {
   try {
     return asRecord(JSON.parse(value));
   } catch {
-    return ;
+    return;
   }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return ;
+    return;
   }
   return value as Record<string, unknown>;
 }

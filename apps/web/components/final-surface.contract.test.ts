@@ -63,6 +63,8 @@ test("Public and focused flows use quiet narrow decision frames", () => {
 
   assert.match(shared, /max-w-3xl/u);
   assert.match(shared, /SharedTranscriptMessage/u);
+  assert.match(shared, /withoutWebCollaboratorMessages/u);
+  assert.doesNotMatch(shared, /part\.type === "data-kestrel-dialog-message"/u);
   assert.doesNotMatch(shared, /\bCard\b/u);
   assert.doesNotMatch(welcome, /WelcomeWorkspaceSwitcher/u);
   assert.doesNotMatch(welcome, /\bCard\b/u);

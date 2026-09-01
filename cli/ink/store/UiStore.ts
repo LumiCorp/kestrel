@@ -64,7 +64,13 @@ export interface UiRuntimeState extends UiState {
   helpOpen: boolean;
   paletteOpen: boolean;
   paletteSource?: "manual" | "slash" | undefined;
-  paletteContext?: "start-template" | "start-preset" | "start-workspace" | undefined;
+  paletteContext?:
+    | "start-template"
+    | "start-preset"
+    | "start-workspace"
+    | "start-environment"
+    | "environment"
+    | undefined;
   paletteQuery: string;
   paletteSelectedIndex: number;
   errorOverlay?: UiErrorState | undefined;

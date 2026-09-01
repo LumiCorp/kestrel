@@ -2,6 +2,7 @@ import {
   createRuntimeFailure,
   RuntimeFailure,
 } from "../../src/runtime/RuntimeFailure.js";
+import { googleWorkspaceOperationDescriptor } from "../../src/apps/googleWorkspace.js";
 import type {
   SharedToolContext,
   SharedToolDefinition,
@@ -31,6 +32,25 @@ type GoogleCalendarToolOptions = {
 function createGoogleCalendarTool(
   options: GoogleCalendarToolOptions
 ): SharedToolModule {
+  const canonicalOperation =
+    options.operation === "events.list" ||
+    options.operation === "events.create" ||
+    options.operation === "events.update" ||
+    options.operation === "events.delete"
+      ? googleWorkspaceOperationDescriptor(options.operation)
+      : undefined;
+  const readOnly = canonicalOperation === undefined
+    ? options.readOnly === true
+    : canonicalOperation.sideEffect === "read";
+  if (
+    canonicalOperation !== undefined &&
+    (options.name !== canonicalOperation.hostedToolName ||
+      (options.readOnly === true) !== readOnly)
+  ) {
+    throw new Error(
+      `Google Calendar tool '${options.name}' must match its canonical operation descriptor.`,
+    );
+  }
   const definition: SharedToolDefinition = {
     name: options.name,
     description: options.description,
@@ -39,13 +59,13 @@ function createGoogleCalendarTool(
       freshnessClass: "live",
       latencyClass: "medium",
       costClass: "free",
-      executionClass: options.readOnly ? "read_only" : "external_side_effect",
-      ...(options.readOnly
+      executionClass: readOnly ? "read_only" : "external_side_effect",
+      ...(readOnly
         ? {} : { allowedInteractionModes: ["chat", "build"] as Array<"chat" | "build"> }),
       capabilityClasses: ["google.calendar", "network.call"],
       approvalCapabilities: [
         "network.call",
-        ...(options.readOnly ? [] : (["external.confirm"] as const)),
+        ...(readOnly ? [] : (["external.confirm"] as const)),
       ],
       suitability: {
         supportsAttribution: true,
@@ -73,7 +93,9 @@ function createGoogleCalendarTool(
         return invokeGoogleCalendar(context, {
           operation: options.operation,
           input: parsed,
-          requiresApproval: !options.readOnly,
+          requiresApproval: !readOnly,
+          minimumApprovalMode:
+            canonicalOperation?.minimumApprovalMode ?? "auto",
           toolName: options.name,
         });
       };
@@ -136,6 +158,7 @@ export const kestrelOneGoogleCalendarListEventsTool = createGoogleCalendarTool({
     properties: {
       timeMin: { type: "string", format: "date-time" },
       timeMax: { type: "string", format: "date-time" },
+      cursor: { type: "string", minLength: 1, maxLength: 4096 },
       maxResults: { type: "integer", minimum: 1, maximum: 100, default: 50 },
     },
     required: ["timeMin", "timeMax"],
@@ -272,6 +295,7 @@ async function invokeGoogleCalendar(
     operation: GoogleCalendarOperation;
     input: Record<string, unknown>;
     requiresApproval: boolean;
+    minimumApprovalMode: "auto" | "ask";
     toolName: string;
   }
 ) {
@@ -282,6 +306,7 @@ async function invokeGoogleCalendar(
   const explicitApprovalMode =
     context.kestrelOne?.appApprovalModes?.[input.toolName];
   const approvalRequired =
+    input.minimumApprovalMode === "ask" ||
     explicitApprovalMode === "ask" ||
     (explicitApprovalMode === undefined && input.requiresApproval);
   const approvalId = approvalRequired

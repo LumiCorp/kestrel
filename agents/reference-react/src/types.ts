@@ -1,4 +1,8 @@
-import type { StepContext, UserWaitForMatcher, } from "../../../src/kestrel/contracts/execution.js";
+import type {
+  RuntimeInteractionRequest,
+  StepContext,
+  UserWaitForMatcher,
+} from "../../../src/kestrel/contracts/execution.js";
 import type { ModelReasoningRequest, ModelToolSpec } from "../../../src/kestrel/contracts/model-io.js";
 import type {
   ToolActivationRefV1,
@@ -290,6 +294,7 @@ export interface SwitchModeAction {
 export interface RequestModeSwitchAction {
   kind: "request_mode_switch";
   requiredToolClass: "planning_write" | "sandboxed_only" | "external_side_effect";
+  requiredCapabilities: string[];
   reason: string;
 }
 
@@ -666,6 +671,8 @@ export interface ToolCapabilityManifestItem {
   latencyClass?: ToolLatencyClass | undefined;
   costClass?: ToolCostClass | undefined;
   executionClass?: ToolExecutionClass | undefined;
+  /** Internal signal to inspect validated input before policy evaluation. */
+  inputDependentPreparation?: boolean | undefined;
   allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: string[] | undefined;
@@ -1142,6 +1149,7 @@ export interface ReactWaitState {
   resumeStepAgent: string;
   resumeToken: string;
   metadata?: Record<string, unknown> | undefined;
+  interaction?: RuntimeInteractionRequest | undefined;
 }
 
 export interface ReactTerminalState {

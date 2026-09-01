@@ -48,6 +48,10 @@ Optional flags:
 - `--profile <id>`
 - `--session <name>`
 
+`--profile` selects the authoring profile for a new, unstarted session. It does
+not replace the environment or runtime assembly of an existing runtime-bound
+session.
+
 Command mode:
 
 - `kestrel core status` inspects the daemon and build identity without starting it
@@ -91,6 +95,7 @@ export KESTREL_RUNNER_SERVICE_TOKEN='...'
 
 - `/help`
 - `/profiles`
+- `/environment [developer|safe]`
 - `/theme`
 - `/new <name>`
 - `/sessions`
@@ -126,6 +131,31 @@ provider-visible reasoning format. It does not request unavailable raw
 reasoning. `retention.mode` is a separate policy: `live_only` is the default;
 `provider_visible` is an explicit encrypted-retention opt-in for 1–30 days.
 Encrypted continuation state is never shown or placed in transcript history.
+
+## Execution environments
+
+Kestrel presents the agent and its execution environment separately:
+
+- **Developer workspace** is the default for a new session attached to a local
+  workspace. It uses tools installed in that workspace, subject to the active
+  execution and approval policy.
+- **Developer workspace (hosted)** is the same product concept in a hosted
+  workspace. The hosted Environment and Project policy still own its access.
+- **Safe sandbox** is the default for a detached session. `code.execute` runs
+  declared inputs in a fresh isolated scratch container, not in the selected
+  project workspace. It cannot establish which tools are installed in the host
+  or hosted workspace and cannot validate that project.
+
+Use `/environment` to inspect the current choice. Before the first run,
+`/environment developer` or `/environment safe` changes the session in place.
+After runtime thread or assembly evidence exists, the environment is immutable;
+choosing another environment creates a new session and leaves the original
+transcript, waits, threads, and assembly unchanged.
+
+If an older workspace session is in Safe sandbox and reports that Node, npm,
+pnpm, or another project tool is unavailable, create a new Developer workspace
+session for that same workspace. Do not treat a `code.execute` result as proof
+of what is installed in the project environment.
 
 ## Sessions and History
 

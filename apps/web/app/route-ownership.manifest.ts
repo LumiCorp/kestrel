@@ -23,7 +23,8 @@ export type KestrelOneRouteOwner =
   | "stats"
   | "threads"
   | "tool-boundary"
-  | "webhook";
+  | "webhook"
+  | "workflows";
 
 export type KestrelOneRouteKind = "api" | "page";
 
@@ -158,6 +159,14 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     [
       "app/api/desktop/v1/previews/[id]/route.ts",
       "/api/desktop/v1/previews/:id",
+    ],
+    [
+      "app/api/desktop/v1/organizations/[organizationId]/email/receiving/route.ts",
+      "/api/desktop/v1/organizations/:organizationId/email/receiving",
+    ],
+    [
+      "app/api/desktop/v1/organizations/[organizationId]/email/receiving/domains/route.ts",
+      "/api/desktop/v1/organizations/:organizationId/email/receiving/domains",
     ],
   ].map(([file, route]) =>
     api(
@@ -353,6 +362,36 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "authenticated",
     "redirect-sign-in",
     { primaryNavigation: true },
+  ),
+  page(
+    "app/(workspace)/workflows/page.tsx",
+    "/workflows",
+    "workflows",
+    "authenticated",
+    "redirect-sign-in",
+    { primaryNavigation: true },
+  ),
+  page(
+    "app/(workspace)/triggers/page.tsx",
+    "/triggers",
+    "projects",
+    "authenticated",
+    "redirect-sign-in",
+    { primaryNavigation: true },
+  ),
+  page(
+    "app/(workspace)/workflows/[workflowId]/page.tsx",
+    "/workflows/:workflowId",
+    "workflows",
+    "authenticated",
+    "redirect-sign-in",
+  ),
+  page(
+    "app/(workspace)/workflows/runs/[runId]/page.tsx",
+    "/workflows/runs/:runId",
+    "workflows",
+    "authenticated",
+    "redirect-sign-in",
   ),
   page(
     "app/(workspace)/apps/page.tsx",
@@ -708,6 +747,10 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
       "/platform/signup-codes",
     ],
     ["app/(workspace)/platform/email/page.tsx", "/platform/email"],
+    [
+      "app/(workspace)/platform/integrations/page.tsx",
+      "/platform/integrations",
+    ],
     ["app/(workspace)/platform/runtime/page.tsx", "/platform/runtime"],
     ["app/(workspace)/platform/operations/page.tsx", "/platform/operations"],
     ["app/(workspace)/platform/billing/page.tsx", "/platform/billing"],
@@ -747,6 +790,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/apps/browser/personal-domains/route.ts",
+    "/api/apps/browser/personal-domains",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/apps/[appKey]/installation/route.ts",
     "/api/apps/:appKey/installation",
     "apps",
@@ -775,6 +825,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "webhook-validation",
   ),
   api(
+    "app/api/webhooks/resend/inbound/[locator]/route.ts",
+    "/api/webhooks/resend/inbound/:locator",
+    "email-delivery",
+    "webhook",
+    "webhook-validation",
+  ),
+  api(
     "app/api/kestrel/tools/search-knowledge-documents/route.ts",
     "/api/kestrel/tools/search-knowledge-documents",
     "tool-boundary",
@@ -793,6 +850,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "/api/kestrel/tools/files/open",
     "tool-boundary",
     "tool-boundary",
+    "service-bearer",
+  ),
+  api(
+    "app/api/kestrel/tools/email/get-attachment/route.ts",
+    "/api/kestrel/tools/email/get-attachment",
+    "tool-boundary",
+    "service-boundary",
     "service-bearer",
   ),
   api(
@@ -847,6 +911,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/runtime/github/push/route.ts",
     "/api/runtime/github/push",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer",
+  ),
+  api(
+    "app/api/runtime/gmail/action/route.ts",
+    "/api/runtime/gmail/action",
     "credential-boundary",
     "service-boundary",
     "service-bearer",
@@ -1223,6 +1294,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_API.unauthorized,
   ),
   api(
+    "app/api/platform/integrations/route.ts",
+    "/api/platform/integrations",
+    "apps",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
     "app/api/organization/audit/route.ts",
     "/api/organization/audit",
     ADMIN_API.owner,
@@ -1312,6 +1390,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "apps",
     "authenticated",
     "api-unauthorized",
+  ),
+  api(
+    "app/api/integrations/oauth/[provider]/start/route.ts",
+    "/api/integrations/oauth/:provider/start",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/integrations/oauth/[provider]/callback/route.ts",
+    "/api/integrations/oauth/:provider/callback",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/environments/[environmentId]/apps/[appKey]/route.ts",
@@ -1419,6 +1511,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "artifacts",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/runtime/browser-artifacts/[fileId]/route.ts",
+    "/api/runtime/browser-artifacts/:fileId",
+    "artifacts",
+    "service-boundary",
+    "service-bearer",
   ),
   api(
     "app/api/mobile/v1/account/deletion-request/route.ts",
@@ -1694,6 +1793,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/threads/[id]/browser-viewer/route.ts",
+    "/api/threads/:id/browser-viewer",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/threads/[id]/browser-viewer/v1/route.ts",
+    "/api/threads/:id/browser-viewer/v1",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/threads/[id]/turns/route.ts",
     "/api/threads/:id/turns",
     "threads",
@@ -1717,6 +1830,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/threads/[id]/workspace/route.ts",
     "/api/threads/:id/workspace",
+    "environments",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/threads/[id]/workspace/canary/exact-tool-preflight/route.ts",
+    "/api/threads/:id/workspace/canary/exact-tool-preflight",
     "environments",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized,
@@ -1984,6 +2104,69 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/api/projects/[id]/schedules/[scheduleId]/test/route.ts",
     "/api/projects/:id/schedules/:scheduleId/test",
     "projects",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/workflows/route.ts",
+    "/api/projects/:id/workflows",
+    "workflows",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/email-triggers/route.ts",
+    "/api/projects/:id/email-triggers",
+    "projects",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/workflows/generate/route.ts",
+    "/api/projects/:id/workflows/generate",
+    "workflows",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/email-triggers/[triggerId]/route.ts",
+    "/api/projects/:id/email-triggers/:triggerId",
+    "projects",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/workflows/[workflowId]/route.ts",
+    "/api/projects/:id/workflows/:workflowId",
+    "workflows",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/workflows/[workflowId]/activate/route.ts",
+    "/api/projects/:id/workflows/:workflowId/activate",
+    "workflows",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/workflows/[workflowId]/run/route.ts",
+    "/api/projects/:id/workflows/:workflowId/run",
+    "workflows",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/email-triggers/[triggerId]/rotate/route.ts",
+    "/api/projects/:id/email-triggers/:triggerId/rotate",
+    "projects",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/workflow-runs/[runId]/route.ts",
+    "/api/workflow-runs/:runId",
+    "workflows",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized,
   ),
@@ -2284,6 +2467,34 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/organization/email/test/route.ts",
     "/api/organization/email/test",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/email/receiving/route.ts",
+    "/api/organization/email/receiving",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/email/receiving/domains/route.ts",
+    "/api/organization/email/receiving/domains",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/email/receiving/activation/route.ts",
+    "/api/organization/email/receiving/activation",
+    "email-delivery",
+    "admin",
+    "admin-denied",
+  ),
+  api(
+    "app/api/organization/email/receiving/activation/readiness/route.ts",
+    "/api/organization/email/receiving/activation/readiness",
     "email-delivery",
     "admin",
     "admin-denied",

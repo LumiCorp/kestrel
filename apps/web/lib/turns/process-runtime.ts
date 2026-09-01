@@ -59,19 +59,65 @@ import {
   type DurableReplayChunk,
   getDurableTurn,
   getDurableTurnOpenReplayScaffold,
+  hasDurablePreparedApprovalCleanupPending,
   isDurableTurnCancellationRequested,
   listMessagesForDurableTurn,
   persistDurableAssistantOutcome,
+  recordDurableRuntimeDeclineCompleted,
   recordDurableRuntimeStarted,
+  recordDurableRuntimeToolOutcome,
+  type DurableRuntimeToolOutcomeEvidence,
   recordMobileTurnActivity,
   recordMobileTurnRuntimeActivity,
+  resetDurablePreparedApprovalCleanupForRetry,
 } from "@/lib/turns/store";
 import {
   convertToUIMessages,
   isPersistableAssistantMessage,
 } from "@/lib/utils";
+import { PreparedApprovalCleanupRetryError } from "@/lib/turns/prepared-approval-cleanup";
 
 const TITLE_FAILURE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,119}$/u;
+
+function readDurableRuntimeToolOutcome(
+  value: unknown,
+): DurableRuntimeToolOutcomeEvidence | null {
+  if (!(value && typeof value === "object" && !Array.isArray(value))) {
+    return null;
+  }
+  const outcome = value as Record<string, unknown>;
+  if (
+    typeof outcome.callId !== "string" ||
+    !["success", "partial", "failure", "cancellation"].includes(
+      String(outcome.kind),
+    ) ||
+    !["not_applicable", "not_started", "committed", "unknown"].includes(
+      String(outcome.effectState),
+    )
+  ) {
+    return null;
+  }
+  const error =
+    outcome.error && typeof outcome.error === "object" &&
+      !Array.isArray(outcome.error)
+      ? (outcome.error as Record<string, unknown>)
+      : undefined;
+  return {
+    callId: outcome.callId,
+    kind: outcome.kind as DurableRuntimeToolOutcomeEvidence["kind"],
+    effectState:
+      outcome.effectState as DurableRuntimeToolOutcomeEvidence["effectState"],
+    ...(typeof outcome.normalizedFailureCode === "string"
+      ? { normalizedFailureCode: outcome.normalizedFailureCode }
+      : {}),
+    ...(typeof outcome.retryable === "boolean"
+      ? { retryable: outcome.retryable }
+      : {}),
+    ...(typeof error?.message === "string"
+      ? { error: { message: error.message } }
+      : {}),
+  };
+}
 
 function attachmentFailureMessage(
   code: HostedAttachmentFailureCode,
@@ -329,12 +375,29 @@ export async function processDurableThreadTurn(
       },
     });
     if (interrupted?.status === "running") {
+      const interruptedCleanup =
+        await hasDurablePreparedApprovalCleanupPending({ turnId });
+      if (
+        interruptedCleanup &&
+        !interrupted.environmentExecutionId
+      ) {
+        if (await resetDurablePreparedApprovalCleanupForRetry({ turnId })) {
+          throw new PreparedApprovalCleanupRetryError();
+        }
+        throw new Error(
+          "Prepared approval cleanup lost its durable Environment execution binding.",
+        );
+      }
       let interruptedTerminalStatus:
         | "completed"
         | "failed"
         | "cancelled"
         | null = null;
-      if (interrupted.cancelRequestedAt && interrupted.environmentExecutionId) {
+      if (
+        !interruptedCleanup &&
+        interrupted.cancelRequestedAt &&
+        interrupted.environmentExecutionId
+      ) {
         const confirmed = await cancelInterruptedKestrelOneExecution({
           organizationId: interrupted.organizationId,
           executionId: interrupted.environmentExecutionId,
@@ -369,10 +432,17 @@ export async function processDurableThreadTurn(
         }
       }
       const stopped =
+        !interruptedCleanup &&
         Boolean(interrupted.cancelRequestedAt) &&
         interruptedTerminalStatus !== "completed" &&
         interruptedTerminalStatus !== "failed";
       const terminalFailed = interruptedTerminalStatus === "failed";
+      if (
+        terminalFailed &&
+        await resetDurablePreparedApprovalCleanupForRetry({ turnId })
+      ) {
+        throw new PreparedApprovalCleanupRetryError();
+      }
       if (
         !(
           stopped ||
@@ -437,6 +507,8 @@ export async function processDurableThreadTurn(
   if (!turn) {
     return { processed: false, nextTurnId: null };
   }
+  const preparedApprovalCleanup =
+    turn.interactionResponse?.preparedApprovalCleanup;
 
   let projectContext: Awaited<ReturnType<typeof loadBoundProjectContext>> =
     null;
@@ -492,6 +564,7 @@ export async function processDurableThreadTurn(
         if (requested) {
           cancellationRequested = true;
           if (
+            !preparedApprovalCleanup &&
             !finalizeAnswerCompleted &&
             environmentExecutionId &&
             !runtimeCancellationSent
@@ -502,7 +575,7 @@ export async function processDurableThreadTurn(
               executionId: environmentExecutionId,
             }).catch(() => {});
           }
-          if (!finalizeAnswerCompleted) {
+          if (!preparedApprovalCleanup && !finalizeAnswerCompleted) {
             scheduleCancellationDeadline();
           }
         }
@@ -581,18 +654,30 @@ export async function processDurableThreadTurn(
       stage: "reading_context",
       milestoneId: `turn:${turn.id}:context`,
     });
-    projectContext = await loadBoundProjectContext(
-      turn,
-      reattachExecutionId ?? recoveredCompletedExecutionId,
-    );
-    const threadFileInventory = await listThreadFileInventory({
-      threadId: turn.threadId,
-      organizationId: turn.organizationId,
-      userId: turn.authorUserId,
-      checkAvailability: false,
-    });
+    const continuationExecutionId =
+      reattachExecutionId ??
+      recoveredCompletedExecutionId ??
+      (turn.interactionResponse ? turn.environmentExecutionId : null);
+    projectContext = preparedApprovalCleanup
+      ? null
+      : await loadBoundProjectContext(
+          turn,
+          continuationExecutionId,
+        );
+    const threadFileInventory = preparedApprovalCleanup
+      ? []
+      : await listThreadFileInventory({
+          threadId: turn.threadId,
+          organizationId: turn.organizationId,
+          userId: turn.authorUserId,
+          checkAvailability: false,
+        });
     let resolvedAttachments: RunnerTurnAttachment[] | null = null;
-    if (!reattachExecutionId && !recoveredCompletedExecutionId) {
+    if (
+      !preparedApprovalCleanup &&
+      !reattachExecutionId &&
+      !recoveredCompletedExecutionId
+    ) {
       const attachmentIds = attachmentParts(submittedUserMessage?.parts).map(
         (attachment) => attachment.fileId,
       );
@@ -641,7 +726,7 @@ export async function processDurableThreadTurn(
         resolvedAttachments = [];
       }
     }
-    transientTitle = turn.approvalId
+    transientTitle = preparedApprovalCleanup || turn.approvalId
       ? null
       : submittedUserMessage
         ? generateTitleForOrganization({
@@ -686,6 +771,15 @@ export async function processDurableThreadTurn(
       ...(readBooleanField(turnContract?.data, "noninteractive") ||
       scheduleRun !== undefined
         ? { noninteractive: true }
+        : {}),
+      ...(turnContract?.data &&
+      typeof turnContract.data === "object" &&
+      "workflowRunAuthority" in turnContract.data &&
+      turnContract.data.workflowRunAuthority &&
+      typeof turnContract.data.workflowRunAuthority === "object"
+        ? {
+            workflowRunAuthority: turnContract.data.workflowRunAuthority as Record<string, unknown>,
+          }
         : {}),
       messages,
       resolvedAttachments,
@@ -749,6 +843,25 @@ export async function processDurableThreadTurn(
           eventWrites = eventWrites.then(recordRuntimeStarted);
           return;
         }
+        if (
+          event.type === "run.tool.completed" ||
+          event.type === "run.tool.failed"
+        ) {
+          const outcome = readDurableRuntimeToolOutcome(
+            event.payload.update.version === "v2"
+              ? event.payload.update.outcome
+              : undefined,
+          );
+          if (outcome) {
+            eventWrites = eventWrites.then(() =>
+              recordDurableRuntimeToolOutcome({
+                turnId: turn.id,
+                eventId: event.id,
+                outcome,
+              }).then(() => {}),
+            );
+          }
+        }
         eventWrites = eventWrites.then(async () => {
           try {
             await recordMobileTurnRuntimeActivity({
@@ -764,18 +877,21 @@ export async function processDurableThreadTurn(
             // Runtime telemetry is best effort and must not fail the turn.
           }
         });
-        if (shouldInterruptDurableTurnAtRuntimeEvent({
-          cancellationRequested,
-          finalizeAnswerCompleted,
-          eventType: event.type,
-        })) {
+        if (
+          !preparedApprovalCleanup &&
+          shouldInterruptDurableTurnAtRuntimeEvent({
+            cancellationRequested,
+            finalizeAnswerCompleted,
+            eventType: event.type,
+          })
+        ) {
           cancellation.abort(
             new Error("The user interrupted this turn at a safe boundary."),
           );
         }
       },
       onUiChunk(chunk) {
-        if (workerInterrupted) {
+        if (workerInterrupted || preparedApprovalCleanup) {
           return;
         }
         const scaffold = readKestrelReplayScaffoldChunk(chunk);
@@ -812,11 +928,13 @@ export async function processDurableThreadTurn(
         terminal.interaction = meta.interaction;
         const messagesForPersistence =
           prepareKestrelRuntimeMessagesForPersistence(finishedMessages, meta);
-        const assistantMessages = messagesForPersistence.filter(
-          (message): message is UIMessage =>
-            message.role === "assistant" &&
-            isPersistableAssistantMessage(message),
-        );
+        const assistantMessages = preparedApprovalCleanup
+          ? []
+          : messagesForPersistence.filter(
+              (message): message is UIMessage =>
+                message.role === "assistant" &&
+                isPersistableAssistantMessage(message),
+            );
         terminal.messages = assistantMessages.map((message) => ({
           id: message.id,
           projectContextRevisionId: turn.projectContextRevisionId,
@@ -835,8 +953,8 @@ export async function processDurableThreadTurn(
             turnId: turn.id,
             interaction: meta.interaction,
             ...(meta.runId ? { sourceRuntimeRunId: meta.runId } : {}),
-            ...(meta.interaction.approval?.toolCallId
-              ? { runtimeApprovalId: meta.interaction.approval.toolCallId }
+            ...(meta.interaction.kind === "approval"
+              ? { runtimeApprovalId: meta.interaction.requestId }
               : {}),
             messages: terminal.messages,
             replayChunks: terminal.replayChunks,
@@ -884,18 +1002,46 @@ export async function processDurableThreadTurn(
     ) {
       throw new Error("The durable turn worker lease ended during execution.");
     }
-    assertVisibleCompletedOutcome(
-      terminal.status,
-      persistedAssistantMessageCount,
-    );
+    if (!preparedApprovalCleanup) {
+      assertVisibleCompletedOutcome(
+        terminal.status,
+        persistedAssistantMessageCount,
+      );
+    }
     if (terminal.status === "waiting" && terminal.interaction) {
       return { processed: true, nextTurnId: null };
     }
     // Once the runtime has produced a complete terminal presentation, that
     // result is authoritative even if the worker lease ends immediately after
     // it. Earlier worker loss reaches the failed/catch paths instead.
-    const completionStatus = terminalTurnStatus(terminal.status);
-    const interactionFailure = completionStatus === "failed" && !runnerRunStartedObserved
+    let completionStatus = terminalTurnStatus(terminal.status);
+    const preparedCleanupFailureCode = preparedApprovalCleanup?.failureCode;
+    const preparedCleanupFailureMessage = preparedApprovalCleanup?.failureMessage;
+    const preparedCleanupStopRequested = preparedApprovalCleanup
+      ? await isDurableTurnCancellationRequested(turn.id)
+      : false;
+    if (
+      completionStatus === "completed" &&
+      preparedCleanupFailureCode !== undefined
+    ) {
+      completionStatus = preparedCleanupStopRequested
+        ? "cancelled"
+        : "failed";
+    } else if (
+      preparedCleanupFailureCode !== undefined &&
+      await resetDurablePreparedApprovalCleanupForRetry({ turnId: turn.id })
+    ) {
+      throw new PreparedApprovalCleanupRetryError();
+    } else if (
+      completionStatus === "completed" &&
+      turn.interactionResponse?.decision === "decline"
+    ) {
+      await recordDurableRuntimeDeclineCompleted({ turnId: turn.id });
+    }
+    const interactionFailure =
+      preparedCleanupFailureCode === undefined &&
+      completionStatus === "failed" &&
+      !runnerRunStartedObserved
       ? {
           failureCode: terminal.errorCode ?? "RUNTIME_FAILED",
           failureMessage:
@@ -914,20 +1060,38 @@ export async function processDurableThreadTurn(
       messages: terminal.messages,
       replayChunks: terminal.replayChunks,
       failureCode:
-        completionStatus === "failed"
-          ? workerInterrupted
+        completionStatus === "cancelled"
+          ? "TURN_STOPPED"
+          : completionStatus === "failed"
+          ? preparedCleanupFailureCode ?? (workerInterrupted
             ? "TURN_WORKER_INTERRUPTED"
             : terminal.status === "contract_failure"
               ? "PRESENTATION_CONTRACT_FAILURE"
-              : terminal.errorCode ?? "RUNTIME_FAILED"
+              : terminal.errorCode ?? "RUNTIME_FAILED")
           : null,
-      failureMessage: terminal.error,
+      failureMessage:
+        completionStatus === "cancelled"
+          ? null
+          : preparedCleanupFailureMessage ?? terminal.error,
       interactionFailure,
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
   } catch (error) {
+    if (error instanceof PreparedApprovalCleanupRetryError) throw error;
     await transientTitle;
     await eventWrites.catch(() => {});
+    if (
+      preparedApprovalCleanup &&
+      runnerRunStartedObserved &&
+      !runtimeStartedRecorded
+    ) {
+      if (
+        await resetDurablePreparedApprovalCleanupForRetry({ turnId: turn.id })
+      ) {
+        throw new PreparedApprovalCleanupRetryError();
+      }
+      throw error;
+    }
     if (runnerRunStartedObserved && !runtimeStartedRecorded) {
       // The runner may already have begun executing. Leave the turn running so
       // a later worker can reattach and commit the start acknowledgement.
@@ -941,6 +1105,22 @@ export async function processDurableThreadTurn(
     ) {
       // The runner owns a continue-on-disconnect execution. Leave the durable
       // turn running so the queue retry can reattach from its persisted cursor.
+      throw error;
+    }
+    if (preparedApprovalCleanup) {
+      // A canonical cleanup turn cannot become terminal through Web failure or
+      // Stop handling until the runner has durably completed the exact release.
+      // Requeue the same cleanup marker so recovery can retry idempotently.
+      if (runtimeTerminalObserved && environmentExecutionId) {
+        throw new PreparedApprovalCleanupRetryError({
+          preserveRunningExecution: true,
+        });
+      }
+      if (
+        await resetDurablePreparedApprovalCleanupForRetry({ turnId: turn.id })
+      ) {
+        throw new PreparedApprovalCleanupRetryError();
+      }
       throw error;
     }
     if (
@@ -995,22 +1175,46 @@ export async function processDurableThreadTurn(
         throw error;
       }
     }
-    const failurePresentation = buildFailurePresentation({
-      errorMessage: attachmentCode
-        ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
-        : publicFailureMessage ?? message,
-      status: stopped ? "cancelled" : "failed",
-      turn,
-      assistantMessageId: terminal.assistantMessageId,
-      textPartId: terminal.textPartId,
-    });
+    // onFinishPersist snapshots the complete runtime presentation before the
+    // terminal transaction begins. If that transaction fails, retry the exact
+    // captured messages and telemetry instead of replacing completed model
+    // work with the synthetic zero-usage failure presentation. Pre-runtime
+    // failures have no terminal event and continue to use the fallback below.
+    const capturedTerminalPresentation =
+      runtimeTerminalObserved && terminal.messages.length > 0
+        ? {
+            status: terminalTurnStatus(terminal.status),
+            messages: terminal.messages,
+            replayChunks: terminal.replayChunks,
+          }
+        : null;
+    const fallbackStatus = stopped ? "cancelled" as const : "failed" as const;
+    const recoveryStatus =
+      capturedTerminalPresentation?.status ?? fallbackStatus;
+    const failurePresentation =
+      capturedTerminalPresentation ??
+      buildFailurePresentation({
+        errorMessage: attachmentCode
+          ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
+          : publicFailureMessage ?? message,
+        status: fallbackStatus,
+        turn,
+        assistantMessageId: terminal.assistantMessageId,
+        textPartId: terminal.textPartId,
+      });
     const completion = await completeDurableThreadTurn({
       turnId: turn.id,
-      status: stopped ? "cancelled" : "failed",
+      status: recoveryStatus,
       messages: failurePresentation.messages,
       replayChunks: failurePresentation.replayChunks,
-      failureCode: stopped
+      failureCode: recoveryStatus === "completed"
+        ? null
+        : recoveryStatus === "cancelled"
         ? "TURN_STOPPED"
+        : capturedTerminalPresentation
+          ? terminal.status === "contract_failure"
+            ? "PRESENTATION_CONTRACT_FAILURE"
+            : terminal.errorCode ?? "RUNTIME_FAILED"
           : attachmentCode
           ? attachmentCode
           : workerInterrupted
@@ -1025,12 +1229,17 @@ export async function processDurableThreadTurn(
           : errorCode === "PROJECT_CONTEXT_GRANT_CONTINUITY_INVALID"
             ? errorCode
           : "TURN_WORKER_FAILED",
-      failureMessage: stopped
+      failureMessage: recoveryStatus === "completed" ||
+          recoveryStatus === "cancelled"
         ? null
-        : attachmentCode
+        : capturedTerminalPresentation
+          ? terminal.error
+          : attachmentCode
           ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
           : publicFailureMessage ?? message,
-      interactionFailure: runnerRunStartedObserved && publicFailureMessage === null
+      interactionFailure:
+        capturedTerminalPresentation ||
+        (runnerRunStartedObserved && publicFailureMessage === null)
         ? undefined
         : {
             failureCode: stopped

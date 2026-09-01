@@ -23,7 +23,7 @@ export const desktopHostOpenTool: SharedToolModule = {
   definition: {
     name: TOOL_NAME,
     description:
-      "Open an installed macOS application, a file within the active Desktop workspace, or an HTTP(S) URL only when the user explicitly requested that host action. This is the Desktop host-opening tool; do not use exec_command for app launching.",
+      "Open an installed macOS application, a file within the active Desktop workspace, or an HTTP(S) URL only when the user explicitly requested that host action. If a URL depends on a local server or process started in this turn, call this tool only after the start tool reports that the process is running; never use it after a failed start or to imply an inactive URL is live. This is the Desktop host-opening tool; do not use exec_command for app launching.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -77,6 +77,7 @@ export const desktopHostOpenTool: SharedToolModule = {
       executionClass: "external_side_effect",
       allowedInteractionModes: ["chat", "build"],
       capabilityClasses: ["desktop.host.open"],
+      approvalCapabilities: ["external.confirm"],
     },
     presentation: {
       displayName: "Open on Desktop",

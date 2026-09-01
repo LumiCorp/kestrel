@@ -104,13 +104,20 @@ export function createModeSwitchRetryGuard() {
       recommendationId: string;
       mode: ConversationMode;
       switchMode: (mode: ConversationMode) => void | Promise<void>;
+      switchModeTiming?: "before_retry" | "after_retry";
       retry: () => Promise<Result>;
     }): Promise<Result | undefined> {
       if (accepted.has(input.recommendationId)) return;
       accepted.add(input.recommendationId);
       try {
-        await input.switchMode(input.mode);
-        return await input.retry();
+        if (input.switchModeTiming !== "after_retry") {
+          await input.switchMode(input.mode);
+        }
+        const result = await input.retry();
+        if (input.switchModeTiming === "after_retry") {
+          await input.switchMode(input.mode);
+        }
+        return result;
       } catch (error) {
         accepted.delete(input.recommendationId);
         throw error;

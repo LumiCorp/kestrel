@@ -101,7 +101,9 @@ function buildChatBody(
   }
   if (tools.length > 0) {
     body.tools = tools;
-    body.parallel_tool_calls = openrouter?.parallelToolCalls ?? true;
+    if (typeof openrouter?.parallelToolCalls === "boolean") {
+      body.parallel_tool_calls = openrouter.parallelToolCalls;
+    }
   }
 
   const responseFormat = toResponseFormat(request);
@@ -158,7 +160,9 @@ function buildResponsesBody(
   }
   if (tools.length > 0) {
     body.tools = tools;
-    body.parallel_tool_calls = openrouter?.parallelToolCalls ?? true;
+    if (typeof openrouter?.parallelToolCalls === "boolean") {
+      body.parallel_tool_calls = openrouter.parallelToolCalls;
+    }
   }
 
   const responseFormat = toResponseFormat(request);
@@ -512,29 +516,7 @@ function parseOutput<TOutput>(text: string | undefined): TOutput | undefined {
     return ;
   }
 
-  const direct = parseJsonText<TOutput>(trimmed);
-  if (direct !== undefined) {
-    return direct;
-  }
-
-  const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/u);
-  if (fenceMatch?.[1] !== undefined) {
-    const fenced = parseJsonText<TOutput>(fenceMatch[1]);
-    if (fenced !== undefined) {
-      return fenced;
-    }
-  }
-
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    const sliced = parseJsonText<TOutput>(trimmed.slice(firstBrace, lastBrace + 1));
-    if (sliced !== undefined) {
-      return sliced;
-    }
-  }
-
-  return ;
+  return parseJsonText<TOutput>(trimmed);
 }
 
 function parseStructuredOutput<TOutput>(value: unknown): TOutput | undefined {
@@ -593,9 +575,12 @@ function extractToolIntentsFromResponsesOutput(value: unknown): ModelToolIntent[
         continue;
       }
 
-      const argsValue = record?.arguments;
-      const argsText =
-        typeof argsValue === "string" ? argsValue : safeJsonStringify(argsValue ?? {});
+      const argsText = asString(record?.arguments);
+      if (argsText === undefined) {
+        throw createOpenRouterBadResponseError(
+          "OpenRouter Responses function call arguments must be a JSON object string.",
+        );
+      }
       const id = asString(record?.id);
       intents.push({
         name,
@@ -788,14 +773,18 @@ function normalizedVisibleReasoningText(value: unknown): string | undefined {
 
 function parseArgs(value: string | undefined): Record<string, unknown> {
   if (value === undefined || value.trim().length === 0) {
-    return {};
+    throw createOpenRouterBadResponseError("OpenRouter tool call arguments are missing.");
   }
 
   try {
     const parsed = JSON.parse(value);
-    return asRecord(parsed) ?? {};
+    const record = asRecord(parsed);
+    if (record === undefined) {
+      throw createOpenRouterBadResponseError("OpenRouter tool call arguments must be a JSON object.");
+    }
+    return record;
   } catch {
-    return {};
+    throw createOpenRouterBadResponseError("OpenRouter tool call arguments are malformed.");
   }
 }
 

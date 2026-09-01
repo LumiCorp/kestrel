@@ -17,6 +17,7 @@ import {
   createReferenceReactAssistantTextPatch,
   createReferenceReactWaitingForPatch,
 } from "./state.js";
+import { readSelectedModeSwitch } from "./modeSwitch.js";
 import type { ReactAction } from "./types.js";
 
 export type ReferenceReactCommandClass = "read" | "write" | "effect" | "finalize" | "wait" | "observe";
@@ -230,9 +231,28 @@ export function createReferenceReactWaitCheckpoint(input: {
   regionExecPatch?: Record<string, unknown> | undefined;
   emitEvents?: Transition["emitEvents"] | undefined;
 }): Transition {
-  const runtimeWaitFor = materializeUserFacingWaitInteraction(
-    toReferenceReactWaitMatcher(input.waitFor),
+  const authoredWaitFor = toReferenceReactWaitMatcher(input.waitFor);
+  const fallbackRequestId = `request-${buildWaitResumeToken({
+    waitFor: authoredWaitFor,
+    resumeStepAgent: input.nextStepAgent,
+  })}`;
+  const materializedWaitFor = materializeUserFacingWaitInteraction(
+    authoredWaitFor,
+    { fallbackRequestId },
   );
+  const selectedMode = readSelectedModeSwitch(input.reactState.modeSwitch);
+  const runtimeWaitFor = selectedMode === undefined || materializedWaitFor.interaction === undefined
+    ? materializedWaitFor
+    : {
+        ...materializedWaitFor,
+        interaction: {
+          ...materializedWaitFor.interaction,
+          metadata: {
+            ...(asRecord(materializedWaitFor.interaction.metadata) ?? {}),
+            modeSwitch: { mode: selectedMode },
+          },
+        },
+      };
   const assistantText = readInteractionPrompt(runtimeWaitFor) ?? null;
   const currentChunk = describeExecutionCheckpoint(input.substate);
   const waitReason = describeWaitReason(runtimeWaitFor);
@@ -370,6 +390,7 @@ export function createReferenceReactEffectCollectCheckpoint(input: {
   regionReactPatch?: Record<string, unknown> | undefined;
   regionExecPatch?: Record<string, unknown> | undefined;
   artifacts?: Transition["artifacts"] | undefined;
+  effects?: Transition["effects"] | undefined;
   emitEvents?: Transition["emitEvents"] | undefined;
 }): Transition {
   const currentChunk = describeExecutionCheckpoint("collect");
@@ -407,6 +428,7 @@ export function createReferenceReactEffectCollectCheckpoint(input: {
   return {
     status: "RUNNING",
     nextStepAgent: input.nextStepAgent,
+    effects: input.effects,
     ...(input.artifacts !== undefined && input.artifacts.length > 0 ? { artifacts: input.artifacts } : {}),
     emitEvents: input.emitEvents,
     statePatch: createReferenceReactStatePatch({

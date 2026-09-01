@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   SettingsDisclosure,
@@ -60,8 +60,10 @@ const emptyConfig: EmailConfig = {
 
 export function EmailIntegrationAdminClient({
   scope = "platform",
+  children,
 }: {
   scope?: "platform" | "organization";
+  children?: ReactNode;
 }) {
   const [config, setConfig] = useState(emptyConfig);
   const [events, setEvents] = useState<EmailEvent[]>([]);
@@ -213,6 +215,8 @@ export function EmailIntegrationAdminClient({
           </SettingsRow>
         </SettingsRows>
       </SettingsSection>
+
+      {children}
 
       <SettingsSection
         description="Sender identity and credential changes are saved without enabling delivery."

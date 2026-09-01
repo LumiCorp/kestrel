@@ -1,12 +1,15 @@
 import type { RunnerProfile } from "@kestrel-agents/sdk/runner";
+import { GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS } from "../../../../src/apps/googleWorkspace.js";
+import { MICROSOFT_365_OPERATION_DESCRIPTORS } from "../../../../src/apps/microsoft365.js";
 import { getCoreAppDefinition } from "@/lib/apps/catalog";
 import { applyMinimumApprovalMode } from "@/lib/apps/policy";
+import { BROWSER_TOOL_NAMES } from "../../../../src/browser/contracts";
 
 const GOOGLE_CALENDAR_TOOL_CAPABILITIES = new Map<string, string>([
-  ["kestrel_one.google_calendar_list_events", "calendar.events.read"],
-  ["kestrel_one.google_calendar_create_event", "calendar.events.create"],
-  ["kestrel_one.google_calendar_update_event", "calendar.events.update"],
-  ["kestrel_one.google_calendar_delete_event", "calendar.events.delete"],
+  ...GOOGLE_WORKSPACE_OPERATION_DESCRIPTORS.map((operation) => [
+    operation.hostedToolName,
+    operation.id,
+  ] as const),
   [
     "kestrel_one.google_calendar_list_availability_subjects",
     "calendar.availability.subjects",
@@ -18,12 +21,10 @@ const GOOGLE_CALENDAR_TOOL_CAPABILITIES = new Map<string, string>([
 ] as const);
 
 const MICROSOFT_365_TOOL_CAPABILITIES = new Map<string, string>([
-  ["kestrel_one.microsoft_365_list_mail", "outlook.mail.read"],
-  ["kestrel_one.microsoft_365_send_mail", "outlook.mail.send"],
-  ["kestrel_one.microsoft_365_list_events", "outlook.calendar.read"],
-  ["kestrel_one.microsoft_365_list_chats", "teams.chat.read"],
-  ["kestrel_one.microsoft_365_send_chat_message", "teams.chat.send"],
-  ["kestrel_one.microsoft_365_search_sites", "sharepoint.sites.search"],
+  ...MICROSOFT_365_OPERATION_DESCRIPTORS.map((operation) => [
+    operation.hostedToolName,
+    operation.id,
+  ] as const),
 ] as const);
 
 const GITHUB_TOOL_CAPABILITIES = new Map<string, string>([
@@ -63,6 +64,14 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
   string,
   { appKey: string; capabilityKey: string }
 >([
+  ...BROWSER_TOOL_NAMES.map((toolName) => [
+    toolName,
+    { appKey: "built_in.browser", capabilityKey: toolName.slice("browser.".length) },
+  ] as const),
+  [
+    "exec_command",
+    { appKey: "built_in.workspace", capabilityKey: "executeCommand" },
+  ],
   [
     "free.weather.current",
     { appKey: "built_in.weather", capabilityKey: "getWeather" },
@@ -213,6 +222,7 @@ export function resolveKestrelOneToolProfileConfiguration(input: {
   availableToolNames: string[];
   effectiveCapabilities: string[];
   approvalPolicies?: KestrelOneCapabilityApprovalPolicyEvidence[] | undefined;
+  emailAttachmentReadAvailable?: boolean | undefined;
 }): {
   additionalToolNames: string[];
   kestrelOneAppApprovalModes: Record<string, "auto" | "ask">;
@@ -221,7 +231,12 @@ export function resolveKestrelOneToolProfileConfiguration(input: {
     Omit<KestrelOneCapabilityApprovalPolicyEvidence, "appKey" | "capabilityKey">
   >;
 } {
-  const availableToolNames = [...new Set(input.availableToolNames)];
+  const availableToolNames = [...new Set([
+    ...input.availableToolNames,
+    ...(input.emailAttachmentReadAvailable
+      ? ["kestrel_one.email_get_attachment"]
+      : []),
+  ])];
   if (
     availableToolNames.includes("kestrel_one.search_knowledge_documents")
   ) {
@@ -338,7 +353,11 @@ export function resolveKestrelOneToolProfileConfiguration(input: {
             ...(policy.subject === undefined
               ? {}
               : { subject: policy.subject }),
-            minimum: policy.minimum,
+            minimum:
+              minimumApprovalModeForTool(toolName) === "ask" ||
+              policy.minimum === "ask"
+                ? "ask"
+                : "auto",
           },
         ] as const,
       ];

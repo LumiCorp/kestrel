@@ -48,6 +48,7 @@ export interface ToolCapabilityContractV1 {
   latencyClass: ToolLatencyClassV1;
   costClass: ToolCostClassV1;
   executionClass: ToolExecutionClass;
+  inputDependentPreparation?: boolean | undefined;
   allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: ApprovalCapabilityClass[] | undefined;
@@ -180,6 +181,7 @@ const CAPABILITY_KEYS = new Set([
   "latencyClass",
   "costClass",
   "executionClass",
+  "inputDependentPreparation",
   "allowedInteractionModes",
   "capabilityClasses",
   "approvalCapabilities",
@@ -768,7 +770,7 @@ function parseCapability(value: unknown): ToolCapabilityContractV1 {
     COST_CLASSES,
     "tool descriptor.capability.costClass",
   );
-  requireEnumString(
+  const executionClass = requireEnumString(
     input.executionClass,
     EXECUTION_CLASSES,
     "tool descriptor.capability.executionClass",
@@ -789,6 +791,14 @@ function parseCapability(value: unknown): ToolCapabilityContractV1 {
       "tool descriptor.capability.allowedInteractionModes",
     );
   }
+  if (
+    input.inputDependentPreparation !== undefined &&
+    typeof input.inputDependentPreparation !== "boolean"
+  ) {
+    throw new Error(
+      "tool descriptor.capability.inputDependentPreparation must be a boolean",
+    );
+  }
   if (input.approvalCapabilities !== undefined) {
     const approvalCapabilities = requireEnumStringArray(
       input.approvalCapabilities,
@@ -800,6 +810,14 @@ function parseCapability(value: unknown): ToolCapabilityContractV1 {
         "tool descriptor.capability.approvalCapabilities must be omitted when empty",
       );
     }
+  }
+  if (
+    executionClass === "external_side_effect" &&
+    input.approvalCapabilities === undefined
+  ) {
+    throw new Error(
+      "tool descriptor.capability.approvalCapabilities is required for external_side_effect tools",
+    );
   }
   if (input.minimumApprovalMode !== undefined) {
     requireEnumString(

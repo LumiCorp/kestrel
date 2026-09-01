@@ -15,6 +15,30 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
     message: "ship it",
     eventType: "user.message",
     noninteractive: true,
+    hostedApprovalAuthority: {
+      version: "runner_hosted_approval_authority_v1",
+      organizationId: "tenant-1",
+      environmentId: "environment-1",
+      projectId: "project-atlas",
+      threadId: "session-compiler",
+    },
+    workflowRunAuthority: {
+      version: "runner_workflow_run_authority_v2",
+      organizationId: "tenant-1",
+      environmentId: "environment-1",
+      projectId: "project-atlas",
+      workflowId: "workflow-1",
+      workflowVersionId: "workflow-version-1",
+      workflowRunId: "workflow-run-1",
+      activationActorId: "alice",
+      manifestDigest: "sha256:manifest",
+      manifest: {
+        version: "workflow_capability_manifest_v2",
+        nativeTools: [{ toolId: "fs.read_text", descriptorContractRevision: `sha256:${"1".repeat(64)}`, authorityRevision: `sha256:${"2".repeat(64)}` }],
+        actions: [],
+      },
+      activeStep: { kind: "kestrel", nodeId: "research" },
+    },
     interactionMode: "build",
     actSubmode: "full_auto",
     metadata: {
@@ -99,6 +123,9 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
   assert.deepEqual(compiled.metadata.workspaceSkills, input.workspaceSkills);
   assert.deepEqual(compiled.payload, {
     message: "ship it",
+    hostedApprovalAuthority: input.hostedApprovalAuthority,
+    workflowRunAuthority: input.workflowRunAuthority,
+    actor: input.actor,
     enableRouteClassifier: true,
     modeSystemV2Enabled: true,
     interactionMode: "build",
@@ -145,8 +172,15 @@ test("compileRuntimeTurn preserves resume and attachment payload fields", () => 
     {
       sessionId: "session-resume",
       message: "approved",
-      eventType: "user.message",
+      eventType: "user.approval",
       resumeBlockedRun: true,
+      resumeRequestId: "approval-request",
+      decision: "approve_once",
+      decidingActor: {
+        actorType: "end_user",
+        actorId: "user-1",
+        tenantId: "org-1",
+      },
       recoveryOptionId: "retry.primary",
       attachments,
       interactionMode: "build",
@@ -161,6 +195,11 @@ test("compileRuntimeTurn preserves resume and attachment payload fields", () => 
   );
 
   assert.equal(compiled.payload.resumeBlockedRun, true);
+  assert.deepEqual(compiled.payload.decidingActor, {
+    actorType: "end_user",
+    actorId: "user-1",
+    tenantId: "org-1",
+  });
   assert.equal(compiled.payload.recoveryOptionId, "retry.primary");
   assert.deepEqual(compiled.payload.attachments, attachments);
   assert.equal(compiled.input.resumeBlockedRun, true);

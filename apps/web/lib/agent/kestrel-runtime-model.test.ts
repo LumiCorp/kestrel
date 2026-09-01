@@ -4,11 +4,45 @@ import {
   applyKestrelOneModelsToProfile,
   toKestrelOneRuntimeModelSelection,
 } from "./kestrel-runtime-model";
+import { translateOpenAiManifestModel } from "../../../../models/openai/OpenAiModelManifest";
+import { createModelRegistrationV2 } from "../../../../src/kestrel/contracts/model-registration";
+
+function withQualifiedAgentLoopCapabilities(
+  registration: ReturnType<typeof createModelRegistrationV2>,
+) {
+  const { fingerprint: _fingerprint, ...authoring } = registration;
+  const evidence = {
+    source: "qualification" as const,
+    observedRevision: authoring.revision,
+    observedAt: "2026-08-26T12:00:00.000Z",
+    adapterRevision: authoring.adapterRevision,
+    ...(authoring.credentialRevision === undefined
+      ? {}
+      : { credentialRevision: authoring.credentialRevision }),
+    qualificationRevision: "qualification-1",
+    retainedPayloadHash: `sha256:${"a".repeat(64)}`,
+  };
+  const qualified = <T extends { evidence: readonly unknown[] }>(claim: T) => ({
+    ...claim,
+    state: "qualified" as const,
+    evidence: [...claim.evidence, evidence],
+  });
+  return createModelRegistrationV2({
+    ...authoring,
+    capabilities: {
+      ...authoring.capabilities,
+      providerStrictSchema: qualified(authoring.capabilities.providerStrictSchema),
+      nativeTools: qualified(authoring.capabilities.nativeTools),
+      requiredToolChoice: qualified(authoring.capabilities.requiredToolChoice),
+      strictToolInputs: qualified(authoring.capabilities.strictToolInputs),
+    },
+  });
+}
 
 
-test("eligible native gateway models become runner model selections", () => {
-  assert.deepEqual(
-    toKestrelOneRuntimeModelSelection({
+test("legacy OpenRouter selections fail before runtime composition", () => {
+  assert.throws(
+    () => toKestrelOneRuntimeModelSelection({
       id: "preferred-model",
       gatewayId: "gateway-openrouter",
       rawModelId: "openai/gpt-5.4",
@@ -20,24 +54,8 @@ test("eligible native gateway models become runner model selections", () => {
       organizationId: "org-1",
       environmentId: "env-1",
     }),
-    {
-      id: "preferred-model",
-      gatewayId: "gateway-openrouter",
-      organizationId: "org-1",
-      environmentId: "env-1",
-      model: "openai/gpt-5.4",
-      provider: "openrouter",
-      economicsProfile: {
-        version: 1,
-        profileId: "openrouter:openai/gpt-5.4:v1",
-        provider: "openrouter",
-        model: "openai/gpt-5.4",
-        contextWindowTokens: 128_000,
-        maxOutputTokens: 16_000,
-        counting: { counter: "utf8-byte-upper-bound", counterVersion: "1", method: "conservative_estimate", confidence: "conservative" },
-        cache: { behavior: "none" },
-      },
-    }
+    (error: unknown) =>
+      (error as { code?: string }).code === "HOSTED_MODEL_ROLE_UNAVAILABLE",
   );
 });
 
@@ -57,8 +75,8 @@ test("hosted models without an exact economics profile are rejected locally", ()
   );
 });
 
-test("approved model metadata carries its economics profile into selection", () => {
-  const selection = toKestrelOneRuntimeModelSelection({
+test("economics proof alone does not make a hosted model role-ready", () => {
+  assert.throws(() => toKestrelOneRuntimeModelSelection({
     id: "glm-free",
     gatewayId: "gateway-openrouter",
     rawModelId: "z-ai/glm-5.2:free",
@@ -82,12 +100,12 @@ test("approved model metadata carries its economics profile into selection", () 
     },
     organizationId: "org-1",
     environmentId: "env-1",
-  });
-  assert.equal(selection.economicsProfile?.model, "z-ai/glm-5.2:free");
+  }), (error: unknown) =>
+    (error as { code?: string }).code === "HOSTED_MODEL_ROLE_UNAVAILABLE");
 });
 
-test("legacy approved catalog metadata is upgraded at runtime", () => {
-  const selection = toKestrelOneRuntimeModelSelection({
+test("legacy hosted catalog metadata cannot enter the strict agent role", () => {
+  assert.throws(() => toKestrelOneRuntimeModelSelection({
     id: "legacy-glm-free",
     gatewayId: "gateway-openrouter",
     rawModelId: "z-ai/glm-5.2:free",
@@ -98,8 +116,120 @@ test("legacy approved catalog metadata is upgraded at runtime", () => {
     },
     organizationId: "org-1",
     environmentId: "env-1",
+  }), (error: unknown) =>
+    (error as { code?: string }).code === "HOSTED_MODEL_ROLE_UNAVAILABLE");
+});
+
+test("pending hosted evidence cannot enter the strict agent role", () => {
+  assert.throws(() => toKestrelOneRuntimeModelSelection({
+    id: "pending-openai",
+    gatewayId: "gateway-openai",
+    rawModelId: "gpt-4.1-mini",
+    gatewayProvider: "openai",
+    credentialRevision: 7,
+    metadata: {
+      kestrelModelRegistrationV2: translateOpenAiManifestModel({
+        registrationId: "openai:gpt-4.1-mini:pending",
+        revision: "catalog-1",
+        modelId: "gpt-4.1-mini",
+        endpoint: "responses",
+        credentialRevision: "7",
+        providerConfiguration: {
+          version: "provider_runtime_configuration_v1",
+          providerId: "openai",
+          protocol: "openai",
+          authentication: { mode: "required", credentialReference: { source: "gateway", id: "provider.openai.default" } },
+          endpoint: "https://api.openai.com/v1",
+          timeoutMs: 60_000,
+          allowedHeaders: [],
+          dataHandling: "provider_managed",
+        },
+      }),
+      kestrelEconomicsProfile: {
+        version: 1,
+        profileId: "openai:gpt-4.1-mini:v1",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 16_384,
+        counting: { counter: "utf8-byte-upper-bound", counterVersion: "1", method: "conservative_estimate", confidence: "conservative" },
+        cache: { behavior: "none" },
+      },
+    },
+    organizationId: "org-1",
+    environmentId: "env-1",
+  }), (error: unknown) =>
+    (error as { code?: string }).code === "HOSTED_MODEL_ROLE_UNAVAILABLE");
+});
+
+test("qualified hosted selections carry their exact registration into the runner profile", () => {
+  const pending = translateOpenAiManifestModel({
+    registrationId: "openai:gpt-4.1-mini:responses",
+    revision: "catalog-1",
+    modelId: "gpt-4.1-mini",
+    endpoint: "responses",
+    credentialRevision: "7",
+    providerConfiguration: {
+      version: "provider_runtime_configuration_v1",
+      providerId: "openai",
+      protocol: "openai",
+      authentication: {
+        mode: "required",
+        credentialReference: { source: "gateway", id: "provider.openai.default" },
+      },
+      endpoint: "https://api.openai.com/v1",
+      timeoutMs: 60_000,
+      allowedHeaders: [],
+      dataHandling: "provider_managed",
+    },
   });
-  assert.equal(selection.economicsProfile?.contextWindowTokens, 202_752);
+  const { fingerprint: _fingerprint, ...authoring } = pending;
+  const registration = withQualifiedAgentLoopCapabilities(createModelRegistrationV2({
+    ...authoring,
+    qualification: {
+      state: "qualified",
+      revision: "qualification-1",
+      checkedAt: "2026-08-26T12:00:00.000Z",
+      probeHash: `sha256:${"a".repeat(64)}`,
+    },
+  }));
+  const selection = toKestrelOneRuntimeModelSelection({
+    id: "qualified-openai",
+    gatewayId: "gateway-openai",
+    rawModelId: "gpt-4.1-mini",
+    gatewayProvider: "openai",
+    credentialRevision: 7,
+    metadata: {
+      kestrelModelRegistrationV2: registration,
+      kestrelEconomicsProfile: {
+        version: 1,
+        profileId: "openai:gpt-4.1-mini:v1",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 16_384,
+        counting: { counter: "utf8-byte-upper-bound", counterVersion: "1", method: "conservative_estimate", confidence: "conservative" },
+        cache: { behavior: "none" },
+      },
+    },
+    organizationId: "org-1",
+    environmentId: "env-1",
+  });
+  const profile = applyKestrelOneModelsToProfile(
+    { id: "base", label: "Base", agent: "reference-react", sessionPrefix: "base" },
+    [selection],
+    "run-qualified",
+  );
+
+  assert.equal(selection.registration?.fingerprint, registration.fingerprint);
+  const credential = (profile as {
+    modelCredential?: {
+      registration?: { fingerprint: string };
+      routeBinding?: { status: string };
+    };
+  }).modelCredential;
+  assert.equal(credential?.registration?.fingerprint, registration.fingerprint);
+  assert.equal(credential?.routeBinding?.status, "qualified");
 });
 
 test("runtime model selection preserves the base profile contract", () => {
@@ -153,6 +283,12 @@ test("runtime model selection preserves the base profile contract", () => {
     environmentId: "env-1",
     rawModelId: "gpt-5.4",
     provider: "openai",
+    routeBinding: {
+      version: "model_credential_route_binding_v2",
+      status: "legacy_unqualified",
+      provider: "openai",
+      rawModelId: "gpt-5.4",
+    },
   });
   assert.equal(JSON.stringify(profile).includes("provider-secret"), false);
   assert.deepEqual(profile.toolAllowlist, [

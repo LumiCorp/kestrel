@@ -3,6 +3,19 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import type { McpOAuthProviderFactory } from "../../src/mcp/McpClientManager.js";
+import type { DevShellStoreBinding } from "../../src/devshell/storeBinding.js";
+import {
+  normalizeInteractionMode,
+  type ModeResolutionV1,
+} from "../../src/mode/contracts.js";
+import {
+  isRuntimeModeBlockedRequest,
+  resolveModeBlockedReplyAtRuntime,
+} from "../../src/runtime/modeBlockedReplyResolution.js";
+import {
+  classifyUserReplyIntent,
+  type UserReplyIntent,
+} from "../../src/runtime/userReplyIntent.js";
 
 import {
   createAnthropicModelGatewayFromEnv,
@@ -81,6 +94,9 @@ import {
   type ExecutionBoundaryDecisionV1,
   createDefaultRuntimeEvaluatorRegistry,
   RuntimeEvaluationFailure,
+  createExactEffectiveModelContractResolverV1,
+  legacyEffectiveModelContractResolverV1,
+  resolveExactModelEndpointV1,
 } from "../../src/index.js";
 import type {
   OperatorCompactionState,
@@ -129,6 +145,7 @@ import { PostgresSessionStore } from "../../src/store/PostgresSessionStore.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
 import type { Microsoft365ServicePort } from "../../src/apps/microsoft365.js";
 import type { GoogleWorkspaceServicePort } from "../../src/apps/googleWorkspace.js";
+import type { BrowserServicePort } from "../../src/browser/contracts.js";
 
 import {
   createToolProviderConfigurationResolverFromEnvironment,
@@ -260,6 +277,10 @@ interface RuntimeBootstrap {
     | ((runId: string, sessionId?: string) => void)
     | undefined;
   reasoningPolicyReady?: Promise<unknown> | undefined;
+  classifyUserReplyIntent?: ((input: {
+    reply: string;
+    waitFor: { eventType?: string | undefined; metadata?: unknown };
+  }) => Promise<UserReplyIntent>) | undefined;
 }
 
 const DEFAULT_KCHAT_GUARDRAILS: Partial<GuardrailConfig> = {
@@ -320,12 +341,14 @@ export interface RuntimeFactoryWithStoreOptions {
   enableWorkspaceChanges?: boolean | undefined;
   enableManagedWorktrees?: boolean | undefined;
   managedWorktreeHomeDir?: string | undefined;
+  devShellStoreBinding?: DevShellStoreBinding | undefined;
   resolveAttachments?:
     | ((
         threadId: string,
         attachmentIds: string[],
       ) => Promise<RunTurnAttachment[]>)
     | undefined;
+  browserService?: BrowserServicePort | undefined;
 }
 
 export interface KestrelChatRuntimeOptions {
@@ -401,6 +424,9 @@ export class KestrelChatRuntime {
   private readonly prepareHostedMcpRuntime: RuntimeBootstrap["prepareHostedMcpRuntime"];
   private readonly releaseRuntimeAuthorization: RuntimeBootstrap["releaseRuntimeAuthorization"];
   private readonly reasoningPolicyReady: Promise<unknown>;
+  private readonly classifyRuntimeUserReplyIntent:
+    | RuntimeBootstrap["classifyUserReplyIntent"]
+    | undefined;
   private readonly missionControlProfileId: string;
   private readonly unsubscribeMissionControlProjects: () => void;
 
@@ -427,6 +453,7 @@ export class KestrelChatRuntime {
     );
 
     this.kestrel = bootstrap.kestrel;
+    this.classifyRuntimeUserReplyIntent = bootstrap.classifyUserReplyIntent;
     this.missionControlProfileId = profile.id;
     this.missionControlProjectService = bootstrap.missionControlProjectService;
     this.unsubscribeMissionControlProjects =
@@ -741,9 +768,6 @@ export class KestrelChatRuntime {
       }
     | undefined
   > {
-    if (this.threadRuntime !== undefined) {
-      await this.ensureMainThread(sessionId);
-    }
     const session = await this.kestrel.getSession(sessionId);
     if (session === null) {
       return;
@@ -785,6 +809,7 @@ export class KestrelChatRuntime {
       ...(this.threadRuntime !== undefined
         ? { threadRuntime: this.threadRuntime }
         : {}),
+      createMainThread: false,
     });
   }
 
@@ -2559,6 +2584,7 @@ export class KestrelChatRuntime {
         | import("../../src/orchestration/index.js").OperatorThreadView
         | undefined;
       result?: RunTurnResult | undefined;
+      modeResolution?: ModeResolutionV1 | undefined;
     };
     completion: Promise<RunTurnResult>;
   }> {
@@ -2659,6 +2685,61 @@ export class KestrelChatRuntime {
     const message =
       input.message ?? (input.action === "reject" ? "Rejected." : "Approved.");
     const runId = input.missionControl?.runId ?? randomUUID();
+    const modeBlockedRequest = {
+      requestId,
+      runId,
+      eventType: request.eventType,
+      metadata: request.metadata,
+    };
+    let resolvedModeReply:
+      | Awaited<ReturnType<typeof resolveModeBlockedReplyAtRuntime>>
+      | undefined;
+    if (input.action === "reply" && isRuntimeModeBlockedRequest(modeBlockedRequest)) {
+      const persistedSession = await this.kestrel.getSession(status.thread.sessionId);
+      const persistedAgent = asRecord(persistedSession?.state.agent);
+      const currentMode = normalizeInteractionMode({
+        interactionMode: persistedAgent?.interactionMode,
+        actSubmode: persistedAgent?.actSubmode,
+        defaultInteractionMode: this.defaultInteractionMode,
+        defaultActSubmode: this.defaultActSubmode,
+      });
+      resolvedModeReply = await resolveModeBlockedReplyAtRuntime({
+          request: modeBlockedRequest,
+          message,
+          currentMode: currentMode.interactionMode,
+          currentActSubmode: currentMode.actSubmode,
+          explicitInteractionMode: input.interactionMode,
+          explicitActSubmode: input.actSubmode,
+          classify: () => this.classifyRuntimeUserReplyIntent?.({
+            reply: message,
+            waitFor: {
+              eventType: request.eventType,
+              metadata: request.metadata,
+            },
+          }) ?? Promise.resolve({
+            kind: "unrelated",
+            proceed: false,
+            confidence: "low",
+            reason: "runtime_classifier_unavailable",
+          }),
+      });
+    }
+    const acceptedInteractionMode = resolvedModeReply?.modeResolution.interactionMode ?? input.interactionMode;
+    const acceptedActSubmode = resolvedModeReply?.modeResolution.actSubmode ?? input.actSubmode;
+    const authoritativeView = await threadRuntime.getOperatorThreadView(input.threadId);
+    if (
+      authoritativeView === null ||
+      authoritativeView.thread.sessionId !== status.thread.sessionId
+    ) {
+      throw createRuntimeFailure(
+        "OPERATOR_REQUEST_WORKSPACE_AUTHORITY_UNAVAILABLE",
+        "Authoritative thread context is unavailable for this request reply.",
+        {
+          threadId: input.threadId,
+          sessionId: status.thread.sessionId,
+        },
+      );
+    }
 
     let resolveSubmitted!: () => void;
     const submitted = new Promise<void>((resolve) => {
@@ -2686,11 +2767,11 @@ export class KestrelChatRuntime {
         ? { recoveryOptionId: input.recoveryOptionId }
         : {}),
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
-      ...(input.interactionMode !== undefined
-        ? { interactionMode: input.interactionMode }
+      ...(acceptedInteractionMode !== undefined
+        ? { interactionMode: acceptedInteractionMode }
         : {}),
-      ...(input.actSubmode !== undefined
-        ? { actSubmode: input.actSubmode }
+      ...(acceptedActSubmode !== undefined
+        ? { actSubmode: acceptedActSubmode }
         : {}),
       ...(input.attachments !== undefined
         ? { attachments: input.attachments }
@@ -2700,6 +2781,16 @@ export class KestrelChatRuntime {
         runId,
         message,
         eventType: request.eventType,
+        ...(authoritativeView.workspace !== undefined
+          ? { workspace: authoritativeView.workspace }
+          : {}),
+        ...(resolvedModeReply !== undefined
+          ? {
+              resumeBlockedRun: resolvedModeReply.modeResolution.disposition === "resume",
+              userReplyIntent: resolvedModeReply.userReplyIntent,
+              modeResolution: resolvedModeReply.modeResolution,
+            }
+          : {}),
         ...(input.recoveryOptionId !== undefined
           ? { recoveryOptionId: input.recoveryOptionId }
           : {}),
@@ -2717,6 +2808,12 @@ export class KestrelChatRuntime {
           result,
         })),
       ]);
+      if (resolvedModeReply !== undefined) {
+        await this.kestrel.persistModeResolution(
+          status.thread.sessionId,
+          resolvedModeReply.modeResolution,
+        );
+      }
       const view = await threadRuntime.getOperatorThreadView(input.threadId);
       const sessionId = view?.thread.sessionId;
       return {
@@ -2730,6 +2827,9 @@ export class KestrelChatRuntime {
               : runId,
           ...(outcome.disposition === "completed"
             ? { result: outcome.result }
+            : {}),
+          ...(resolvedModeReply !== undefined
+            ? { modeResolution: resolvedModeReply.modeResolution }
             : {}),
           ...(view !== null ? { view } : {}),
           ...(sessionId !== undefined
@@ -3204,6 +3304,7 @@ function createDefaultRuntime(
     false,
     undefined,
     undefined,
+    undefined,
     storeHandle.driver === "sqlite"
       ? (sessionId) =>
           (storeHandle.store as PostgresSessionStore).recoverOrphanedActiveRun(
@@ -3254,9 +3355,11 @@ export function createRuntimeFactoryWithStore(
         options.enableManagedWorktrees === true,
         options.managedWorktreeHomeDir,
         options.resolveAttachments,
+        options.browserService,
         store.recoverOrphanedActiveRun === undefined
           ? undefined
           : (sessionId) => store.recoverOrphanedActiveRun!(sessionId),
+        options.devShellStoreBinding,
       );
     },
   };
@@ -3284,9 +3387,11 @@ function createRuntimeWithStore(
   enableManagedWorktrees = false,
   managedWorktreeHomeDir?: string | undefined,
   resolveAttachments?: RuntimeFactoryWithStoreOptions["resolveAttachments"],
+  optionsBrowserService?: BrowserServicePort | undefined,
   recoverOrphanedActiveRun?:
     | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
     | undefined,
+  devShellStoreBinding?: DevShellStoreBinding | undefined,
 ): RuntimeBootstrap {
   const runtimeEnv = environment?.runtimeEnv ?? process.env;
   const modelEnv = environment?.modelEnv ?? process.env;
@@ -3371,7 +3476,11 @@ function createRuntimeWithStore(
           homeDir: managedWorktreeHomeDir,
         })
       : undefined;
-  const devShellService = resolveDevShellServiceForProfile(profile, runtimeEnv);
+  const devShellService = resolveDevShellServiceForProfile(
+    profile,
+    runtimeEnv,
+    devShellStoreBinding,
+  );
   const sandboxCapabilityEnvironment = resolveSandboxCapabilityRuntimeEnvironment(
     profile,
     environment?.sandboxCapabilityAudience ?? resolveSandboxCapabilityAudienceFromEnvironment(runtimeEnv),
@@ -3449,6 +3558,8 @@ function createRuntimeWithStore(
       toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN", runtimeEnv),
       appApprovalModes: profile.kestrelOneAppApprovalModes,
       appApprovalPolicies: profile.kestrelOneAppApprovalPolicies,
+      rememberedToolApprovalEvidence:
+        profile.rememberedToolApprovalEvidence ?? [],
     },
     providerConfigurations:
       createToolProviderConfigurationResolverFromEnvironment(
@@ -3456,6 +3567,9 @@ function createRuntimeWithStore(
       ),
     ...(microsoft365Service !== undefined ? { microsoft365Service } : {}),
     ...(googleWorkspaceService !== undefined ? { googleWorkspaceService } : {}),
+    ...(optionsBrowserService !== undefined
+      ? { browserService: optionsBrowserService }
+      : {}),
     ...(devShellService !== undefined ? { devShellService } : {}),
     ...(profile.shellKind === "desktop"
       ? { desktopHostOpenService: new MacOsDesktopHostOpenService() }
@@ -3550,6 +3664,8 @@ function createRuntimeWithStore(
       });
     },
   });
+  const effectiveModelContractResolver =
+    createEffectiveModelContractResolverForProfile(profile);
   const evaluationRuntime =
     profile.evaluationPolicy === undefined
       ? undefined
@@ -3586,6 +3702,11 @@ function createRuntimeWithStore(
         ? { continuationCheckpointModel: profile.model }
         : {}),
     executionBoundaryRuntime,
+    ...(effectiveModelContractResolver === undefined
+      ? {}
+      : {
+          effectiveModelContractResolver,
+        }),
     ...(evaluationRuntime !== undefined ? { evaluationRuntime } : {}),
     providerReasoningVault,
     toolGateway: toolRegistry,
@@ -3790,8 +3911,10 @@ function createRuntimeWithStore(
     },
     onDetachedTurnEvent,
   });
-  toolContext.delegationService = threadRuntime.getDelegationService();
-  toolContext.dialogService = threadRuntime.getDialogService();
+  toolRegistry.bindOrchestrationServices({
+    delegationService: threadRuntime.getDelegationService(),
+    dialogService: threadRuntime.getDialogService(),
+  });
 
   return {
     kestrel,
@@ -3844,6 +3967,12 @@ function createRuntimeWithStore(
       ? { recoverOrphanedActiveRun: recoverRuntimeAndSandboxOrphans }
       : {}),
     reasoningPolicyReady,
+    classifyUserReplyIntent: (input) => classifyUserReplyIntent({
+      reply: input.reply,
+      waitFor: input.waitFor,
+      model: profile.model,
+      useModel: (request) => modelGateway.call(request),
+    }),
     readFinalizedPayload: async (sessionId: string) => {
       const session = await kestrel.getSession(sessionId);
       return asRecord(session?.state.agent)?.finalOutput;
@@ -3960,6 +4089,30 @@ export function createModelGatewayForProfile(
   );
 }
 
+/**
+ * Build admission only from the parsed profile credential snapshot. The web
+ * metadata used to compose that profile never reaches this boundary.
+ */
+export function createEffectiveModelContractResolverForProfile(
+  profile: Pick<TuiProfile, "modelCredential">,
+) {
+  const credential = profile.modelCredential;
+  if (credential?.routeBinding === undefined) return;
+  if (credential.routeBinding.status === "legacy_unqualified") {
+    return legacyEffectiveModelContractResolverV1;
+  }
+  if (credential.registration === undefined) {
+    throw new Error(
+      "Qualified gateway-managed profiles require an exact registration snapshot.",
+    );
+  }
+  return createExactEffectiveModelContractResolverV1({
+    registration: credential.registration,
+    routeBinding: credential.routeBinding,
+    endpoint: resolveExactModelEndpointV1(credential.registration.route.endpointCodec),
+  });
+}
+
 export function createRuntimeEvaluationConfiguration(
   profile: TuiProfile,
   judgeGateway: ModelGateway,
@@ -4070,12 +4223,14 @@ function createLazyModelGateway(factory: () => ModelGateway): ModelGateway {
 export function resolveDevShellServiceForProfile(
   profile: TuiProfile,
   env: NodeJS.ProcessEnv = process.env,
+  storeBinding?: DevShellStoreBinding | undefined,
 ) {
   if (profile.devShell?.enabled !== true) {
     return;
   }
   return (
-    createTerminalBenchDevShellServiceFromEnv(env) ?? new LocalDevShellService()
+    createTerminalBenchDevShellServiceFromEnv(env) ??
+      new LocalDevShellService(undefined, { env, storeBinding })
   );
 }
 
@@ -4395,6 +4550,9 @@ export function applyRequiredManagedWorkspacePolicy(
     ...(isolation !== undefined ? { managedWorktreeIsolation: isolation } : {}),
     ...(workspace?.managedWorktreeScope !== undefined
       ? { managedWorktreeScope: workspace.managedWorktreeScope }
+      : {}),
+    ...(workspace?.managedWorktreeScopeId !== undefined
+      ? { managedWorktreeScopeId: workspace.managedWorktreeScopeId }
       : {}),
     ...(workspace?.managedWorktreeParentThreadId !== undefined
       ? {

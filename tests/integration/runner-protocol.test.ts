@@ -34,6 +34,129 @@ const profile: TuiProfile = {
   sessionPrefix: "reference",
 };
 
+test("session.describe uses the configured durable describer without creating a runtime", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let runtimeCreations = 0;
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+  const host = new RunnerHost(
+    writer,
+    () => {
+      runtimeCreations += 1;
+      return {
+        runTurn: async () => {
+          throw new Error("runtime must not be created by session.describe");
+        },
+        close: async () => {},
+      };
+    },
+    undefined,
+    {
+      sessionDescriber: {
+        describeSession: async (sessionId: string) => ({
+          sessionId,
+          version: 1,
+          threadId: "thread-default-tmp-3",
+          activeAssembly: {
+            mode: "explicit" as const,
+            bundleId: "assembly-safe",
+            label: "Safe sandbox",
+            environmentPresetId: "cli_safe_local" as const,
+          },
+        }),
+      },
+    },
+  );
+
+  await host.describeSession("describe-default-tmp-3", {
+    sessionId: "reference-default-tmp-3",
+  });
+  await tick();
+
+  assert.equal(runtimeCreations, 0);
+  assert.equal(events[0]?.type, "session.described");
+  assert.equal(
+    (events[0]?.payload.activeAssembly as { environmentPresetId?: string } | undefined)
+      ?.environmentPresetId,
+    "cli_safe_local",
+  );
+  rl.close();
+  await host.close();
+});
+
+test("session.describe bypasses a cached runtime when the durable describer is configured", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+  let cachedRuntimeDescribeCalls = 0;
+  const host = new RunnerHost(
+    writer,
+    () => ({
+      runTurn: async (turn) => ({
+        assistantText: "Done.",
+        output: completedOutput(turn.sessionId, "run-cache-seed"),
+      }),
+      describeSession: async (sessionId) => {
+        cachedRuntimeDescribeCalls += 1;
+        return {
+          sessionId,
+          version: 1,
+          activeAssembly: {
+            mode: "explicit" as const,
+            environmentPresetId: "cli_safe_local" as const,
+          },
+        };
+      },
+      close: async () => {},
+    }),
+    undefined,
+    {
+      sessionDescriber: {
+        describeSession: async (sessionId) => ({
+          sessionId,
+          version: 1,
+          threadId: "thread-dev-target",
+          activeAssembly: {
+            mode: "explicit" as const,
+            environmentPresetId: "cli_dev_local" as const,
+          },
+        }),
+      },
+    },
+  );
+  await host.runStart("seed-safe-runtime", {
+    profile,
+    turn: {
+      sessionId: "safe-cache-seed",
+      message: "seed",
+      eventType: "user.message",
+    },
+  });
+
+  await host.describeSession("describe-dev-target", { sessionId: "dev-target" });
+  await tick();
+
+  const described = events.find((event) =>
+    event.type === "session.described" && event.payload.sessionId === "dev-target"
+  );
+  assert.equal(cachedRuntimeDescribeCalls, 0);
+  assert.equal(
+    (described?.payload.activeAssembly as { environmentPresetId?: string } | undefined)
+      ?.environmentPresetId,
+    "cli_dev_local",
+  );
+  rl.close();
+  await host.close();
+});
+
 test(
   "Local Core job.run provisions session-isolated managed worktrees before filesystem mutation",
   runLocalCoreManagedWorktreeJobRegression,
@@ -1194,6 +1317,11 @@ test("run.start forwards only normalized hosted MCP grant context", async () => 
           },
           mcpAuthorization: {
             executionTicket: "must-not-cross-event-boundary",
+            renewal: {
+              version: "execution-authorization-renewal-v1",
+              endpoint: "https://kestrel.example/renew",
+              token: "must-not-cross-event-boundary-either",
+            },
           },
         },
       },
@@ -1213,6 +1341,11 @@ test("run.start forwards only normalized hosted MCP grant context", async () => 
     receivedMcpAuthorization?.executionTicket,
     "must-not-cross-event-boundary"
   );
+  assert.deepEqual(receivedMcpAuthorization?.renewal, {
+    version: "execution-authorization-renewal-v1",
+    endpoint: "https://kestrel.example/renew",
+    token: "must-not-cross-event-boundary-either",
+  });
   assert.equal(
     "oauthToken" in
       ((startedPayload?.mcpContext as Record<string, unknown> | undefined) ??
@@ -1284,6 +1417,11 @@ test("run.start forwards execution authorization without requiring an MCP grant"
           eventType: "user.message",
           mcpAuthorization: {
             executionTicket: "must-not-cross-event-boundary",
+            renewal: {
+              version: "execution-authorization-renewal-v1",
+              endpoint: "https://kestrel.example/renew",
+              token: "must-not-cross-event-boundary-either",
+            },
           },
         },
       },
@@ -1298,6 +1436,11 @@ test("run.start forwards execution authorization without requiring an MCP grant"
     receivedAuthorization?.executionTicket,
     "must-not-cross-event-boundary"
   );
+  assert.deepEqual(receivedAuthorization?.renewal, {
+    version: "execution-authorization-renewal-v1",
+    endpoint: "https://kestrel.example/renew",
+    token: "must-not-cross-event-boundary-either",
+  });
   assert.equal("mcpAuthorization" in (startedPayload ?? {}), false);
   assert.equal(
     events.some((event) => event.type === "runner.error"),
@@ -2347,6 +2490,48 @@ test("CommandRouter rejects invalid execution profile managed configuration", as
   await host.close();
 });
 
+test("CommandRouter rejects duplicate exact-tool preflight names", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => {
+      throw new Error("not used");
+    },
+    close: async () => {},
+  }));
+  const router = new CommandRouter(host, writer);
+  const events: Array<{
+    type: string;
+    payload: { code?: string; message?: string };
+  }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as {
+      type: string;
+      payload: { code?: string; message?: string };
+    });
+  });
+
+  await router.acceptLine(JSON.stringify({
+    id: "cmd-execution-profile-duplicate-exact-tools",
+    type: "execution-profile.resolve",
+    payload: {
+      environmentPresetId: "workspace_hosted",
+      exactToolNames: ["exec_command", "exec_command"],
+    },
+  }));
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.equal(events[0]?.payload.code, "INVALID_COMMAND");
+  assert.match(
+    events[0]?.payload.message ?? "",
+    /exactToolNames must not contain duplicates/u,
+  );
+  rl.close();
+  await host.close();
+});
+
 test("CommandRouter preserves hosted economics admission failure code and details", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
@@ -3262,6 +3447,103 @@ test("atomic cancellation claim rejects cancellation when exact completion wins"
   );
   rl.close();
   await host.close();
+});
+
+test("an in-flight user cancellation cannot overwrite an earlier shutdown cancellation", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+  let resolveToolStarted!: () => void;
+  const toolStarted = new Promise<void>((resolve) => {
+    resolveToolStarted = resolve;
+  });
+  let resolveClaimStarted!: () => void;
+  const claimStarted = new Promise<void>((resolve) => {
+    resolveClaimStarted = resolve;
+  });
+  let releaseClaim!: () => void;
+  const claimReleased = new Promise<void>((resolve) => {
+    releaseClaim = resolve;
+  });
+  let releaseRuntime!: () => void;
+  const runtimeReleased = new Promise<void>((resolve) => {
+    releaseRuntime = resolve;
+  });
+  const host = new RunnerHost(
+    writer,
+    (_profile, _onLog, _onProgress, _onConsole, _onReasoning, _onTask, onRunEvent) => ({
+      runTurn: async (turn, options) => {
+        onRunEvent?.(buildPersistedRuntimeEventFromToolUpdate({
+          version: "v1",
+          runId: "run-shutdown-first",
+          sessionId: turn.sessionId,
+          ts: "2026-08-27T12:00:00.000Z",
+          seq: 1,
+          toolCallId: "call-shutdown-first",
+          toolName: "code.execute",
+          phase: "started",
+        }));
+        resolveToolStarted();
+        await new Promise<void>((resolve) => {
+          options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        await runtimeReleased;
+        return {
+          assistantText: null,
+          output: completedOutput(turn.sessionId, "run-shutdown-first"),
+        };
+      },
+      close: async () => {},
+    }),
+    undefined,
+    {
+      exactEffectResultTenantId: "tenant-shutdown-first",
+      exactEffectResultStore: {
+        async readExactEffectResult() {
+          return { status: "incomplete" as const };
+        },
+        async claimExactEffectCancellation() {
+          resolveClaimStarted();
+          await claimReleased;
+          return { status: "cancelled" as const };
+        },
+      },
+    },
+  );
+
+  const run = host.runStart("cmd-run-shutdown-first", {
+    profile,
+    turn: {
+      sessionId: "session-shutdown-first",
+      message: "pause cancellation arbitration until shutdown",
+      eventType: "user.message",
+    },
+  });
+  await toolStarted;
+  const cancel = host.runCancel("cmd-cancel-shutdown-first", {
+    sessionId: "session-shutdown-first",
+  });
+  await claimStarted;
+  const close = host.close({ abortActiveRuns: true });
+  releaseClaim();
+  await cancel;
+  releaseRuntime();
+  await Promise.all([run, close]);
+
+  const cancelled = events.find((event) =>
+    event.type === "run.cancelled" &&
+    JSON.stringify(event).includes("cancellationReason")
+  );
+  assert.ok(cancelled);
+  const body = JSON.stringify(cancelled);
+  assert.match(body, /"cancellationReason":"runner_shutdown"/u);
+  assert.doesNotMatch(body, /"cancellationReason":"user_requested"/u);
+  assert.equal(events.some((event) => event.type === "run.completed"), false);
+  rl.close();
 });
 
 test("ordinary committed success does not depend on a post-return exact-result read", async () => {

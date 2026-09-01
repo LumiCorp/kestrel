@@ -174,7 +174,9 @@ export const kestrelOneGitHubPushAgentBranchTool: SharedToolModule = {
               "x-kestrel-candidate-fingerprint": candidateCommit,
               "x-kestrel-candidate-commit": candidateCommit,
             },
-            body: Readable.toWeb(createReadStream(bundlePath)) as ReadableStream,
+            // Node's node:stream/web declaration and the DOM declaration used by
+            // RequestInit identify the same runtime stream with incompatible types.
+            body: Readable.toWeb(createReadStream(bundlePath)) as unknown as ReadableStream,
             duplex: "half",
           } as RequestInit & { duplex: "half" },
         );

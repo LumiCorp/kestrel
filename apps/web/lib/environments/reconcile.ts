@@ -27,6 +27,7 @@ import {
   assessWorkspaceVolumeBinding,
   describeEnvironmentGatewayReconcileFailure,
   retainedFailedRestoreResourceIds,
+  selectOrphanMachineIds,
   selectOrphanVolumeIds,
 } from "./reconcile-contract";
 import { selectDueDailyBackupCandidate } from "./reconcile-selection";
@@ -38,6 +39,8 @@ import {
 } from "./lifecycle-operations";
 import { workspaceLifecycleLockKey } from "./lifecycle-lock";
 import { recordWorkspaceReconciliationStatus } from "./reconciliation-status";
+import { reconcileHostedBrowserSessionsForEnvironment } from "@/lib/browser/reconciliation";
+import { HostedBrowserStore } from "@/lib/browser/store";
 
 export async function reconcileHostedEnvironments() {
   const now = new Date();
@@ -69,6 +72,13 @@ export async function reconcileHostedEnvironments() {
   let adoptedVolumeCount = 0;
   let degradedWorkspaceCount = 0;
   let volumeBackupPolicyFailureCount = 0;
+  let browserSessionCount = 0;
+  let healthyBrowserSessionCount = 0;
+  let expiredBrowserSessionCount = 0;
+  let lostBrowserSessionCount = 0;
+  let cleanedBrowserSessionCount = 0;
+  let orphanBrowserMachineCount = 0;
+  let browserReconciliationFailureCount = 0;
   const organizations = await knowledgeDb
     .selectDistinct({ organizationId: schema.environments.organizationId })
     .from(schema.environments)
@@ -93,6 +103,13 @@ export async function reconcileHostedEnvironments() {
     adoptedVolumeCount += result.adoptedVolumeCount;
     degradedWorkspaceCount += result.degradedWorkspaceCount;
     volumeBackupPolicyFailureCount += result.volumeBackupPolicyFailureCount;
+    browserSessionCount += result.browser.scannedSessions;
+    healthyBrowserSessionCount += result.browser.healthySessions;
+    expiredBrowserSessionCount += result.browser.expiredSessions;
+    lostBrowserSessionCount += result.browser.lostSessions;
+    cleanedBrowserSessionCount += result.browser.cleanedSessions;
+    orphanBrowserMachineCount += result.browser.orphanMachinesDeleted;
+    browserReconciliationFailureCount += result.browser.failureCount;
   }
   const finalizedPreviewCount = await reconcileClosingWorkspacePreviews(now);
   const backupLifecycle = await expireWorkspaceBackups(now);
@@ -106,6 +123,13 @@ export async function reconcileHostedEnvironments() {
     adoptedVolumeCount,
     degradedWorkspaceCount,
     volumeBackupPolicyFailureCount,
+    browserSessionCount,
+    healthyBrowserSessionCount,
+    expiredBrowserSessionCount,
+    lostBrowserSessionCount,
+    cleanedBrowserSessionCount,
+    orphanBrowserMachineCount,
+    browserReconciliationFailureCount,
     finalizedPreviewCount,
     backupLifecycle,
   };
@@ -156,6 +180,62 @@ async function reconcileOrganizationEnvironments(input: {
     organizationId,
     now,
   );
+  const browser = {
+    scannedSessions: 0,
+    healthySessions: 0,
+    expiredSessions: 0,
+    lostSessions: 0,
+    cleanedSessions: 0,
+    orphanMachinesDeleted: 0,
+    failureCount: 0,
+  };
+  const browserEnvironments = await knowledgeDb.query.environments.findMany({
+    where: (table, { and: all, eq: equals, isNotNull, isNull: isNullValue }) =>
+      all(
+        equals(table.organizationId, organizationId),
+        equals(table.provider, "fly"),
+        isNotNull(table.flyAppName),
+        isNullValue(table.archivedAt),
+      ),
+    columns: { id: true, flyAppName: true, region: true },
+  });
+  const browserStore = new HostedBrowserStore();
+  for (const environment of browserEnvironments) {
+    if (!environment.flyAppName) continue;
+    try {
+      const result = await reconcileHostedBrowserSessionsForEnvironment({
+        organizationId,
+        environmentId: environment.id,
+        appName: environment.flyAppName,
+        region: environment.region,
+        workerImageDigest:
+          process.env.KESTREL_BROWSER_WORKER_IMAGE?.trim() ?? "",
+        store: browserStore,
+        machines: provider,
+        now,
+        onFailure(error, metadata) {
+          console.error("Hosted Browser reconciliation item failed.", {
+            ...metadata,
+            message: error instanceof Error ? error.message : "Unknown error",
+          });
+        },
+      });
+      browser.scannedSessions += result.scannedSessions;
+      browser.healthySessions += result.healthySessions;
+      browser.expiredSessions += result.expiredSessions;
+      browser.lostSessions += result.lostSessions;
+      browser.cleanedSessions += result.cleanedSessions;
+      browser.orphanMachinesDeleted += result.orphanMachinesDeleted;
+      browser.failureCount += result.failureCount;
+    } catch (error) {
+      browser.failureCount += 1;
+      console.error("Hosted Browser Environment reconciliation failed.", {
+        organizationId,
+        environmentId: environment.id,
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  }
   const workspaces = await knowledgeDb
     .select({
       workspace: schema.environmentWorkspaces,
@@ -333,6 +413,7 @@ async function reconcileOrganizationEnvironments(input: {
     adoptedVolumeCount,
     degradedWorkspaceCount,
     volumeBackupPolicyFailureCount,
+    browser,
   };
 }
 
@@ -625,6 +706,10 @@ async function cleanupOrphanedEnvironmentResources(
         workspace.flyMachineId ? [workspace.flyMachineId] : [],
       ),
     ]);
+    const browserMachines = await provider.listBrowserMachines({
+      appName: environment.flyAppName,
+    });
+    for (const machine of browserMachines) activeMachineIds.add(machine.id);
     const activeVolumeIds = new Set([
       ...retainedResources.volumeIds,
       ...workspaces.flatMap((workspace) =>
@@ -634,10 +719,10 @@ async function cleanupOrphanedEnvironmentResources(
     const inventory = await provider.listEnvironmentResources({
       appName: environment.flyAppName,
     });
-    const orphanMachineIds = inventory.machines
-      .filter((machine) => !activeMachineIds.has(machine.id))
-      .map((machine) => machine.id)
-      .sort();
+    const orphanMachineIds = selectOrphanMachineIds({
+      inventory,
+      activeMachineIds,
+    });
     const orphanVolumeIds = selectOrphanVolumeIds({
       inventory,
       activeVolumeIds,

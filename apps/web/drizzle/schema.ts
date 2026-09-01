@@ -28,7 +28,8 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { KNOWLEDGE_EMBEDDING_DIMENSIONS } from "@/lib/knowledge/documents/constants";
-import type { RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
+import type { RunnerExternalApprovalBinding } from "@kestrel-agents/protocol";
+import type { DesktopAdvertisedModel } from "@/lib/environments/desktop-model-readiness";
 import type {
   OciMcpEgressPolicyV1,
   ResolvedOciMcpEgressBindingV1,
@@ -734,6 +735,10 @@ export const threads = pgTable(
   (table) => [
     index("threads_created_by_user_id_idx").on(table.createdByUserId),
     index("threads_org_id_idx").on(table.organizationId),
+    uniqueIndex("threads_organization_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
     index("threads_project_id_idx").on(table.projectId),
     index("threads_origin_idx").on(table.origin),
     index("threads_external_thread_id_idx").on(table.externalThreadId),
@@ -828,6 +833,10 @@ export const threadMessages = pgTable(
       table.createdAt,
       table.id,
     ),
+    uniqueIndex("thread_messages_thread_identity_idx").on(
+      table.threadId,
+      table.id,
+    ),
     uniqueIndex("thread_messages_external_message_idx").on(
       table.threadId,
       table.externalMessageId,
@@ -851,12 +860,20 @@ export const fileBlobs = pgTable(
     sha256: text("sha256"),
     availabilityStatus: text("availability_status", {
       enum: ["unknown", "available", "missing"],
-    }).notNull().default("unknown"),
-    availabilityCheckedAt: timestamp("availability_checked_at", { withTimezone: true }),
+    })
+      .notNull()
+      .default("unknown"),
+    availabilityCheckedAt: timestamp("availability_checked_at", {
+      withTimezone: true,
+    }),
     scanStatus: text("scan_status", {
       enum: ["pending", "clean", "quarantined", "unavailable"],
-    }).notNull().default("pending"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    })
+      .notNull()
+      .default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (table) => [
@@ -889,12 +906,17 @@ export const kestrelFiles = pgTable(
     lifecycleState: text("lifecycle_state", {
       enum: ["draft", "ready", "quarantined", "failed", "deleted"],
     }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     index("kestrel_files_org_id_idx").on(table.organizationId),
     index("kestrel_files_blob_id_idx").on(table.blobId),
-    index("kestrel_files_lifecycle_created_idx").on(table.lifecycleState, table.createdAt),
+    index("kestrel_files_lifecycle_created_idx").on(
+      table.lifecycleState,
+      table.createdAt,
+    ),
   ],
 );
 
@@ -902,31 +924,96 @@ export const fileScopeGrants = pgTable(
   "file_scope_grants",
   {
     id: text("id").primaryKey(),
-    fileId: text("file_id").notNull().references(() => kestrelFiles.id, { onDelete: "cascade" }),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => kestrelFiles.id, { onDelete: "cascade" }),
     organizationId: text("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
-    scopeType: text("scope_type", { enum: ["thread", "project", "organization"] }).notNull(),
-    threadId: text("thread_id").references(() => threads.id, { onDelete: "cascade" }),
-    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
-    createdByUserId: text("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    scopeType: text("scope_type", {
+      enum: ["thread", "project", "organization"],
+    }).notNull(),
+    threadId: text("thread_id").references(() => threads.id, {
+      onDelete: "cascade",
+    }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
   (table) => [
     index("file_scope_grants_file_idx").on(table.fileId),
     index("file_scope_grants_thread_idx").on(table.threadId),
     index("file_scope_grants_project_idx").on(table.projectId),
-    index("file_scope_grants_org_scope_idx").on(table.organizationId, table.scopeType),
+    index("file_scope_grants_org_scope_idx").on(
+      table.organizationId,
+      table.scopeType,
+    ),
     uniqueIndex("file_scope_grants_live_thread_idx")
       .on(table.fileId, table.threadId)
       .where(sql`${table.scopeType} = 'thread' and ${table.revokedAt} is null`),
     uniqueIndex("file_scope_grants_live_project_idx")
       .on(table.fileId, table.projectId)
-      .where(sql`${table.scopeType} = 'project' and ${table.revokedAt} is null`),
+      .where(
+        sql`${table.scopeType} = 'project' and ${table.revokedAt} is null`,
+      ),
     uniqueIndex("file_scope_grants_live_org_idx")
       .on(table.fileId, table.organizationId)
-      .where(sql`${table.scopeType} = 'organization' and ${table.revokedAt} is null`),
+      .where(
+        sql`${table.scopeType} = 'organization' and ${table.revokedAt} is null`,
+      ),
+  ],
+);
+
+export const browserDownloadPromotions = pgTable(
+  "browser_download_promotions",
+  {
+    operationId: text("operation_id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull(),
+    generation: integer("generation").notNull(),
+    pendingDownloadId: text("pending_download_id").notNull(),
+    sha256: text("sha256").notNull(),
+    effectRevision: text("effect_revision").notNull(),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => kestrelFiles.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("browser_download_promotions_file_idx").on(table.fileId),
+    uniqueIndex("browser_download_promotions_quarantine_idx").on(
+      table.organizationId,
+      table.sessionId,
+      table.generation,
+      table.pendingDownloadId,
+    ),
+    index("browser_download_promotions_thread_idx").on(table.threadId),
+    check(
+      "browser_download_promotions_generation_check",
+      sql`${table.generation} > 0`,
+    ),
+    check(
+      "browser_download_promotions_sha256_check",
+      sql`${table.sha256} ~ '^[a-f0-9]{64}$'`,
+    ),
+    check(
+      "browser_download_promotions_effect_revision_check",
+      sql`${table.effectRevision} ~ '^[a-f0-9]{64}$'`,
+    ),
   ],
 );
 
@@ -934,8 +1021,12 @@ export const fileRepresentations = pgTable(
   "file_representations",
   {
     id: text("id").primaryKey(),
-    blobId: text("blob_id").notNull().references(() => fileBlobs.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["native_image", "extracted_text", "metadata_only"] }).notNull(),
+    blobId: text("blob_id")
+      .notNull()
+      .references(() => fileBlobs.id, { onDelete: "cascade" }),
+    kind: text("kind", {
+      enum: ["native_image", "extracted_text", "metadata_only"],
+    }).notNull(),
     status: text("status", { enum: ["pending", "ready", "failed"] }).notNull(),
     mediaType: text("media_type").notNull(),
     textContent: text("text_content"),
@@ -943,11 +1034,18 @@ export const fileRepresentations = pgTable(
     truncated: boolean("truncated").notNull().default(false),
     error: text("error"),
     metadata: jsonb("metadata"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
-    uniqueIndex("file_representations_blob_kind_idx").on(table.blobId, table.kind),
+    uniqueIndex("file_representations_blob_kind_idx").on(
+      table.blobId,
+      table.kind,
+    ),
     index("file_representations_status_idx").on(table.status),
   ],
 );
@@ -965,7 +1063,10 @@ export const threadMessageFiles = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.messageId, table.fileId] }),
-    uniqueIndex("thread_message_files_message_ordinal_idx").on(table.messageId, table.ordinal),
+    uniqueIndex("thread_message_files_message_ordinal_idx").on(
+      table.messageId,
+      table.ordinal,
+    ),
     index("thread_message_files_file_id_idx").on(table.fileId),
   ],
 );
@@ -974,12 +1075,18 @@ export const fileBackfillProgress = pgTable("file_backfill_progress", {
   source: text("source").primaryKey(),
   cursorCreatedAt: timestamp("cursor_created_at", { withTimezone: true }),
   cursorRecordId: text("cursor_record_id"),
-  status: text("status", { enum: ["pending", "running", "completed", "failed"] }).notNull().default("pending"),
+  status: text("status", {
+    enum: ["pending", "running", "completed", "failed"],
+  })
+    .notNull()
+    .default("pending"),
   scannedCount: integer("scanned_count").notNull().default(0),
   registeredCount: integer("registered_count").notNull().default(0),
   missingCount: integer("missing_count").notNull().default(0),
   error: text("error"),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const fileBackfillResults = pgTable(
@@ -987,10 +1094,16 @@ export const fileBackfillResults = pgTable(
   {
     sourceKey: text("source_key").primaryKey(),
     source: text("source").notNull(),
-    fileId: text("file_id").references(() => kestrelFiles.id, { onDelete: "set null" }),
-    status: text("status", { enum: ["registered", "missing", "failed"] }).notNull(),
+    fileId: text("file_id").references(() => kestrelFiles.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", {
+      enum: ["registered", "missing", "failed"],
+    }).notNull(),
     error: text("error"),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [index("file_backfill_results_source_idx").on(table.source)],
 );
@@ -1079,6 +1192,10 @@ export const threadTurns = pgTable(
     uniqueIndex("thread_turns_thread_idempotency_idx").on(
       table.threadId,
       table.idempotencyKey,
+    ),
+    uniqueIndex("thread_turns_thread_identity_idx").on(
+      table.threadId,
+      table.id,
     ),
     uniqueIndex("thread_turns_input_message_idx").on(table.inputMessageId),
     index("thread_turns_org_status_idx").on(table.organizationId, table.status),
@@ -1218,6 +1335,548 @@ export const projectPromptScheduleRuns = pgTable(
     index("project_prompt_schedule_runs_status_idx").on(table.status),
     index("project_prompt_schedule_runs_thread_idx").on(table.threadId),
     index("project_prompt_schedule_runs_turn_idx").on(table.turnId),
+  ],
+);
+
+/** =========================
+ *  Project Workflows
+ *  ========================= */
+
+export const projectWorkflows = pgTable(
+  "project_workflows",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    modelId: text("model_id").notNull(),
+    currentVersion: integer("current_version").notNull().default(1),
+    activeVersionId: text("active_version_id"),
+    enabled: boolean("enabled").notNull().default(false),
+    attentionCode: text("attention_code"),
+    attentionMessage: text("attention_message"),
+    cronExpression: text("cron_expression"),
+    timeZone: text("time_zone"),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.projectId],
+      foreignColumns: [projects.organizationId, projects.id],
+      name: "project_workflows_organization_project_fk",
+    }).onDelete("cascade"),
+    index("project_workflows_project_idx").on(table.projectId),
+    index("project_workflows_creator_idx").on(table.createdByUserId),
+    index("project_workflows_due_idx").on(table.enabled, table.nextRunAt),
+  ],
+);
+
+export const projectWorkflowVersions = pgTable(
+  "project_workflow_versions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => projectWorkflows.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    modelId: text("model_id").notNull(),
+    definition: jsonb("definition").notNull().$type<Record<string, unknown>>(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_workflow_versions_workflow_version_idx").on(
+      table.workflowId,
+      table.version,
+    ),
+  ],
+);
+
+export const projectWorkflowVersionActivations = pgTable(
+  "project_workflow_version_activations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workflowVersionId: text("workflow_version_id")
+      .notNull()
+      .references(() => projectWorkflowVersions.id, { onDelete: "cascade" }),
+    activatedByUserId: text("activated_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    environmentId: text("environment_id").notNull(),
+    manifest: jsonb("manifest").notNull().$type<Record<string, unknown>>(),
+    manifestDigest: text("manifest_digest").notNull(),
+    activatedAt: timestamp("activated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_workflow_version_activations_version_idx").on(
+      table.workflowVersionId,
+    ),
+    index("project_workflow_version_activations_actor_idx").on(
+      table.activatedByUserId,
+    ),
+  ],
+);
+
+export const projectWorkflowRuns = pgTable(
+  "project_workflow_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => projectWorkflows.id, { onDelete: "cascade" }),
+    workflowVersionId: text("workflow_version_id")
+      .notNull()
+      .references(() => projectWorkflowVersions.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    trigger: text("trigger", { enum: ["manual", "scheduled"] }).notNull(),
+    requestId: text("request_id"),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
+    environmentIdSnapshot: text("environment_id_snapshot").notNull(),
+    projectContextRevisionIdSnapshot: text(
+      "project_context_revision_id_snapshot",
+    ).notNull(),
+    modelIdSnapshot: text("model_id_snapshot").notNull(),
+    workflowWorkspaceId: text("workflow_workspace_id").notNull(),
+    activationManifestDigest: text("activation_manifest_digest").notNull(),
+    input: jsonb("input").$type<Record<string, unknown>>(),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    status: text("status", {
+      enum: [
+        "queued",
+        "running",
+        "waiting_for_input",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    attentionCode: text("attention_code"),
+    attentionMessage: text("attention_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_workflow_runs_request_idx").on(
+      table.workflowId,
+      table.requestId,
+    ),
+    uniqueIndex("project_workflow_runs_occurrence_idx").on(
+      table.workflowId,
+      table.scheduledFor,
+    ),
+    index("project_workflow_runs_status_idx").on(table.status),
+    index("project_workflow_runs_created_idx").on(table.workflowId, table.createdAt),
+  ],
+);
+
+export const projectWorkflowStepRuns = pgTable(
+  "project_workflow_step_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => projectWorkflowRuns.id, { onDelete: "cascade" }),
+    nodeId: text("node_id").notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    status: text("status", {
+      enum: [
+        "pending",
+        "running",
+        "waiting_for_input",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("pending"),
+    input: jsonb("input").$type<Record<string, unknown>>(),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    threadId: text("thread_id").references(() => threads.id, {
+      onDelete: "set null",
+    }),
+    turnId: text("turn_id").references(() => threadTurns.id, {
+      onDelete: "set null",
+    }),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_workflow_step_runs_node_attempt_idx").on(
+      table.workflowRunId,
+      table.nodeId,
+      table.attempt,
+    ),
+    index("project_workflow_step_runs_run_status_idx").on(
+      table.workflowRunId,
+      table.status,
+    ),
+    index("project_workflow_step_runs_turn_idx").on(table.turnId),
+  ],
+);
+
+/** =========================
+ *  Project Email Triggers
+ *  ========================= */
+
+export const projectEmailTriggers = pgTable(
+  "project_email_triggers",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    executionOwnerUserId: text("execution_owner_user_id").references(
+      () => users.id,
+      { onDelete: "set null" },
+    ),
+    name: text("name").notNull(),
+    instruction: text("instruction").notNull(),
+    modelId: text("model_id").notNull(),
+    claimedFromFilter: text("claimed_from_filter"),
+    accessMode: text("access_mode", { enum: ["private", "public"] })
+      .notNull()
+      .default("private"),
+    addressLocalPart: text("address_local_part").notNull(),
+    addressDomain: text("address_domain").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    disabledReason: text("disabled_reason"),
+    revision: integer("revision").notNull().default(1),
+    rotatedAt: timestamp("rotated_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.projectId],
+      foreignColumns: [projects.organizationId, projects.id],
+      name: "project_email_triggers_organization_project_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("project_email_triggers_address_idx")
+      .on(table.addressDomain, table.addressLocalPart)
+      .where(sql`${table.deletedAt} IS NULL`),
+    uniqueIndex("project_email_triggers_organization_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+    index("project_email_triggers_project_idx").on(table.projectId),
+    index("project_email_triggers_execution_owner_idx").on(
+      table.executionOwnerUserId,
+    ),
+    index("project_email_triggers_admission_idx").on(
+      table.organizationId,
+      table.enabled,
+      table.deletedAt,
+    ),
+    check(
+      "project_email_triggers_access_mode_check",
+      sql`${table.accessMode} IN ('private', 'public')`,
+    ),
+    check(
+      "project_email_triggers_revision_check",
+      sql`${table.revision} >= 1`,
+    ),
+    check(
+      "project_email_triggers_enabled_owner_check",
+      sql`NOT ${table.enabled} OR ${table.executionOwnerUserId} IS NOT NULL`,
+    ),
+    check(
+      "project_email_triggers_deleted_disabled_check",
+      sql`${table.deletedAt} IS NULL OR NOT ${table.enabled}`,
+    ),
+  ],
+);
+
+export const emailDeliveryReceipts = pgTable(
+  "email_delivery_receipts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    receivingConnectionId: text("receiving_connection_id").notNull(),
+    triggerOrganizationId: text("trigger_organization_id"),
+    triggerId: text("trigger_id"),
+    svixId: text("svix_id").notNull(),
+    resendEmailId: text("resend_email_id").notNull(),
+    eventAt: timestamp("event_at", { withTimezone: true }).notNull(),
+    state: text("state", {
+      enum: [
+        "queued",
+        "hydrating",
+        "admitted",
+        "materialized",
+        "rejected",
+        "failed",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    reason: text("reason"),
+    claimedFrom: text("claimed_from"),
+    toMailboxes: jsonb("to_mailboxes").$type<string[]>(),
+    ccMailboxes: jsonb("cc_mailboxes").$type<string[]>(),
+    bccMailboxes: jsonb("bcc_mailboxes").$type<string[]>(),
+    receivedForMailboxes: jsonb("received_for_mailboxes").$type<string[]>(),
+    replyToMailboxes: jsonb("reply_to_mailboxes").$type<string[]>(),
+    subject: text("subject"),
+    textBody: text("text_body"),
+    htmlBody: text("html_body"),
+    triggerRevision: integer("trigger_revision"),
+    reservedThreadId: text("reserved_thread_id").notNull(),
+    reservedMessageId: text("reserved_message_id").notNull(),
+    reservedTurnId: text("reserved_turn_id").notNull(),
+    materializedThreadOrganizationId: text(
+      "materialized_thread_organization_id",
+    ),
+    materializedThreadId: text("materialized_thread_id"),
+    materializedMessageThreadId: text("materialized_message_thread_id"),
+    materializedMessageId: text("materialized_message_id"),
+    materializedTurnThreadId: text("materialized_turn_thread_id"),
+    materializedTurnId: text("materialized_turn_id"),
+    hydratedAt: timestamp("hydrated_at", { withTimezone: true }),
+    admittedAt: timestamp("admitted_at", { withTimezone: true }),
+    materializedAt: timestamp("materialized_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.receivingConnectionId],
+      foreignColumns: [
+        organizationReceivingConnections.organizationId,
+        organizationReceivingConnections.id,
+      ],
+      name: "email_delivery_receipts_organization_connection_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.triggerOrganizationId, table.triggerId],
+      foreignColumns: [
+        projectEmailTriggers.organizationId,
+        projectEmailTriggers.id,
+      ],
+      name: "email_delivery_receipts_organization_trigger_fk",
+    }).onDelete("set null"),
+    foreignKey({
+      columns: [
+        table.materializedThreadOrganizationId,
+        table.materializedThreadId,
+      ],
+      foreignColumns: [threads.organizationId, threads.id],
+      name: "email_delivery_receipts_organization_thread_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [
+        table.materializedMessageThreadId,
+        table.materializedMessageId,
+      ],
+      foreignColumns: [threadMessages.threadId, threadMessages.id],
+      name: "email_delivery_receipts_thread_message_fk",
+    }).onDelete("set null"),
+    foreignKey({
+      columns: [table.materializedTurnThreadId, table.materializedTurnId],
+      foreignColumns: [threadTurns.threadId, threadTurns.id],
+      name: "email_delivery_receipts_thread_turn_fk",
+    }).onDelete("set null"),
+    uniqueIndex("email_delivery_receipts_connection_svix_idx").on(
+      table.receivingConnectionId,
+      table.svixId,
+    ),
+    uniqueIndex("email_delivery_receipts_connection_email_idx").on(
+      table.receivingConnectionId,
+      table.resendEmailId,
+    ),
+    uniqueIndex("email_delivery_receipts_organization_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+    uniqueIndex("email_delivery_receipts_reserved_thread_idx").on(
+      table.reservedThreadId,
+    ),
+    uniqueIndex("email_delivery_receipts_reserved_message_idx").on(
+      table.reservedMessageId,
+    ),
+    uniqueIndex("email_delivery_receipts_reserved_turn_idx").on(
+      table.reservedTurnId,
+    ),
+    index("email_delivery_receipts_state_idx").on(table.state, table.updatedAt),
+    index("email_delivery_receipts_trigger_idx").on(table.triggerId),
+    check(
+      "email_delivery_receipts_trigger_organization_check",
+      sql`(${table.triggerOrganizationId} IS NULL) = (${table.triggerId} IS NULL) AND (${table.triggerOrganizationId} IS NULL OR ${table.triggerOrganizationId} = ${table.organizationId})`,
+    ),
+    check(
+      "email_delivery_receipts_thread_organization_check",
+      sql`(${table.materializedThreadOrganizationId} IS NULL) = (${table.materializedThreadId} IS NULL) AND (${table.materializedThreadOrganizationId} IS NULL OR ${table.materializedThreadOrganizationId} = ${table.organizationId})`,
+    ),
+    check(
+      "email_delivery_receipts_materialized_children_check",
+      sql`(${table.materializedMessageThreadId} IS NULL) = (${table.materializedMessageId} IS NULL) AND (${table.materializedTurnThreadId} IS NULL) = (${table.materializedTurnId} IS NULL) AND (${table.materializedMessageThreadId} IS NULL OR ${table.materializedMessageThreadId} = ${table.materializedThreadId}) AND (${table.materializedTurnThreadId} IS NULL OR ${table.materializedTurnThreadId} = ${table.materializedThreadId})`,
+    ),
+    check(
+      "email_delivery_receipts_reason_check",
+      sql`((${table.state} IN ('rejected', 'failed')) AND ${table.reason} IS NOT NULL AND ${table.finishedAt} IS NOT NULL) OR ((${table.state} NOT IN ('rejected', 'failed')) AND ${table.reason} IS NULL AND ${table.finishedAt} IS NULL)`,
+    ),
+    check(
+      "email_delivery_receipts_state_check",
+      sql`${table.state} IN ('queued', 'hydrating', 'admitted', 'materialized', 'rejected', 'failed')`,
+    ),
+    check(
+      "email_delivery_receipts_materialized_state_check",
+      sql`(${table.state} = 'materialized') = (${table.materializedThreadOrganizationId} IS NOT NULL AND ${table.materializedThreadId} IS NOT NULL AND ${table.materializedAt} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const emailDeliveryAttachments = pgTable(
+  "email_delivery_attachments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    receiptId: text("receipt_id").notNull(),
+    providerAttachmentId: text("provider_attachment_id").notNull(),
+    providerOrder: integer("provider_order").notNull(),
+    filename: text("filename"),
+    declaredMediaType: text("declared_media_type"),
+    providerSizeBytes: bigint("provider_size_bytes", { mode: "number" })
+      .notNull(),
+    disposition: text("disposition"),
+    contentId: text("content_id"),
+    importState: text("import_state", {
+      enum: ["available", "importing", "ready", "failed"],
+    })
+      .notNull()
+      .default("available"),
+    failureCode: text("failure_code"),
+    fileId: text("file_id").references(() => kestrelFiles.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.receiptId],
+      foreignColumns: [
+        emailDeliveryReceipts.organizationId,
+        emailDeliveryReceipts.id,
+      ],
+      name: "email_delivery_attachments_organization_receipt_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("email_delivery_attachments_receipt_provider_idx").on(
+      table.receiptId,
+      table.providerAttachmentId,
+    ),
+    uniqueIndex("email_delivery_attachments_receipt_order_idx").on(
+      table.receiptId,
+      table.providerOrder,
+    ),
+    uniqueIndex("email_delivery_attachments_file_idx")
+      .on(table.fileId)
+      .where(sql`${table.fileId} IS NOT NULL`),
+    index("email_delivery_attachments_receipt_idx").on(table.receiptId),
+    index("email_delivery_attachments_import_state_idx").on(
+      table.importState,
+      table.updatedAt,
+    ),
+    check(
+      "email_delivery_attachments_provider_order_check",
+      sql`${table.providerOrder} >= 0`,
+    ),
+    check(
+      "email_delivery_attachments_provider_size_check",
+      sql`${table.providerSizeBytes} >= 0`,
+    ),
+    check(
+      "email_delivery_attachments_import_state_check",
+      sql`${table.importState} IN ('available', 'importing', 'ready', 'failed')`,
+    ),
+    check(
+      "email_delivery_attachments_failure_check",
+      sql`(${table.importState} = 'failed') = (${table.failureCode} IS NOT NULL)`,
+    ),
+    check(
+      "email_delivery_attachments_ready_file_check",
+      sql`(${table.importState} = 'ready') = (${table.fileId} IS NOT NULL)`,
+    ),
   ],
 );
 
@@ -1814,13 +2473,7 @@ export const desktopEnvironmentConnections = pgTable(
     desktopVersion: text("desktop_version"),
     runtimeVersion: text("runtime_version"),
     advertisedModels: jsonb("advertised_models")
-      .$type<
-        Array<{
-          provider: string;
-          model: string;
-          health: "ready" | "unavailable";
-        }>
-      >()
+      .$type<DesktopAdvertisedModel[]>()
       .notNull()
       .default([]),
     approvedByUserId: text("approved_by_user_id").references(() => users.id, {
@@ -2168,7 +2821,9 @@ export const environmentRuntimeVersions = pgTable(
 export const environmentRuntimeChannels = pgTable(
   "environment_runtime_channels",
   {
-    name: text("name", { enum: ["production"] }).primaryKey().notNull(),
+    name: text("name", { enum: ["production"] })
+      .primaryKey()
+      .notNull(),
     currentVersionId: text("current_version_id").references(
       () => environmentRuntimeVersions.id,
       { onDelete: "restrict" },
@@ -3460,12 +4115,23 @@ export const appOperationApprovals = pgTable(
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     externalApprovalBinding: jsonb(
       "external_approval_binding",
-    ).$type<RunnerExternalApprovalBindingV1>(),
+    ).$type<RunnerExternalApprovalBinding>(),
     authorityRevision: text("authority_revision"),
+    lifecycleVersion: text("lifecycle_version", {
+      enum: ["legacy_v1", "interaction_v2"],
+    })
+      .notNull()
+      .default("legacy_v1"),
+    interactionId: text("interaction_id").references(
+      () => threadInteractions.id,
+      { onDelete: "cascade" },
+    ),
+    availabilityStatus: text("availability_status", {
+      enum: ["available", "consumed", "expired"],
+    }),
     status: text("status", {
       enum: ["pending", "approved", "denied", "consumed", "expired"],
     })
-      .notNull()
       .default("pending"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     decidedByUserId: text("decided_by_user_id").references(() => users.id, {
@@ -3499,6 +4165,14 @@ export const appOperationApprovals = pgTable(
       table.status,
       table.expiresAt,
     ),
+    index("app_operation_approvals_availability_expiry_idx").on(
+      table.lifecycleVersion,
+      table.availabilityStatus,
+      table.expiresAt,
+    ),
+    uniqueIndex("app_operation_approvals_interaction_idx")
+      .on(table.interactionId)
+      .where(sql`${table.interactionId} is not null`),
     index("app_operation_approvals_execution_idx").on(
       table.requestedExecutionId,
     ),
@@ -3508,15 +4182,37 @@ export const appOperationApprovals = pgTable(
     ),
     check(
       "app_operation_approvals_status_check",
-      sql`${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`,
+      sql`${table.status} is null or ${table.status} in ('pending', 'approved', 'denied', 'consumed', 'expired')`,
+    ),
+    check(
+      "app_operation_approvals_lifecycle_version_check",
+      sql`${table.lifecycleVersion} in ('legacy_v1', 'interaction_v2')`,
+    ),
+    check(
+      "app_operation_approvals_availability_status_check",
+      sql`${table.availabilityStatus} is null or ${table.availabilityStatus} in ('available', 'consumed', 'expired')`,
+    ),
+    check(
+      "app_operation_approvals_ownership_check",
+      sql`(
+        (${table.lifecycleVersion} = 'legacy_v1' and ${table.status} is not null and ${table.interactionId} is null and ${table.availabilityStatus} is null)
+        or (${table.lifecycleVersion} = 'interaction_v2' and ${table.status} is null and ${table.decidedByUserId} is null and ${table.decidedAt} is null and ${table.availabilityStatus} is not null)
+      )`,
     ),
     check(
       "app_operation_approvals_lifecycle_check",
       sql`(
-        (${table.status} = 'pending' and ${table.decidedByUserId} is null and ${table.decidedAt} is null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
-        or (${table.status} in ('approved', 'denied') and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
-        or (${table.status} = 'consumed' and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
-        or (${table.status} = 'expired' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+        (${table.lifecycleVersion} = 'legacy_v1' and (
+          (${table.status} = 'pending' and ${table.decidedByUserId} is null and ${table.decidedAt} is null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+          or (${table.status} in ('approved', 'denied') and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+          or (${table.status} = 'consumed' and ${table.decidedByUserId} is not null and ${table.decidedAt} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
+          or (${table.status} = 'expired' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+        ))
+        or (${table.lifecycleVersion} = 'interaction_v2' and (
+          (${table.availabilityStatus} = 'available' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+          or (${table.availabilityStatus} = 'consumed' and ${table.interactionId} is not null and ${table.consumedExecutionId} is not null and ${table.consumedAt} is not null)
+          or (${table.availabilityStatus} = 'expired' and ${table.consumedExecutionId} is null and ${table.consumedAt} is null)
+        ))
       )`,
     ),
   ],
@@ -4641,7 +5337,7 @@ export const threadInteractions = pgTable(
     responseFailureCode: text("response_failure_code"),
     responseFailureMessage: text("response_failure_message"),
     effectStatus: text("effect_status", {
-      enum: ["not_started", "started", "unknown"],
+      enum: ["not_started", "started", "committed", "unknown"],
     }),
     responseRetryable: boolean("response_retryable"),
     resolvedByUserId: text("resolved_by_user_id").references(() => users.id, {
@@ -4679,6 +5375,314 @@ export const threadInteractions = pgTable(
         OR
         (${table.source} = 'mcp' AND ${table.sourceCheckpointId} IS NOT NULL)
       )`,
+    ),
+  ],
+);
+
+/** Thread-lifetime approval evidence written atomically with a canonical remember decision. */
+export const rememberedToolApprovals = pgTable(
+  "remembered_tool_approvals",
+  {
+    id: text("id").primaryKey(),
+    version: text("version").notNull(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    toolId: text("tool_id").notNull(),
+    descriptorContractRevision: text("descriptor_contract_revision").notNull(),
+    approvalAuthorityRevision: text("approval_authority_revision").notNull(),
+    scopeKind: text("scope_kind").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    scopePayload: jsonb("scope_payload").$type<Record<string, unknown> | null>(),
+    sourceInteractionId: text("source_interaction_id")
+      .notNull()
+      .references(() => threadInteractions.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("remembered_tool_approvals_identity_idx").on(
+      table.organizationId,
+      table.threadId,
+      table.actorUserId,
+      table.toolId,
+      table.descriptorContractRevision,
+      table.approvalAuthorityRevision,
+      table.scopeKind,
+      table.scopeKey,
+    ),
+    index("remembered_tool_approvals_thread_actor_idx").on(
+      table.threadId,
+      table.actorUserId,
+    ),
+    check(
+      "remembered_tool_approvals_version_check",
+      sql`${table.version} = 'remembered_tool_approval_v1'`,
+    ),
+  ],
+);
+
+/** Monotonic personal Browser policy revision scoped to one user and Environment. */
+export const browserPersonalDomainRevisionSets = pgTable(
+  "browser_personal_domain_revision_sets",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.organizationId, table.environmentId, table.userId],
+      name: "browser_personal_domain_revision_sets_pk",
+    }),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "browser_personal_domain_revision_sets_environment_fk",
+    }).onDelete("cascade"),
+    check(
+      "browser_personal_domain_revision_sets_revision_check",
+      sql`${table.revision} >= 0`,
+    ),
+  ],
+);
+
+/** Current allow-or-revoke state for one person's canonical public Browser domain. */
+export const browserPersonalDomains = pgTable(
+  "browser_personal_domains",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    canonicalDomain: text("canonical_domain").notNull(),
+    scheme: text("scheme", { enum: ["https"] })
+      .notNull()
+      .default("https"),
+    includeSubdomains: boolean("include_subdomains").notNull().default(true),
+    port: integer("port").notNull().default(443),
+    status: text("status", { enum: ["active", "revoked"] })
+      .notNull()
+      .default("active"),
+    personalRevision: integer("personal_revision").notNull(),
+    approvalId: text("approval_id").notNull(),
+    sourceInteractionId: text("source_interaction_id").references(
+      () => threadInteractions.id,
+      { onDelete: "set null" },
+    ),
+    sourcePreparedInvocationId: text("source_prepared_invocation_id").notNull(),
+    approvalAuthorityRevision: text("approval_authority_revision").notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedByUserId: text("revoked_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("browser_personal_domains_identity_idx").on(
+      table.organizationId,
+      table.environmentId,
+      table.userId,
+      table.canonicalDomain,
+    ),
+    index("browser_personal_domains_active_lookup_idx").on(
+      table.organizationId,
+      table.environmentId,
+      table.userId,
+      table.status,
+      table.canonicalDomain,
+    ),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "browser_personal_domains_environment_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId, table.userId],
+      foreignColumns: [
+        browserPersonalDomainRevisionSets.organizationId,
+        browserPersonalDomainRevisionSets.environmentId,
+        browserPersonalDomainRevisionSets.userId,
+      ],
+      name: "browser_personal_domains_revision_set_fk",
+    }).onDelete("cascade"),
+    check(
+      "browser_personal_domains_canonical_domain_check",
+      sql`${table.canonicalDomain} <> ''
+        and ${table.canonicalDomain} = btrim(${table.canonicalDomain})
+        and ${table.canonicalDomain} = lower(${table.canonicalDomain})
+        and left(${table.canonicalDomain}, 1) <> '.'
+        and right(${table.canonicalDomain}, 1) <> '.'
+        and ${table.canonicalDomain} !~ '[/:*[:space:]]'`,
+    ),
+    check(
+      "browser_personal_domains_public_authority_check",
+      sql`${table.scheme} = 'https'
+        and ${table.includeSubdomains} = true
+        and ${table.port} = 443`,
+    ),
+    check(
+      "browser_personal_domains_revision_check",
+      sql`${table.personalRevision} > 0`,
+    ),
+    check(
+      "browser_personal_domains_lifecycle_check",
+      sql`(
+        (${table.status} = 'active' and ${table.revokedAt} is null and ${table.revokedByUserId} is null)
+        or
+        (${table.status} = 'revoked' and ${table.revokedAt} is not null)
+      )`,
+    ),
+  ],
+);
+
+/** Hosted BrowserSessionV1 state. Tenant and actor identity resolve through the originating turn. */
+export const browserSessions = pgTable(
+  "browser_sessions",
+  {
+    sessionId: text("session_id").primaryKey(),
+    version: text("version").notNull().default("browser_session_v1"),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "restrict" }),
+    mode: text("mode", { enum: ["qa", "operator"] }).notNull(),
+    state: text("state", {
+      enum: [
+        "opening",
+        "ready",
+        "human_control",
+        "closing",
+        "closed",
+        "expired",
+        "lost",
+        "failed",
+      ],
+    }).notNull(),
+    engineRevision: text("engine_revision").notNull(),
+    generation: integer("generation").notNull(),
+    effectiveAllowlistRevision: text("effective_allowlist_revision").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull(),
+    idleExpiresAt: timestamp("idle_expires_at", { withTimezone: true }).notNull(),
+    hardExpiresAt: timestamp("hard_expires_at", { withTimezone: true }).notNull(),
+    terminalReason: text("terminal_reason"),
+  },
+  (table) => [
+    uniqueIndex("browser_sessions_one_nonterminal_per_thread_idx")
+      .on(table.threadId)
+      .where(
+        sql`${table.state} in ('opening', 'ready', 'human_control', 'closing')`,
+      ),
+    index("browser_sessions_expiry_idx").on(table.state, table.idleExpiresAt),
+    check(
+      "browser_sessions_version_check",
+      sql`${table.version} = 'browser_session_v1'`,
+    ),
+    check("browser_sessions_generation_check", sql`${table.generation} > 0`),
+    check(
+      "browser_sessions_expiry_check",
+      sql`${table.createdAt} <= ${table.lastActivityAt}
+        and ${table.lastActivityAt} <= ${table.updatedAt}
+        and ${table.lastActivityAt} < ${table.idleExpiresAt}
+        and ${table.idleExpiresAt} <= ${table.hardExpiresAt}`,
+    ),
+    check(
+      "browser_sessions_terminal_reason_check",
+      sql`(
+        ${table.state} in ('opening', 'ready', 'human_control', 'closing')
+        and ${table.terminalReason} is null
+      ) or (
+        ${table.state} in ('closed', 'expired', 'lost', 'failed')
+        and ${table.terminalReason} is not null
+      )`,
+    ),
+  ],
+);
+
+/** Host-only execution binding; never projected into BrowserSessionV1 or model output. */
+export const browserSessionResources = pgTable(
+  "browser_session_resources",
+  {
+    sessionId: text("session_id")
+      .primaryKey()
+      .references(() => browserSessions.sessionId, { onDelete: "cascade" }),
+    originatingTurnId: text("originating_turn_id")
+      .notNull()
+      .references(() => threadTurns.id, { onDelete: "restrict" }),
+    previewLeaseId: text("preview_lease_id").references(
+      () => workspacePreviewLeases.id,
+      { onDelete: "restrict" },
+    ),
+    machineId: text("machine_id").notNull().unique(),
+    machineGeneration: integer("machine_generation").notNull(),
+    workerImageDigest: text("worker_image_digest").notNull(),
+    proxyAuthorityRevision: text("proxy_authority_revision").notNull(),
+    cleanupRequestedAt: timestamp("cleanup_requested_at", {
+      withTimezone: true,
+    }),
+    cleanupConfirmedAt: timestamp("cleanup_confirmed_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("browser_session_resources_turn_idx").on(table.originatingTurnId),
+    index("browser_session_resources_preview_idx").on(table.previewLeaseId),
+    check(
+      "browser_session_resources_generation_check",
+      sql`${table.machineGeneration} > 0`,
+    ),
+    check(
+      "browser_session_resources_image_digest_check",
+      sql`${table.workerImageDigest} ~ '@sha256:[a-f0-9]{64}$'`,
+    ),
+    check(
+      "browser_session_resources_cleanup_check",
+      sql`${table.cleanupConfirmedAt} is null
+        or (${table.cleanupRequestedAt} is not null
+          and ${table.cleanupConfirmedAt} >= ${table.cleanupRequestedAt})`,
     ),
   ],
 );
@@ -5066,6 +6070,18 @@ export const environmentModelGrants = pgTable(
       { onDelete: "set null" },
     ),
     gatewayCredentialRevision: integer("gateway_credential_revision"),
+    routeBindingStatus: text("route_binding_status", {
+      enum: ["qualified", "legacy_unqualified"],
+    }),
+    routeProvider: text("route_provider"),
+    modelRegistrationId: text("model_registration_id"),
+    modelRegistrationRevision: text("model_registration_revision"),
+    modelRegistrationFingerprint: text("model_registration_fingerprint"),
+    modelQualificationRevision: text("model_qualification_revision"),
+    modelApiEndpoint: text("model_api_endpoint"),
+    modelEndpointCodec: text("model_endpoint_codec"),
+    modelRoutingPolicyFingerprint: text("model_routing_policy_fingerprint"),
+    modelRequiredRole: text("model_required_role"),
     status: text("status", { enum: ["active", "closed"] })
       .notNull()
       .default("active"),
@@ -5090,6 +6106,20 @@ export const environmentModelGrants = pgTable(
     check(
       "environment_model_grants_active_credential_revision_check",
       sql`${table.status} <> 'active' OR ${table.gatewayCredentialRevision} IS NOT NULL`,
+    ),
+    check(
+      "environment_model_grants_qualified_route_check",
+      sql`${table.routeBindingStatus} <> 'qualified' OR (
+        ${table.routeProvider} IS NOT NULL AND
+        ${table.modelRegistrationId} IS NOT NULL AND
+        ${table.modelRegistrationRevision} IS NOT NULL AND
+        ${table.modelRegistrationFingerprint} IS NOT NULL AND
+        ${table.modelQualificationRevision} IS NOT NULL AND
+        ${table.modelApiEndpoint} IS NOT NULL AND
+        ${table.modelEndpointCodec} IS NOT NULL AND
+        ${table.modelRoutingPolicyFingerprint} IS NOT NULL AND
+        ${table.modelRequiredRole} IS NOT NULL
+      )`,
     ),
     index("environment_model_grants_environment_status_idx").on(
       table.environmentId,
@@ -5678,10 +6708,14 @@ export const knowledgeDocuments = pgTable(
     index("knowledge_documents_file_id_idx").on(table.fileId),
     uniqueIndex("knowledge_documents_file_org_scope_idx")
       .on(table.fileId, table.scope)
-      .where(sql`${table.scope} = 'organization' and ${table.projectId} is null`),
+      .where(
+        sql`${table.scope} = 'organization' and ${table.projectId} is null`,
+      ),
     uniqueIndex("knowledge_documents_file_project_scope_idx")
       .on(table.fileId, table.projectId)
-      .where(sql`${table.scope} = 'project' and ${table.projectId} is not null`),
+      .where(
+        sql`${table.scope} = 'project' and ${table.projectId} is not null`,
+      ),
     index("knowledge_documents_org_id_idx").on(table.organizationId),
     index("knowledge_documents_project_id_idx").on(table.projectId),
     index("knowledge_documents_scope_idx").on(table.scope),
@@ -5996,14 +7030,7 @@ export const platformTurnWorkerCapacity = pgTable(
     revision: bigint("revision", { mode: "number" }).notNull().default(1),
     operationId: text("operation_id"),
     operationState: text("operation_state", {
-      enum: [
-        "idle",
-        "queued",
-        "running",
-        "succeeded",
-        "failed",
-        "interrupted",
-      ],
+      enum: ["idle", "queued", "running", "succeeded", "failed", "interrupted"],
     })
       .notNull()
       .default("idle"),
@@ -6086,6 +7113,128 @@ export const platformEmailConfig = pgTable("platform_email_config", {
     .defaultNow(),
 });
 
+/**
+ * Global hosted OAuth applications used by Kestrel One personal Apps.  These
+ * are intentionally separate from app_credentials, which is scoped to an
+ * organization Environment and cannot be an authority for a Platform app.
+ */
+export const platformOAuthRegistrations = pgTable(
+  "platform_oauth_registrations",
+  {
+    provider: text("provider", {
+      enum: ["google_workspace", "microsoft_365"],
+    })
+      .primaryKey()
+      .notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    clientId: text("client_id"),
+    encryptedClientSecret: text("encrypted_client_secret"),
+    /** Microsoft tenant ID, or the Google hosted issuer when one is needed. */
+    tenantOrIssuer: text("tenant_or_issuer"),
+    enabledPacks: jsonb("enabled_packs")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    revision: integer("revision").notNull().default(1),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      "platform_oauth_registrations_revision_check",
+      sql`${table.revision} > 0`,
+    ),
+  ],
+);
+
+/**
+ * A short-lived browser authorization attempt for a Platform-owned OAuth app.
+ * The verifier is encrypted at rest; its opaque id is the only state that may
+ * travel through a provider redirect.
+ */
+export const platformPersonalOAuthAuthorizationSessions = pgTable(
+  "platform_personal_oauth_authorization_sessions",
+  {
+    id: text("id").primaryKey().notNull(),
+    provider: text("provider", {
+      enum: ["google_workspace", "microsoft_365"],
+    }).notNull(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    appKey: text("app_key")
+      .notNull()
+      .references(() => appDefinitions.key, { onDelete: "cascade" }),
+    connectionId: text("connection_id").references(() => appConnections.id, {
+      onDelete: "set null",
+    }),
+    selectedPacks: jsonb("selected_packs").$type<string[]>().notNull(),
+    registrationRevision: integer("registration_revision").notNull(),
+    encryptedPkceVerifier: text("encrypted_pkce_verifier").notNull(),
+    returnTarget: text("return_target").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("platform_personal_oauth_session_expiry_idx").on(table.expiresAt),
+    index("platform_personal_oauth_session_user_idx").on(
+      table.userId,
+      table.organizationId,
+    ),
+  ],
+);
+
+/**
+ * Hosted personal provider authority. Tokens are never placed in Better Auth
+ * account rows or Environment-scoped app_credentials.
+ */
+export const platformPersonalOAuthAuthorizations = pgTable(
+  "platform_personal_oauth_authorizations",
+  {
+    connectionId: text("connection_id")
+      .primaryKey()
+      .references(() => appConnections.id, { onDelete: "cascade" }),
+    provider: text("provider", {
+      enum: ["google_workspace", "microsoft_365"],
+    }).notNull(),
+    providerAccountId: text("provider_account_id").notNull(),
+    selectedPacks: jsonb("selected_packs").$type<string[]>().notNull(),
+    grantedScopes: jsonb("granted_scopes").$type<string[]>().notNull(),
+    encryptedTokenPayload: text("encrypted_token_payload").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    registrationRevision: integer("registration_revision").notNull(),
+    reconnectRequired: boolean("reconnect_required").notNull().default(false),
+    failureCode: text("failure_code"),
+    lastRefreshedAt: timestamp("last_refreshed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("platform_personal_oauth_authorization_identity_idx").on(
+      table.provider,
+      table.providerAccountId,
+      table.connectionId,
+    ),
+  ],
+);
+
 export const organizationEmailConfig = pgTable("organization_email_config", {
   organizationId: text("organization_id")
     .primaryKey()
@@ -6112,6 +7261,101 @@ export const organizationEmailConfig = pgTable("organization_email_config", {
     .notNull()
     .defaultNow(),
 });
+
+export const organizationReceivingConnections = pgTable(
+  "organization_receiving_connections",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["resend"] })
+      .notNull()
+      .default("resend"),
+    encryptedApiKey: text("encrypted_api_key"),
+    credentialStatus: text("credential_status", {
+      enum: ["not_configured", "full_access", "insufficient", "error"],
+    })
+      .notNull()
+      .default("not_configured"),
+    credentialValidatedAt: timestamp("credential_validated_at", {
+      withTimezone: true,
+    }),
+    receivingDomainKind: text("receiving_domain_kind", {
+      enum: ["custom", "resend_managed"],
+    })
+      .notNull()
+      .default("custom"),
+    receivingDomainId: text("receiving_domain_id"),
+    receivingDomain: text("receiving_domain"),
+    receivingDomainStatus: text("receiving_domain_status", {
+      enum: ["not_selected", "pending", "verified", "failed"],
+    })
+      .notNull()
+      .default("not_selected"),
+    mxStatus: text("mx_status", {
+      enum: ["unknown", "pending", "verified", "failed"],
+    })
+      .notNull()
+      .default("unknown"),
+    domainCheckedAt: timestamp("domain_checked_at", { withTimezone: true }),
+    routeLocator: text("route_locator").notNull(),
+    providerWebhookId: text("provider_webhook_id"),
+    encryptedSigningSecret: text("encrypted_signing_secret"),
+    webhookCreateIntent: jsonb("webhook_create_intent").$type<{
+      endpoint: string;
+      events: ["email.received"];
+    }>(),
+    webhookCreateAttemptedAt: timestamp("webhook_create_attempted_at", {
+      withTimezone: true,
+    }),
+    webhookStagingSequence: bigint("webhook_staging_sequence", {
+      mode: "number",
+    })
+      .notNull()
+      .default(0),
+    webhookStatus: text("webhook_status", {
+      enum: ["not_staged", "staged", "active", "disabled", "error"],
+    })
+      .notNull()
+      .default("not_staged"),
+    inboundEnabled: boolean("inbound_enabled").notNull().default(false),
+    lastHealthCheckedAt: timestamp("last_health_checked_at", {
+      withTimezone: true,
+    }),
+    healthCheckSequence: bigint("health_check_sequence", { mode: "number" })
+      .notNull()
+      .default(0),
+    lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+    lastErrorCode: text("last_error_code"),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("organization_receiving_connections_org_idx").on(
+      table.organizationId,
+    ),
+    uniqueIndex("organization_receiving_connections_organization_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+    uniqueIndex("organization_receiving_connections_route_locator_idx").on(
+      table.routeLocator,
+    ),
+    uniqueIndex("organization_receiving_connections_webhook_idx")
+      .on(table.providerWebhookId)
+      .where(sql`${table.providerWebhookId} IS NOT NULL`),
+  ],
+);
 
 export const organizationInfrastructureSettings = pgTable(
   "organization_infrastructure_settings",
@@ -6245,7 +7489,9 @@ export type KestrelFile = InferSelectModel<typeof kestrelFiles>;
 export type FileScopeGrant = InferSelectModel<typeof fileScopeGrants>;
 export type FileRepresentation = InferSelectModel<typeof fileRepresentations>;
 export type ThreadMessageFile = InferSelectModel<typeof threadMessageFiles>;
-export type FileBackfillProgress = InferSelectModel<typeof fileBackfillProgress>;
+export type FileBackfillProgress = InferSelectModel<
+  typeof fileBackfillProgress
+>;
 export type FileBackfillResult = InferSelectModel<typeof fileBackfillResults>;
 export type ThreadTurn = InferSelectModel<typeof threadTurns>;
 export type ThreadTurnEvent = InferSelectModel<typeof threadTurnEvents>;
@@ -6383,6 +7629,15 @@ export type PlatformTurnWorkerCapacity = InferSelectModel<
   typeof platformTurnWorkerCapacity
 >;
 export type PlatformEmailConfig = InferSelectModel<typeof platformEmailConfig>;
+export type PlatformOAuthRegistration = InferSelectModel<
+  typeof platformOAuthRegistrations
+>;
+export type PlatformPersonalOAuthAuthorizationSession = InferSelectModel<
+  typeof platformPersonalOAuthAuthorizationSessions
+>;
+export type PlatformPersonalOAuthAuthorization = InferSelectModel<
+  typeof platformPersonalOAuthAuthorizations
+>;
 export type AdminApiKey = InferSelectModel<typeof adminApiKeys>;
 export type KnowledgeDocument = InferSelectModel<typeof knowledgeDocuments>;
 export type KnowledgeIngestionRun = InferSelectModel<

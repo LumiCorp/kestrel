@@ -12,6 +12,7 @@ import {
   mountedVolumeIdsFromInventory,
   retainedFailedRestoreResourceIds,
   selectOrphanVolumeIds,
+  selectOrphanMachineIds,
 } from "./reconcile-contract";
 
 const workspaceId = "87408a50-5dc3-448a-b099-aada6811996a";
@@ -327,6 +328,23 @@ test("orphan cleanup excludes mounted Volumes even when the database binding is 
       activeVolumeIds: new Set(["volume-stale"]),
     }),
     ["volume-unmounted"]
+  );
+});
+
+test("generic orphan cleanup excludes Browser Machines owned by Browser reconciliation", () => {
+  assert.deepEqual(
+    selectOrphanMachineIds({
+      inventory: {
+        machines: [
+          { id: "browser-active", workspaceId: null, replacementId: null },
+          { id: "workspace-active", workspaceId, replacementId: null },
+          { id: "generic-orphan", workspaceId: null, replacementId: null },
+        ],
+        volumes: [],
+      },
+      activeMachineIds: new Set(["browser-active", "workspace-active"]),
+    }),
+    ["generic-orphan"],
   );
 });
 

@@ -13,6 +13,7 @@ import { App, terminalMessageRecoveryThreadId } from "../../cli/app/App.js";
 import {
   bootstrapTuiApp,
   deriveStartupPersistedUiState,
+  resolveProfileForStartup,
   runSplashDatabasePreflight,
 } from "../../cli/app/TuiBootstrap.js";
 import { applyLocalCoreShellEnvironment, formatCliLocalCoreStatus } from "../../cli/localCoreShell.js";
@@ -30,11 +31,17 @@ import { DelegationReviewView } from "../../cli/ink/views/DelegationReviewView.j
 import { SessionsView } from "../../cli/ink/views/SessionsView.js";
 import { TasksView } from "../../cli/ink/views/TasksView.js";
 import { SessionStore } from "../../cli/session/SessionStore.js";
+import { TuiAuthoringProfileError } from "../../cli/session/TuiAuthoringProfile.js";
+import {
+  exactTuiQueueTailRunId,
+  normalizeTuiQueueGraph,
+} from "../../cli/session/TuiQueueGraph.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { initializeWorkspaceAtRoot } from "../../cli/workspace/WorkspaceResolver.js";
 import type { PaletteCommand } from "../../cli/app/PaletteController.js";
 import type { InkAppController } from "../../cli/ink/AppRoot.js";
-import type { TuiSessionMeta } from "../../cli/contracts.js";
+import type { SessionsFile, TuiProfile, TuiSessionMeta } from "../../cli/contracts.js";
+import type { SessionDescribedEventPayload } from "../../cli/protocol/contracts.js";
 import type { OperatorDelegationWorkspaceSnapshot } from "../../src/operatorShell.js";
 import type { LocalCoreStatus } from "../../src/localCore/contracts.js";
 import { startLocalCoreApiServer } from "../../src/localCore/api.js";
@@ -50,6 +57,206 @@ test("Local Core platform parsing accepts exact Node platform values", () => {
 
 test("TUI recovery resolves the canonical main thread for a session", () => {
   assert.equal(terminalMessageRecoveryThreadId("session-1"), "thread-main:session-1");
+});
+
+test("startup preserves a started session's authoring profile over an explicit profile", async () => {
+  const authoringProfile: TuiProfile = {
+    id: "authoring-profile",
+    label: "Authoring profile",
+    agent: "kestrel",
+    sessionPrefix: "authoring",
+  };
+  const explicitProfile: TuiProfile = {
+    id: "explicit-profile",
+    label: "Explicit profile",
+    agent: "kestrel",
+    sessionPrefix: "explicit",
+  };
+  const session: TuiSessionMeta = {
+    name: "started-session",
+    sessionId: "session-started",
+    profileId: authoringProfile.id,
+    createdAt: "2026-08-29T00:00:00.000Z",
+    updatedAt: "2026-08-29T00:00:00.000Z",
+    started: true,
+  };
+  const profileStore = new ProfileStore(path.join(os.tmpdir(), "tui-authoring-profile-test"));
+
+  const resolved = await resolveProfileForStartup({
+    options: { cwd: process.cwd(), profileId: explicitProfile.id },
+    profiles: [authoringProfile, explicitProfile],
+    runtimeSettings: { version: 1, defaults: {} },
+    profileStore,
+    session,
+    startupNotices: [],
+  });
+
+  assert.equal(resolved.id, authoringProfile.id);
+});
+
+test("startup preserves a runtime-bound session's authoring profile when started is stale", async () => {
+  const authoringProfile: TuiProfile = {
+    id: "runtime-bound-authoring-profile",
+    label: "Runtime-bound authoring profile",
+    agent: "kestrel",
+    sessionPrefix: "runtime-bound",
+  };
+  const explicitProfile: TuiProfile = {
+    id: "replacement-profile",
+    label: "Replacement profile",
+    agent: "kestrel",
+    sessionPrefix: "replacement",
+  };
+  const session: TuiSessionMeta = {
+    name: "runtime-bound-session",
+    sessionId: "session-runtime-bound",
+    profileId: authoringProfile.id,
+    effectiveAssemblyId: "bundle:runtime-bound",
+    createdAt: "2026-08-29T00:00:00.000Z",
+    updatedAt: "2026-08-29T00:00:00.000Z",
+    started: false,
+  };
+  const profileStore = new ProfileStore(path.join(os.tmpdir(), "tui-runtime-bound-profile-test"));
+
+  const resolved = await resolveProfileForStartup({
+    options: { cwd: process.cwd(), profileId: explicitProfile.id },
+    profiles: [authoringProfile, explicitProfile],
+    runtimeSettings: { version: 1, defaults: {} },
+    profileStore,
+    session,
+    startupNotices: [],
+  });
+
+  assert.equal(resolved.id, authoringProfile.id);
+});
+
+const preAcceptanceProfileScenarios: Array<{
+  label: string;
+  patch: Partial<TuiSessionMeta>;
+}> = [
+  {
+    label: "pending ordinary-turn correlation",
+    patch: {
+      pendingRunId: "run-local-pending",
+      pendingRunMessageId: "message-local-pending",
+      pendingRunThreadId: "thread-main:session-preaccept",
+    },
+  },
+  {
+    label: "pending queued-turn correlation",
+    patch: {
+      pendingQueueSubmissions: [{
+        runId: "run-local-queued",
+        messageId: "message-local-queued",
+        threadId: "thread-main:session-preaccept",
+        indeterminate: true,
+      }],
+    },
+  },
+];
+
+for (const scenario of preAcceptanceProfileScenarios) {
+  test(`startup keeps ${scenario.label} mutable before runtime acceptance`, async () => {
+    const authoringProfile: TuiProfile = {
+      id: "preaccept-authoring-profile",
+      label: "Pre-accept authoring profile",
+      agent: "kestrel",
+      sessionPrefix: "preaccept",
+    };
+    const explicitProfile: TuiProfile = {
+      id: "preaccept-explicit-profile",
+      label: "Pre-accept explicit profile",
+      agent: "kestrel",
+      sessionPrefix: "preaccept-explicit",
+    };
+    const session: TuiSessionMeta = {
+      name: "preaccept-session",
+      sessionId: "session-preaccept",
+      profileId: authoringProfile.id,
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:00.000Z",
+      started: false,
+      ...scenario.patch,
+    };
+    const profileStore = new ProfileStore(path.join(os.tmpdir(), "tui-preaccept-profile-test"));
+
+    const resolved = await resolveProfileForStartup({
+      options: { cwd: process.cwd(), profileId: explicitProfile.id },
+      profiles: [authoringProfile, explicitProfile],
+      runtimeSettings: { version: 1, defaults: {} },
+      profileStore,
+      session,
+      startupNotices: [],
+    });
+
+    assert.equal(resolved.id, explicitProfile.id);
+  });
+}
+
+test("startup fails closed when a started session's authoring profile is unavailable", async () => {
+  const availableProfile: TuiProfile = {
+    id: "available-profile",
+    label: "Available profile",
+    agent: "kestrel",
+    sessionPrefix: "available",
+  };
+  const session: TuiSessionMeta = {
+    name: "started-session",
+    sessionId: "session-started",
+    profileId: "missing-authoring-profile",
+    createdAt: "2026-08-29T00:00:00.000Z",
+    updatedAt: "2026-08-29T00:00:00.000Z",
+    started: true,
+  };
+  const profileStore = new ProfileStore(path.join(os.tmpdir(), "tui-missing-authoring-profile-test"));
+
+  await assert.rejects(
+    resolveProfileForStartup({
+      options: { cwd: process.cwd(), profileId: availableProfile.id },
+      profiles: [availableProfile],
+      runtimeSettings: { version: 1, defaults: {} },
+      profileStore,
+      session,
+      startupNotices: [],
+    }),
+    (error: unknown) =>
+      error instanceof TuiAuthoringProfileError
+      && error.sessionId === session.sessionId
+      && error.profileId === session.profileId,
+  );
+});
+
+test("describe projection cannot infer an environment for stale unstarted runtime evidence", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const sessionStore = appState.sessionStore as SessionStore;
+  const staleSession: TuiSessionMeta = {
+    ...uiStore.getState().activeSession,
+    started: false,
+    environmentPresetId: undefined,
+    effectiveAssemblyId: "bundle:stale-start",
+  };
+  appState.sessionsFile = sessionStore.upsert(
+    appState.sessionsFile as { sessions: TuiSessionMeta[] },
+    staleSession,
+  );
+  uiStore.patch({
+    activeSession: staleSession,
+    sessions: (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions,
+  });
+
+  await assert.rejects(
+    (appState.syncSessionFromDescribePayload as (payload: {
+      sessionId: string;
+      version: number;
+    }) => Promise<void>)({
+      sessionId: staleSession.sessionId,
+      version: 0,
+    }),
+    /runtime-bound session has no exact environment identity/u,
+  );
+  assert.equal(uiStore.getState().activeSession.environmentPresetId, undefined);
 });
 
 async function createAppHarness(input: {
@@ -90,6 +297,8 @@ async function createAppHarness(input: {
     name: "default",
     sessionId: "session-1",
     profileId: activeProfile.id,
+    environmentPresetId: "cli_dev_local",
+    effectiveAssemblyId: "bundle:kestrel:cli",
     createdAt: now,
     updatedAt: now,
     started: true,
@@ -123,10 +332,12 @@ async function createAppHarness(input: {
       resolveExecutionProfile: async (request: {
         client: "cli";
         profileId: string;
+        environmentPresetId: "cli_safe_local" | "cli_dev_local";
       }) => {
         assert.deepEqual(request, {
           client: "cli",
           profileId: activeProfile.id,
+          environmentPresetId: "cli_dev_local",
         });
         const fingerprint =
           "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -141,6 +352,13 @@ async function createAppHarness(input: {
             ...activeProfile,
             id: profileId,
             agentProfileId: "kestrel",
+            environmentShellKind: "cli",
+            environmentPresetId: "cli_dev_local",
+            environmentCapabilityPackIds: [
+              "balanced",
+              "filesystem",
+              "dev_shell",
+            ],
           },
         };
       },
@@ -167,6 +385,67 @@ async function waitFor(assertion: () => boolean, timeoutMs = 100): Promise<void>
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error("condition not met before timeout");
+}
+
+function installBackgroundSession(
+  appState: Record<string, unknown>,
+  patch: Partial<TuiSessionMeta> = {},
+): TuiSessionMeta {
+  const uiStore = appState.uiStore as UiStore;
+  const parent = uiStore.getState().activeSession;
+  const now = "2026-08-28T00:00:00.000Z";
+  const sessionId = patch.sessionId ?? "child-exact-lifecycle";
+  const child: TuiSessionMeta = {
+    ...parent,
+    name: patch.name ?? sessionId,
+    sessionId,
+    createdAt: now,
+    updatedAt: now,
+    started: false,
+    effectiveAssemblyId: undefined,
+    delegation: {
+      taskId: `task-${sessionId}`,
+      parentSessionId: parent.sessionId,
+      childSessionId: sessionId,
+      childSessionName: sessionId,
+      title: "exact lifecycle child",
+      status: "PENDING",
+      profileId: parent.profileId,
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: now,
+      updatedAt: now,
+    },
+    ...patch,
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: 5;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: [...sessionsFile.sessions.filter((item) => item.sessionId !== sessionId), child],
+  };
+  uiStore.patch({
+    sessions: [...uiStore.getState().sessions.filter((item) => item.sessionId !== sessionId), child],
+  });
+  return child;
+}
+
+function makeExactTuiSessionDescription() {
+  return {
+    type: "session.described" as const,
+    payload: {
+      sessionId: "session-1",
+      version: 1,
+      activeAssembly: {
+        mode: "explicit" as const,
+        bundleId: "bundle:kestrel:cli",
+        environmentPresetId: "cli_dev_local" as const,
+      },
+    },
+  };
 }
 
 function restoreProcessEnv(key: string, value: string | undefined): void {
@@ -315,6 +594,7 @@ test("bootstrapTuiApp expands ~/ KESTREL_HOME for default stores", async () => {
     const stateHome = path.join(expandedHome, "state", "0.6");
     assert.equal(bootstrap.home, stateHome);
     assert.equal(bootstrap.profileStore.getBaseDir(), stateHome);
+    assert.equal(bootstrap.activeSession.environmentPresetId, "cli_dev_local");
     assert.equal(
       bootstrap.diagnosticsStore.getFilePath(),
       path.join(stateHome, "logs", "tui-diagnostics.log"),
@@ -790,6 +1070,11 @@ test("runSplashDatabasePreflight still requires DATABASE_URL for explicit postgr
 test("profiles use rebinds the active session and subsequent history to the canonical profile", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    started: false,
+    effectiveAssemblyId: undefined,
+    effectiveAssemblyLabel: undefined,
+  });
 
   await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
     kind: "command",
@@ -816,7 +1101,8 @@ test("profiles use rebinds the active session and subsequent history to the cano
       detailDrawerOpen: true,
     }),
   );
-  assert.match(rendered, /profile=kestrel/u);
+  assert.match(rendered, /Agent=kestrel/u);
+  assert.match(rendered, /Environment=Developer workspace/u);
 
   const rawHistory = await readFile(historyPath, "utf8");
   const records = rawHistory
@@ -826,8 +1112,343 @@ test("profiles use rebinds the active session and subsequent history to the cano
     .map((line) => JSON.parse(line) as { profileId: string; text: string });
   const lastRecord = records[records.length - 1];
   assert.equal(lastRecord?.profileId, "kestrel");
-  assert.match(String(lastRecord?.text), /Profile set to 'kestrel'/u);
+  assert.match(String(lastRecord?.text), /Agent profile set to 'kestrel'/u);
   assert.doesNotMatch(String(lastRecord?.text), /provider=|openai|anthropic/u);
+});
+
+test("environment command reports the product environment and opens its chooser", async () => {
+  const { app, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "environment",
+    args: [],
+  });
+
+  const state = (appState.uiStore as UiStore).getState();
+  assert.equal(state.paletteOpen, true);
+  assert.equal(state.paletteContext, "environment");
+  const actions = (appState.getPaletteController as () => {
+    getActions(state?: ReturnType<UiStore["getState"]>): PaletteCommand[];
+  })().getActions(state);
+  assert.equal(actions.some((action) => action.command === "/environment safe"), true);
+  assert.equal(actions.some((action) => action.command === "/environment developer"), false);
+  const records = (await readFile(historyPath, "utf8"))
+    .trim()
+    .split(/\r?\n/u)
+    .map((line) => JSON.parse(line) as { text: string });
+  const text = records.at(-1)?.text ?? "";
+  assert.match(text, /Agent: Kestrel/u);
+  assert.match(text, /Environment: Developer workspace/u);
+  assert.match(text, /Choosing another environment creates a new session/u);
+  assert.doesNotMatch(text, /cli_dev_local|cli_safe_local/u);
+});
+
+test("guided palette inserts Environment after workspace and marks Developer as the workspace default", async () => {
+  const { app, cwd } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const workspaceRoot = path.join(cwd, "guided-project");
+  await mkdir(workspaceRoot, { recursive: true });
+  const workspace = await initializeWorkspaceAtRoot(
+    workspaceRoot,
+    appState.workspaceStore as WorkspaceStore,
+    { label: "guided-project" },
+  );
+  appState.activeWorkspace = workspace;
+  appState.launchWorkspace = workspace;
+
+  await (appState.beginStartTaskJourney as () => Promise<void>)();
+  const select = appState.handleStartTaskPaletteSelection as (selected: PaletteCommand) => Promise<boolean>;
+  await select.call(app, { id: "start.template.none", label: "Template: None" });
+  await select.call(app, { id: "start.preset.none", label: "Preset: None" });
+  await select.call(app, { id: "start.workspace.active", label: "Workspace: Active" });
+
+  const uiStore = appState.uiStore as UiStore;
+  const state = uiStore.getState();
+  assert.equal(state.paletteContext, "start-environment");
+  const actions = (appState.getPaletteController as () => {
+    getActions(state?: ReturnType<UiStore["getState"]>): PaletteCommand[];
+  })().getActions(state);
+  assert.equal(
+    actions.some((action) => action.id === "start.environment.developer" && action.label.includes("(default)")),
+    true,
+  );
+  assert.equal(actions.some((action) => action.id === "start.environment.safe"), true);
+});
+
+test("environment command changes an unstarted session in place", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const originalId = (appState.uiStore as UiStore).getState().activeSession.sessionId;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    started: false,
+    effectiveAssemblyId: undefined,
+    effectiveAssemblyLabel: undefined,
+    operatorState: undefined,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "environment",
+    args: ["safe"],
+  });
+
+  const state = (appState.uiStore as UiStore).getState();
+  assert.equal(state.activeSession.sessionId, originalId);
+  assert.equal(state.activeSession.environmentPresetId, "cli_safe_local");
+  assert.equal(state.activeSession.started, false);
+  assert.equal(state.activeSession.effectiveAssemblyId, undefined);
+  const persisted = await new SessionStore(home).load();
+  assert.equal(persisted.sessions.length, 1);
+  assert.equal(persisted.sessions[0]?.environmentPresetId, "cli_safe_local");
+});
+
+test("failed environment persistence leaves unstarted memory and disk authority unchanged", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const sessionStore = appState.sessionStore as SessionStore;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    started: false,
+    effectiveAssemblyId: undefined,
+    effectiveAssemblyLabel: undefined,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+  sessionStore.save = async () => {
+    throw new Error("injected environment save failure");
+  };
+
+  await assert.rejects(
+    (appState.handleEnvironmentCommand as (args: string[]) => Promise<void>)(["safe"]),
+    /Environment change was not persisted/u,
+  );
+
+  const state = (appState.uiStore as UiStore).getState();
+  assert.equal(state.activeSession.environmentPresetId, "cli_dev_local");
+  assert.equal(
+    (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions[0]?.environmentPresetId,
+    "cli_dev_local",
+  );
+  const persisted = await new SessionStore(home).load();
+  assert.equal(persisted.sessions[0]?.environmentPresetId, "cli_dev_local");
+});
+
+test("environment command creates a clean Developer workspace session from a started Safe session", async () => {
+  const { app, cwd, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const workspaceRoot = path.join(cwd, "developer-project");
+  await mkdir(workspaceRoot, { recursive: true });
+  const workspace = await initializeWorkspaceAtRoot(
+    workspaceRoot,
+    appState.workspaceStore as WorkspaceStore,
+    { label: "developer-project" },
+  );
+  appState.activeWorkspace = workspace;
+  appState.launchWorkspace = workspace;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    workspaceBinding: "active",
+    workspaceId: workspace.manifest.workspaceId,
+    workspaceRoot: workspace.rootPath,
+    workspaceLabel: workspace.manifest.label,
+    environmentPresetId: "cli_safe_local",
+    environmentShellKind: "cli",
+    effectiveAssemblyId: "bundle:kestrel:safe",
+    effectiveAssemblyLabel: "legacy raw safe label",
+    started: true,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+  const source = uiStore.getState().activeSession;
+  const sourceProfile = uiStore.getState().activeProfile;
+  const alternateProfile: TuiProfile = {
+    ...sourceProfile,
+    id: "alternate-agent",
+    label: "Alternate agent",
+    sessionPrefix: "alternate",
+  };
+  appState.profileStore = {
+    load: async () => [sourceProfile, alternateProfile],
+    findById: (profiles: TuiProfile[], profileId: string) =>
+      profiles.find((profile) => profile.id === profileId),
+  } as unknown as ProfileStore;
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "profiles",
+    args: ["use", alternateProfile.id],
+  });
+  assert.equal(uiStore.getState().activeProfile.id, sourceProfile.id);
+  assert.equal(uiStore.getState().activeSession.profileId, source.profileId);
+  await (appState.appendHistoryLine as (role: "assistant", text: string) => Promise<void>)(
+    "assistant",
+    "source-only-history",
+  );
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "environment",
+    args: ["developer"],
+  });
+
+  const state = uiStore.getState();
+  const created = state.activeSession;
+  const preservedSource = state.sessions.find((session) => session.sessionId === source.sessionId);
+  assert.notEqual(created.sessionId, source.sessionId);
+  assert.equal(created.environmentPresetId, "cli_dev_local");
+  assert.equal(created.workspaceId, workspace.manifest.workspaceId);
+  assert.equal(created.workspaceRoot, workspace.rootPath);
+  assert.equal(created.profileId, source.profileId);
+  assert.notEqual(created.profileId, alternateProfile.id);
+  assert.equal(created.started, false);
+  assert.equal(created.effectiveAssemblyId, undefined);
+  assert.equal(created.acceptedRunId, undefined);
+  assert.equal(created.pendingWaitFor, undefined);
+  assert.equal(state.transcript.some((line) => line.text.includes("source-only-history")), false);
+  assert.equal(preservedSource?.environmentPresetId, "cli_safe_local");
+  assert.equal(preservedSource?.effectiveAssemblyId, "bundle:kestrel:safe");
+  const persisted = await new SessionStore(home).load();
+  assert.equal(persisted.sessions.length, 2);
+  assert.equal(
+    persisted.sessions.find((session) => session.sessionId === source.sessionId)?.environmentPresetId,
+    "cli_safe_local",
+  );
+});
+
+test("failed started environment replacement publishes no new session or workspace state", async () => {
+  const { app, cwd, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const workspaceRoot = path.join(cwd, "durable-project");
+  await mkdir(workspaceRoot, { recursive: true });
+  const workspace = await initializeWorkspaceAtRoot(
+    workspaceRoot,
+    appState.workspaceStore as WorkspaceStore,
+    { label: "durable-project" },
+  );
+  appState.activeWorkspace = workspace;
+  appState.launchWorkspace = workspace;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    workspaceBinding: "active",
+    workspaceId: workspace.manifest.workspaceId,
+    workspaceRoot: workspace.rootPath,
+    workspaceLabel: workspace.manifest.label,
+    environmentPresetId: "cli_safe_local",
+    effectiveAssemblyId: "bundle:kestrel:safe",
+    started: true,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+  const source = uiStore.getState().activeSession;
+  (appState.sessionStore as SessionStore).save = async () => {
+    throw new Error("injected replacement save failure");
+  };
+
+  await assert.rejects(
+    (appState.handleEnvironmentCommand as (args: string[]) => Promise<void>)(["developer"]),
+    /injected replacement save failure/u,
+  );
+
+  const state = uiStore.getState();
+  assert.equal(state.activeSession.sessionId, source.sessionId);
+  assert.equal(state.activeSession.environmentPresetId, "cli_safe_local");
+  assert.equal(state.sessions.length, 1);
+  assert.equal((appState.activeWorkspace as { rootPath?: string } | undefined)?.rootPath, workspace.rootPath);
+  assert.equal((appState.launchWorkspace as { rootPath?: string } | undefined)?.rootPath, workspace.rootPath);
+  const persisted = await new SessionStore(home).load();
+  assert.equal(persisted.sessions.length, 1);
+  assert.equal(persisted.sessions[0]?.sessionId, source.sessionId);
+  assert.equal(persisted.sessions[0]?.environmentPresetId, "cli_safe_local");
+});
+
+test("started environment change fails closed when its bound workspace is unavailable", async () => {
+  const { app, cwd, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const missingRoot = path.join(cwd, "moved-workspace");
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    workspaceBinding: "active",
+    workspaceId: "workspace-moved",
+    workspaceRoot: missingRoot,
+    workspaceLabel: "Moved workspace",
+    environmentPresetId: "cli_dev_local",
+    effectiveAssemblyId: "bundle:kestrel:developer",
+    started: true,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "environment",
+    args: ["safe"],
+  });
+
+  const state = (appState.uiStore as UiStore).getState();
+  assert.equal(state.sessions.length, 1);
+  assert.equal(state.activeSession.environmentPresetId, "cli_dev_local");
+  assert.equal(state.activeSession.effectiveAssemblyId, "bundle:kestrel:developer");
+  assert.match(
+    await readFile(historyPath, "utf8"),
+    /workspace could not be resolved.*No replacement session was created/u,
+  );
+});
+
+test("profiles, status, and sessions present Agent and Environment separately", async () => {
+  const { app, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = {
+    sendCommand: async (type: string) => {
+      if (type === "session.describe") {
+        return makeExactTuiSessionDescription();
+      }
+      if (type === "mcp.status") {
+        return {
+          type: "mcp.status",
+          payload: {
+            status: {
+              healthy: true,
+              checkedAt: "2026-08-29T00:00:00.000Z",
+              servers: [],
+              tools: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected command '${type}'.`);
+    },
+  };
+
+  for (const [command, args] of [
+    ["profiles", ["list"]],
+    ["sessions", []],
+    ["status", []],
+  ] as const) {
+    await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+      kind: "command",
+      command,
+      args,
+    });
+  }
+
+  const records = (await readFile(historyPath, "utf8"))
+    .trim()
+    .split(/\r?\n/u)
+    .map((line) => JSON.parse(line) as { text: string });
+  const profilesText = records.find((record) => record.text.startsWith("Profiles:"))?.text ?? "";
+  const sessionsText = records.find((record) => record.text.startsWith("Sessions:"))?.text ?? "";
+  const statusText = records.find((record) => record.text.includes("Agent=Kestrel Environment="))?.text ?? "";
+  assert.doesNotMatch(profilesText, /preset=/u);
+  assert.match(sessionsText, /agent:Kestrel/u);
+  assert.match(sessionsText, /environment:Developer workspace/u);
+  assert.match(statusText, /Agent=Kestrel Environment=Developer workspace/u);
+  assert.doesNotMatch(`${sessionsText}\n${statusText}`, /cli_dev_local|cli_safe_local/u);
 });
 
 async function reserveLocalPort(): Promise<number> {
@@ -1213,6 +1834,7 @@ test("start task journey creates a session with the canonical profile, mode, and
   await (appState.handleLine as (line: string) => Promise<void>)("investigation-task");
   await (appState.handleLine as (line: string) => Promise<void>)("investigation");
   await (appState.handleLine as (line: string) => Promise<void>)("detached");
+  await (appState.handleLine as (line: string) => Promise<void>)("default");
   await (appState.handleLine as (line: string) => Promise<void>)("Investigate queue latency");
   await (appState.handleLine as (line: string) => Promise<void>)("kestrel");
   await (appState.handleLine as (line: string) => Promise<void>)("build");
@@ -1224,14 +1846,5083 @@ test("start task journey creates a session with the canonical profile, mode, and
   assert.equal(state.activeSession.launchPresetId, "investigation");
   assert.equal(state.activeSession.launchTemplateId, "investigation-task");
   assert.equal(state.activeSession.workspaceBinding, "detached");
+  assert.equal(state.activeSession.environmentPresetId, "cli_safe_local");
   assert.equal(state.activeSession.interactionMode, "build");
   assert.equal(state.activeSession.actSubmode, "safe");
   assert.equal(state.activeProfile.id, "kestrel");
+  assert.equal(state.activeSession.started, false);
 
   const rawHistory = await readFile(historyPath, "utf8");
   assert.match(rawHistory, /Start task journey/u);
   assert.match(rawHistory, /Started new session 'Investigate queue latency'\./u);
   assert.match(rawHistory, /Task=Investigate queue latency/u);
+});
+
+test("guided detached creation clears a previously active workspace cache", async () => {
+  const { app, cwd } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const workspaceRoot = path.join(cwd, "previous-workspace");
+  await mkdir(workspaceRoot, { recursive: true });
+  const previousWorkspace = await initializeWorkspaceAtRoot(
+    workspaceRoot,
+    appState.workspaceStore as WorkspaceStore,
+    { label: "previous-workspace" },
+  );
+  appState.activeWorkspace = previousWorkspace;
+  appState.launchWorkspace = previousWorkspace;
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "start",
+    args: [],
+  });
+  for (const input of [
+    "none",
+    "none",
+    "detached",
+    "default",
+    "Detached investigation",
+    "current",
+    "default",
+    "skip",
+  ]) {
+    await (appState.handleLine as (line: string) => Promise<void>)(input);
+  }
+
+  const uiStore = appState.uiStore as UiStore;
+  assert.equal(uiStore.getState().activeSession.workspaceBinding, "detached");
+  assert.equal(appState.activeWorkspace, undefined);
+  assert.equal(appState.launchWorkspace, undefined);
+  await (appState.handleEnvironmentCommand as (args: string[]) => Promise<void>)([]);
+  const actions = (appState.getPaletteController as () => {
+    getActions(state?: ReturnType<UiStore["getState"]>): PaletteCommand[];
+  })().getActions(uiStore.getState());
+  assert.equal(actions.some((action) => action.command === "/environment developer"), false);
+});
+
+test("guided workspace creation replaces the active workspace cache with the selected workspace", async () => {
+  const { app, cwd } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const workspaceStore = appState.workspaceStore as WorkspaceStore;
+  const firstRoot = path.join(cwd, "workspace-a");
+  const secondRoot = path.join(cwd, "workspace-b");
+  await mkdir(firstRoot, { recursive: true });
+  await mkdir(secondRoot, { recursive: true });
+  const firstWorkspace = await initializeWorkspaceAtRoot(firstRoot, workspaceStore, { label: "workspace-a" });
+  const secondWorkspace = await initializeWorkspaceAtRoot(secondRoot, workspaceStore, { label: "workspace-b" });
+  appState.activeWorkspace = firstWorkspace;
+  appState.launchWorkspace = firstWorkspace;
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "start",
+    args: [],
+  });
+  for (const input of [
+    "none",
+    "none",
+    secondWorkspace.manifest.workspaceId,
+    "default",
+    "Workspace B task",
+    "current",
+    "default",
+    "skip",
+  ]) {
+    await (appState.handleLine as (line: string) => Promise<void>)(input);
+  }
+
+  const state = (appState.uiStore as UiStore).getState();
+  assert.equal(state.activeSession.workspaceRoot, secondWorkspace.rootPath);
+  assert.equal((appState.activeWorkspace as { rootPath?: string } | undefined)?.rootPath, secondWorkspace.rootPath);
+  assert.equal((appState.launchWorkspace as { rootPath?: string } | undefined)?.rootPath, secondWorkspace.rootPath);
+});
+
+test("failed guided creation leaves the prior session and workspace caches authoritative", async () => {
+  const { app, cwd, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const workspaceRoot = path.join(cwd, "authoritative-workspace");
+  await mkdir(workspaceRoot, { recursive: true });
+  const workspace = await initializeWorkspaceAtRoot(
+    workspaceRoot,
+    appState.workspaceStore as WorkspaceStore,
+    { label: "authoritative-workspace" },
+  );
+  appState.activeWorkspace = workspace;
+  appState.launchWorkspace = workspace;
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    workspaceBinding: "active",
+    workspaceId: workspace.manifest.workspaceId,
+    workspaceRoot: workspace.rootPath,
+    workspaceLabel: workspace.manifest.label,
+  });
+  await (appState.persistSessionAndUi as (options?: { requireSessionSave?: boolean }) => Promise<void>)({
+    requireSessionSave: true,
+  });
+  const source = uiStore.getState().activeSession;
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "start",
+    args: [],
+  });
+  for (const input of [
+    "none",
+    "none",
+    "detached",
+    "default",
+    "Unpersisted task",
+    "current",
+    "default",
+  ]) {
+    await (appState.handleLine as (line: string) => Promise<void>)(input);
+  }
+  (appState.sessionStore as SessionStore).save = async () => {
+    throw new Error("injected guided save failure");
+  };
+
+  await assert.rejects(
+    (appState.handleLine as (line: string) => Promise<void>)("skip"),
+    /injected guided save failure/u,
+  );
+
+  const state = uiStore.getState();
+  assert.equal(state.activeSession.sessionId, source.sessionId);
+  assert.equal(state.sessions.length, 1);
+  assert.equal((appState.activeWorkspace as { rootPath?: string } | undefined)?.rootPath, workspace.rootPath);
+  assert.equal((appState.launchWorkspace as { rootPath?: string } | undefined)?.rootPath, workspace.rootPath);
+  const persisted = await new SessionStore(home).load();
+  assert.equal(persisted.sessions.length, 1);
+  assert.equal(persisted.sessions[0]?.sessionId, source.sessionId);
+});
+
+test("background launch stays pending until run.started proves acceptance", async () => {
+  const { app, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = {
+    sendCommand: async () => await new Promise(() => {}),
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+
+  let child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.delegation?.status, "PENDING");
+  assert.equal(child?.started, false);
+  assert.equal(child?.environmentPresetId, "cli_dev_local");
+  assert.equal(existsSync(historyPath), false);
+  const pendingRunId = child?.pendingRunId;
+  assert.equal(typeof pendingRunId, "string");
+  assert.equal(child?.pendingRunMessageId, undefined);
+
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "run-started-background",
+    type: "run.started",
+    ts: "2026-08-28T00:00:00.000Z",
+    commandId: "command-background",
+    sessionId: child?.sessionId,
+    threadId: child?.sessionId,
+    runId: pendingRunId,
+    payload: {
+      sessionId: child?.sessionId,
+      runId: pendingRunId,
+      eventType: "user.message",
+    },
+  });
+  await waitFor(() => {
+    child = (appState.uiStore as UiStore).getState().sessions.find(
+      (session) => session.delegation?.parentSessionId === "session-1",
+    );
+    return child?.delegation?.status === "RUNNING";
+  });
+
+  assert.equal(child?.started, true);
+  await waitFor(() => existsSync(historyPath));
+  assert.match(await readFile(historyPath, "utf8"), /Background task started/u);
+});
+
+test("delegated queued acceptance publishes only after its required session commit", async (t) => {
+  for (const failureMode of ["before-write", "after-write"] as const) {
+    await t.test(failureMode, async () => {
+      const { app, home } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      appState.client = { sendCommand: async () => await new Promise(() => {}) };
+      await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+        "launch", "kestrel", "inspect delegated queue",
+      ]);
+      const uiStore = appState.uiStore as UiStore;
+      const child = uiStore.getState().sessions.find(
+        (session) => session.delegation?.parentSessionId === "session-1",
+      );
+      assert.ok(child?.delegation !== undefined);
+      const queued: TuiSessionMeta = {
+        ...child,
+        started: true,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: child.sessionId,
+        pendingRunId: undefined,
+        queuedRunReservations: [{
+          runId: "run-q1",
+          messageId: "message-q1",
+          threadId: child.sessionId,
+          predecessorRunId: "run-r0",
+        }],
+      };
+      const sessionStore = appState.sessionStore as SessionStore;
+      const originalSave = sessionStore.save.bind(sessionStore);
+      const currentFile = appState.sessionsFile as SessionsFile;
+      appState.sessionsFile = sessionStore.upsert(currentFile, queued);
+      uiStore.patch({ sessions: (appState.sessionsFile as typeof currentFile).sessions });
+      await originalSave(appState.sessionsFile as never);
+      sessionStore.save = async (snapshot) => {
+        if (failureMode === "after-write") await originalSave(snapshot);
+        throw new Error(`delegated queue ${failureMode}`);
+      };
+
+      await (appState.syncBackgroundSessionProgress as (input: {
+        sessionId: string;
+        threadId: string;
+        runId: string;
+        messageId: string;
+      }) => Promise<void>)({
+        sessionId: queued.sessionId,
+        threadId: queued.sessionId,
+        runId: "run-q1",
+        messageId: "message-q1",
+      });
+
+      const visible = uiStore.getState().sessions.find(
+        (session) => session.sessionId === queued.sessionId,
+      );
+      assert.equal(visible?.acceptedRunId, "run-r0");
+      assert.equal(visible?.delegation?.status, "PENDING");
+      const reloaded = new SessionStore(home).findByName(
+        await new SessionStore(home).load(),
+        queued.name,
+      );
+      assert.equal(reloaded?.acceptedRunId, failureMode === "after-write" ? "run-q1" : "run-r0");
+    });
+  }
+});
+
+test("delegated queued terminals require an exact turn and durable commit", async (t) => {
+  for (const terminalKind of ["completed", "failed", "cancelled"] as const) {
+    await t.test(terminalKind, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      appState.client = { sendCommand: async () => await new Promise(() => {}) };
+      await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+        "launch", "kestrel", `inspect ${terminalKind}`,
+      ]);
+      const uiStore = appState.uiStore as UiStore;
+      const child = uiStore.getState().sessions.find(
+        (session) => session.delegation?.parentSessionId === "session-1",
+      );
+      assert.ok(child?.delegation !== undefined);
+      const queued: TuiSessionMeta = {
+        ...child,
+        started: true,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: child.sessionId,
+        pendingRunId: undefined,
+        delegation: { ...child.delegation, status: "RUNNING" },
+        queuedRunReservations: [{
+          runId: "run-q1",
+          messageId: "message-q1",
+          threadId: child.sessionId,
+          predecessorRunId: "run-r0",
+        }],
+      };
+      const sessionStore = appState.sessionStore as SessionStore;
+      const originalSave = sessionStore.save.bind(sessionStore);
+      appState.sessionsFile = sessionStore.upsert(appState.sessionsFile as never, queued);
+      uiStore.patch({ sessions: (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions });
+      await originalSave(appState.sessionsFile as never);
+      const status = terminalKind === "completed" ? "COMPLETED" as const : "FAILED" as const;
+      const result = {
+        assistantText: terminalKind === "completed" ? "done" : null,
+        output: {
+          status,
+          sessionId: queued.sessionId,
+          runId: "run-q1",
+          quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+          errors: status === "FAILED" ? [{ code: "RUN_FAILED", message: terminalKind }] : [],
+          telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+        },
+      };
+      const sync = (authoritativeView?: Record<string, unknown>) =>
+        (appState.syncForegroundQueuedTerminal as (
+          input: Record<string, unknown>,
+        ) => Promise<boolean>)({
+          sessionId: queued.sessionId,
+          threadId: queued.sessionId,
+          runId: "run-q1",
+          result,
+          authoritativeView,
+        });
+      assert.equal(await sync(), false);
+      assert.equal(await sync({
+        thread: {
+          threadId: queued.sessionId,
+          sessionId: queued.sessionId,
+          title: "RUNNING only",
+          status: "RUNNING",
+          createdAt: queued.createdAt,
+          updatedAt: queued.updatedAt,
+        },
+        childThreads: [],
+        childBlockerChain: [],
+        activeRun: { runId: "run-q1", status: "RUNNING" },
+      }), false);
+      const exactView = {
+        thread: {
+          threadId: queued.sessionId,
+          sessionId: queued.sessionId,
+          title: "Exact delegated terminal",
+          status,
+          lastRunStatus: status,
+          createdAt: queued.createdAt,
+          updatedAt: queued.updatedAt,
+        },
+        childThreads: [],
+        childBlockerChain: [],
+        conversationTurns: [{
+          turnId: "turn-q1",
+          threadId: queued.sessionId,
+          sessionId: queued.sessionId,
+          sequence: 1,
+          status,
+          rootRunId: "run-q1",
+          sourceMessageId: "message-q1",
+          terminalRunId: "run-q1",
+          terminalStatus: status,
+          startedAt: queued.createdAt,
+          completedAt: queued.updatedAt,
+          updatedAt: queued.updatedAt,
+        }],
+      };
+      sessionStore.save = async () => { throw new Error("delegated terminal save failed"); };
+      assert.equal(await sync(exactView), false);
+      assert.equal(
+        uiStore.getState().sessions.find((session) => session.sessionId === queued.sessionId)?.acceptedRunId,
+        "run-r0",
+      );
+      sessionStore.save = originalSave;
+      assert.equal(await sync(exactView), true);
+      const accepted = uiStore.getState().sessions.find(
+        (session) => session.sessionId === queued.sessionId,
+      );
+      assert.equal(accepted?.acceptedRunId, "run-q1");
+      assert.equal(accepted?.delegation?.status, status === "COMPLETED" ? "COMPLETED" : "FAILED");
+    });
+  }
+});
+
+test("concurrent delegated queued start and terminal serialize from the committed child", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = { sendCommand: async () => await new Promise(() => {}) };
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch", "kestrel", "serialize child lifecycle",
+  ]);
+  const uiStore = appState.uiStore as UiStore;
+  const child = uiStore.getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.ok(child?.delegation !== undefined);
+  const queued: TuiSessionMeta = {
+    ...child,
+    started: true,
+    acceptedRunId: "run-r0",
+    acceptedRunMessageId: "message-r0",
+    acceptedRunThreadId: child.sessionId,
+    pendingRunId: undefined,
+    queuedRunReservations: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId: child.sessionId,
+      predecessorRunId: "run-r0",
+    }],
+  };
+  const sessionStore = appState.sessionStore as SessionStore;
+  const originalSave = sessionStore.save.bind(sessionStore);
+  appState.sessionsFile = sessionStore.upsert(appState.sessionsFile as never, queued);
+  uiStore.patch({ sessions: (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions });
+  await originalSave(appState.sessionsFile as never);
+  let releaseFirstSave: (() => void) | undefined;
+  let firstSaveStartedResolve: (() => void) | undefined;
+  const firstSaveStarted = new Promise<void>((resolve) => { firstSaveStartedResolve = resolve; });
+  const firstSaveRelease = new Promise<void>((resolve) => { releaseFirstSave = resolve; });
+  let saveCount = 0;
+  sessionStore.save = async (file) => {
+    saveCount += 1;
+    if (saveCount === 1) {
+      firstSaveStartedResolve?.();
+      await firstSaveRelease;
+    }
+    await originalSave(file);
+  };
+  const start = (appState.syncBackgroundSessionProgress as (input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId: string;
+  }) => Promise<void>)({
+    sessionId: queued.sessionId,
+    threadId: queued.sessionId,
+    runId: "run-q1",
+    messageId: "message-q1",
+  });
+  await firstSaveStarted;
+  const terminal = (appState.syncForegroundQueuedTerminal as (
+    input: Record<string, unknown>,
+  ) => Promise<boolean>)({
+    sessionId: queued.sessionId,
+    threadId: queued.sessionId,
+    runId: "run-q1",
+    result: {
+      assistantText: "serialized terminal",
+      output: {
+        status: "COMPLETED",
+        sessionId: queued.sessionId,
+        runId: "run-q1",
+        quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+        errors: [],
+        telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+      },
+    },
+    authoritativeView: {
+      thread: {
+        threadId: queued.sessionId,
+        sessionId: queued.sessionId,
+        title: "serialized terminal",
+        status: "COMPLETED",
+        lastRunStatus: "COMPLETED",
+        createdAt: queued.createdAt,
+        updatedAt: queued.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      conversationTurns: [{
+        turnId: "turn-q1",
+        threadId: queued.sessionId,
+        sessionId: queued.sessionId,
+        sequence: 1,
+        status: "COMPLETED",
+        rootRunId: "run-q1",
+        sourceMessageId: "message-q1",
+        terminalRunId: "run-q1",
+        terminalStatus: "COMPLETED",
+        startedAt: queued.createdAt,
+        completedAt: queued.updatedAt,
+        updatedAt: queued.updatedAt,
+      }],
+    },
+  });
+  releaseFirstSave?.();
+  await start;
+  assert.equal(await terminal, true);
+  const accepted = uiStore.getState().sessions.find(
+    (session) => session.sessionId === queued.sessionId,
+  );
+  assert.equal(accepted?.acceptedRunId, "run-q1");
+  assert.equal(accepted?.lastRunStatus, "COMPLETED");
+  assert.equal(accepted?.delegation?.status, "COMPLETED");
+  assert.equal(saveCount, 2);
+});
+
+test("same-child task and history updates merge after queued commit settlement", async (t) => {
+  for (const failureMode of ["success", "before-write", "after-write"] as const) {
+    await t.test(failureMode, async () => {
+      const { app, home } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      appState.client = { sendCommand: async () => await new Promise(() => {}) };
+      await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+        "launch", "kestrel", "merge task update",
+      ]);
+      const uiStore = appState.uiStore as UiStore;
+      const child = uiStore.getState().sessions.find(
+        (session) => session.delegation?.parentSessionId === "session-1",
+      );
+      assert.ok(child?.delegation !== undefined);
+      const queued: TuiSessionMeta = {
+        ...child,
+        started: true,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: child.sessionId,
+        pendingRunId: undefined,
+        queuedRunReservations: [{
+          runId: "run-q1",
+          messageId: "message-q1",
+          threadId: child.sessionId,
+          predecessorRunId: "run-r0",
+        }],
+      };
+      const sessionStore = appState.sessionStore as SessionStore;
+      const originalSave = sessionStore.save.bind(sessionStore);
+      appState.sessionsFile = sessionStore.upsert(appState.sessionsFile as never, queued);
+      uiStore.patch({ sessions: (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions });
+      await originalSave(appState.sessionsFile as never);
+      let releaseSave: (() => void) | undefined;
+      let saveStartedResolve: (() => void) | undefined;
+      const saveStarted = new Promise<void>((resolve) => { saveStartedResolve = resolve; });
+      const saveRelease = new Promise<void>((resolve) => { releaseSave = resolve; });
+      let saveCount = 0;
+      let queuedStartUpdatedAt: string | undefined;
+      sessionStore.save = async (file) => {
+        saveCount += 1;
+        if (saveCount === 1) {
+          queuedStartUpdatedAt = file.sessions.find(
+            (session) => session.sessionId === queued.sessionId,
+          )?.delegation?.updatedAt;
+          saveStartedResolve?.();
+          await saveRelease;
+          if (failureMode !== "before-write") await originalSave(file);
+          if (failureMode !== "success") throw new Error(`same-child ${failureMode}`);
+          return;
+        }
+        await originalSave(file);
+      };
+      const start = (appState.syncBackgroundSessionProgress as (input: {
+        sessionId: string;
+        threadId: string;
+        runId: string;
+        messageId: string;
+      }) => Promise<void>)({
+        sessionId: queued.sessionId,
+        threadId: queued.sessionId,
+        runId: "run-q1",
+        messageId: "message-q1",
+      });
+      await saveStarted;
+      assert.ok(queuedStartUpdatedAt !== undefined);
+      const taskUpdate = (appState.updateTaskSessionFromMeta as (
+        task: NonNullable<TuiSessionMeta["delegation"]>,
+      ) => Promise<void>)({
+        ...child.delegation,
+        status: "WAITING",
+        updatedAt: new Date(Date.parse(queuedStartUpdatedAt) + 1).toISOString(),
+      });
+      const historyUpdate = (appState.appendSessionHistoryLine as (
+        session: TuiSessionMeta,
+        role: "assistant",
+        text: string,
+      ) => Promise<void>).call(
+        app,
+        child,
+        "assistant",
+        `serialized history ${failureMode}`,
+      );
+      releaseSave?.();
+      await start;
+      await taskUpdate;
+      await historyUpdate;
+      const expectedRunId = failureMode === "success" ? "run-q1" : "run-r0";
+      const current = uiStore.getState().sessions.find(
+        (session) => session.sessionId === queued.sessionId,
+      );
+      assert.equal(current?.acceptedRunId, expectedRunId);
+      assert.equal(current?.delegation?.status, "WAITING");
+      assert.equal(current?.lastMessagePreview, `serialized history ${failureMode}`);
+      assert.equal(current?.queuedRunReservations?.[0]?.runId, failureMode === "success" ? undefined : "run-q1");
+      const persisted = new SessionStore(home).findByName(
+        await new SessionStore(home).load(),
+        queued.name,
+      );
+      assert.equal(persisted?.acceptedRunId, expectedRunId);
+      assert.equal(persisted?.delegation?.status, "WAITING");
+      assert.equal(persisted?.lastMessagePreview, `serialized history ${failureMode}`);
+      assert.equal(saveCount, 3);
+    });
+  }
+});
+
+test("queued background start applies after earlier task and history mutations settle", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-reverse-task-history-start",
+    started: true,
+    acceptedRunId: "run-r0",
+    acceptedRunMessageId: "message-r0",
+    acceptedRunThreadId: "thread-main:child-reverse-task-history-start",
+    queuedRunReservations: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId: "thread-main:child-reverse-task-history-start",
+      predecessorRunId: "run-r0",
+    }],
+  });
+  const sessionStore = appState.sessionStore as SessionStore;
+  const originalSave = sessionStore.save.bind(sessionStore);
+  await originalSave(appState.sessionsFile as never);
+  let releaseSave: (() => void) | undefined;
+  let firstSaveStartedResolve: (() => void) | undefined;
+  const firstSaveStarted = new Promise<void>((resolve) => { firstSaveStartedResolve = resolve; });
+  const saveRelease = new Promise<void>((resolve) => { releaseSave = resolve; });
+  let saveCount = 0;
+  sessionStore.save = async (file) => {
+    saveCount += 1;
+    if (saveCount === 1) {
+      firstSaveStartedResolve?.();
+      await saveRelease;
+    }
+    await originalSave(file);
+  };
+
+  const taskUpdate = (appState.updateTaskSessionFromMeta as (
+    task: NonNullable<TuiSessionMeta["delegation"]>,
+  ) => Promise<void>)({
+    ...child.delegation!,
+    status: "WAITING",
+    updatedAt: "2026-08-29T00:00:02.000Z",
+  });
+  await firstSaveStarted;
+  const historyUpdate = (appState.appendSessionHistoryLine as (
+    session: TuiSessionMeta,
+    role: "assistant",
+    text: string,
+  ) => Promise<void>)(child, "assistant", "history before exact start");
+  const start = (appState.syncBackgroundSessionProgress as (input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId: string;
+  }) => Promise<void>)({
+    sessionId: child.sessionId,
+    threadId: "thread-main:child-reverse-task-history-start",
+    runId: "run-q1",
+    messageId: "message-q1",
+  });
+  releaseSave?.();
+  await taskUpdate;
+  await historyUpdate;
+  await start;
+
+  const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.acceptedRunId, "run-q1");
+  assert.equal(current?.acceptedRunMessageId, "message-q1");
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.lastMessagePreview, "history before exact start");
+  assert.equal(current?.queuedRunReservations, undefined);
+});
+
+test("delegated task updates cannot regress or conflict with an exact terminal child across restart", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-stale-task-after-terminal",
+    started: true,
+    acceptedRunId: "run-terminal",
+    acceptedRunMessageId: "message-terminal",
+    acceptedRunThreadId: "thread-main:child-stale-task-after-terminal",
+    lastRunStatus: "COMPLETED",
+    delegation: {
+      taskId: "task-child-stale-task-after-terminal",
+      parentSessionId: "session-1",
+      parentRunId: "run-parent",
+      childSessionId: "child-stale-task-after-terminal",
+      childSessionName: "child-stale-task-after-terminal",
+      title: "terminal child",
+      status: "COMPLETED",
+      profileId: "kestrel",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:03.000Z",
+    },
+    updatedAt: "2026-08-29T00:00:03.000Z",
+  });
+  const sessionStore = appState.sessionStore as SessionStore;
+  await sessionStore.save(appState.sessionsFile as never);
+
+  for (const update of [{
+    status: "RUNNING" as const,
+    updatedAt: "2026-08-29T00:00:02.000Z",
+  }, {
+    status: "RECOVERING" as const,
+    updatedAt: "2026-08-29T00:00:02.000Z",
+  }, {
+    status: "WAITING" as const,
+    updatedAt: "2026-08-29T00:00:04.000Z",
+  }, {
+    status: "FAILED" as const,
+    updatedAt: "2026-08-29T00:00:03.000Z",
+  }]) {
+    await (appState.updateTaskSessionFromMeta as (
+      task: NonNullable<TuiSessionMeta["delegation"]>,
+    ) => Promise<void>)({
+      ...child.delegation!,
+      ...update,
+    });
+  }
+
+  const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "COMPLETED");
+  assert.equal(current?.lastRunStatus, "COMPLETED");
+  assert.equal(current?.acceptedRunId, "run-terminal");
+  const restarted = new SessionStore(home).findByName(
+    await new SessionStore(home).load(),
+    child.name,
+  );
+  assert.equal(restarted?.delegation?.status, "COMPLETED");
+  assert.equal(restarted?.lastRunStatus, "COMPLETED");
+  assert.equal(restarted?.acceptedRunId, "run-terminal");
+});
+
+test("a newer parent run can reopen only the same delegated task", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-task-rerun-identity",
+    started: true,
+    lastRunStatus: "COMPLETED",
+    delegation: {
+      taskId: "task-rerun-identity",
+      parentSessionId: "session-1",
+      parentRunId: "run-parent-a",
+      childSessionId: "child-task-rerun-identity",
+      childSessionName: "child-task-rerun-identity",
+      title: "task rerun identity",
+      status: "COMPLETED",
+      profileId: "kestrel",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:03.000Z",
+    },
+    updatedAt: "2026-08-29T00:00:03.000Z",
+  });
+  const updateTaskFromMeta = appState.updateTaskSessionFromMeta as (
+    task: NonNullable<TuiSessionMeta["delegation"]>,
+  ) => Promise<void>;
+  const updateTask = (task: NonNullable<TuiSessionMeta["delegation"]>) =>
+    updateTaskFromMeta.call(app, task);
+
+  await updateTask({
+    ...child.delegation!,
+    taskId: "task-unrelated",
+    parentRunId: "run-parent-b",
+    status: "RUNNING",
+    updatedAt: "2026-08-29T00:00:04.000Z",
+  });
+  let current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.taskId, "task-rerun-identity");
+  assert.equal(current?.delegation?.status, "COMPLETED");
+  assert.equal(current?.lastRunStatus, "COMPLETED");
+
+  await updateTask({
+    ...child.delegation!,
+    parentRunId: "run-parent-b",
+    status: "RUNNING",
+    updatedAt: "2026-08-29T00:00:04.000Z",
+  });
+  current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.taskId, "task-rerun-identity");
+  assert.equal(current?.delegation?.parentRunId, "run-parent-b");
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.lastRunStatus, undefined);
+});
+
+test("background result and failure settlement cannot overwrite a newer terminal run", async (t) => {
+  for (const outcome of ["COMPLETED", "WAITING", "FAILED"] as const) {
+    await t.test(outcome, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const sessionId = `child-stale-${outcome.toLowerCase()}`;
+      const child = installBackgroundSession(appState, {
+        sessionId,
+        started: true,
+        acceptedRunId: "run-a",
+        acceptedRunMessageId: "message-a",
+        acceptedRunThreadId: sessionId,
+        delegation: {
+          taskId: `task-${sessionId}`,
+          parentSessionId: "session-1",
+          childSessionId: sessionId,
+          childSessionName: sessionId,
+          title: "stale settlement",
+          status: "RUNNING",
+          profileId: "kestrel",
+          provider: "openrouter",
+          model: "test-model",
+          createdAt: "2026-08-29T00:00:00.000Z",
+          updatedAt: "2026-08-29T00:00:01.000Z",
+        },
+      });
+      let releaseNewerMutation: (() => void) | undefined;
+      let newerMutationEnteredResolve: (() => void) | undefined;
+      const newerMutationEntered = new Promise<void>((resolve) => {
+        newerMutationEnteredResolve = resolve;
+      });
+      const newerMutationRelease = new Promise<void>((resolve) => {
+        releaseNewerMutation = resolve;
+      });
+      const commitMutation = appState.commitQueueSessionMutation as (
+        id: string,
+        mutation: (current: TuiSessionMeta) => Promise<TuiSessionMeta>,
+      ) => Promise<TuiSessionMeta | undefined>;
+      const newerCommit = commitMutation.call(app, sessionId, async (current) => {
+        newerMutationEnteredResolve?.();
+        await newerMutationRelease;
+        return {
+          ...current,
+          acceptedRunId: "run-b",
+          acceptedRunMessageId: "message-b",
+          acceptedRunThreadId: sessionId,
+          lastRunStatus: "COMPLETED",
+          terminalQueuedRuns: [{
+            runId: "run-a",
+            messageId: "message-a",
+            threadId: sessionId,
+            status: outcome === "FAILED" ? "FAILED" as const : "COMPLETED" as const,
+          }],
+          delegation: {
+            ...current.delegation!,
+            status: "COMPLETED",
+            updatedAt: "2026-08-29T00:00:03.000Z",
+          },
+          updatedAt: "2026-08-29T00:00:03.000Z",
+        };
+      });
+      await newerMutationEntered;
+      const output = {
+        status: outcome === "WAITING" ? "WAITING" as const : "COMPLETED" as const,
+        sessionId,
+        runId: "run-a",
+        quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+        errors: [],
+        telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+      };
+      const staleSettlement = outcome === "FAILED"
+        ? (appState.syncBackgroundSessionFailure as (
+            expectedSessionId: string,
+            expectedRunId: string,
+            outputSessionId: string,
+            message: string,
+          ) => Promise<void>)(sessionId, "run-a", sessionId, "stale failure")
+        : (appState.syncBackgroundSessionResult as (
+            expectedSessionId: string,
+            expectedRunId: string,
+            allowUnstartedAcceptance: boolean,
+            result: typeof output,
+            assistantText: string | null,
+            finalizedPayload: unknown,
+          ) => Promise<void>)(sessionId, "run-a", false, output, "stale result", undefined);
+      releaseNewerMutation?.();
+      await newerCommit;
+      await staleSettlement;
+
+      const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+      assert.equal(current?.acceptedRunId, "run-b");
+      assert.equal(current?.acceptedRunMessageId, "message-b");
+      assert.equal(current?.lastRunStatus, "COMPLETED");
+      assert.equal(current?.delegation?.status, "COMPLETED");
+    });
+  }
+});
+
+test("failed pending background settlement installs only the pending run identity", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const sessionId = "child-failed-pending-identity";
+  const child = installBackgroundSession(appState, {
+    sessionId,
+    started: true,
+    acceptedRunId: "run-b",
+    acceptedRunMessageId: "message-b",
+    acceptedRunThreadId: "thread-b",
+    acceptedRunPredecessorId: "run-before-b",
+    pendingRunId: "run-a",
+    pendingRunMessageId: "message-a",
+    pendingRunThreadId: "thread-a",
+    delegation: {
+      taskId: "task-failed-pending-identity",
+      parentSessionId: "session-1",
+      childSessionId: sessionId,
+      childSessionName: sessionId,
+      title: "failed pending identity",
+      status: "RUNNING",
+      profileId: "kestrel",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:01.000Z",
+    },
+  });
+
+  await (appState.syncBackgroundSessionFailure as (
+    expectedSessionId: string,
+    expectedRunId: string,
+    outputSessionId: string,
+    message: string,
+  ) => Promise<void>).call(app, sessionId, "run-a", sessionId, "pending run failed");
+
+  const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.acceptedRunId, "run-a");
+  assert.equal(current?.acceptedRunMessageId, "message-a");
+  assert.equal(current?.acceptedRunThreadId, "thread-a");
+  assert.equal(current?.acceptedRunPredecessorId, undefined);
+  assert.equal(current?.pendingRunId, undefined);
+  assert.equal(current?.pendingRunMessageId, undefined);
+  assert.equal(current?.pendingRunThreadId, undefined);
+  assert.equal(current?.delegation?.status, "FAILED");
+  assert.equal(current?.lastRunStatus, "FAILED");
+});
+
+test("terminal queued evidence rejects a delayed waiting result without reopening the session", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const terminal: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-terminal",
+    acceptedRunMessageId: "message-terminal",
+    acceptedRunThreadId: threadId,
+    acceptedRunPredecessorId: null,
+    lastRunStatus: "COMPLETED",
+    terminalQueuedRuns: [{
+      runId: "run-terminal",
+      messageId: "message-terminal",
+      threadId,
+      status: "COMPLETED",
+    }],
+  };
+  const sessionStore = appState.sessionStore as SessionStore;
+  appState.sessionsFile = sessionStore.upsert(appState.sessionsFile as never, terminal);
+  uiStore.patch({
+    activeSession: terminal,
+    sessions: (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions,
+  });
+
+  assert.equal(await (appState.syncForegroundQueuedTerminal as (
+    input: Record<string, unknown>,
+  ) => Promise<boolean>)({
+    sessionId: terminal.sessionId,
+    threadId,
+    runId: "run-terminal",
+    messageId: "message-terminal",
+    result: {
+      assistantText: null,
+      output: {
+        status: "WAITING",
+        sessionId: terminal.sessionId,
+        runId: "run-terminal",
+        quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+        errors: [],
+        telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+      },
+    },
+  }), false);
+  const current = uiStore.getState().activeSession;
+  assert.equal(current.lastRunStatus, "COMPLETED");
+  assert.equal(current.pendingWaitFor, undefined);
+  assert.deepEqual(current.terminalQueuedRuns, terminal.terminalQueuedRuns);
+});
+
+test("background progress cannot replace terminal queued evidence with waiting state", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const sessionId = "child-terminal-progress";
+  const threadId = `thread-main:${sessionId}`;
+  const child = installBackgroundSession(appState, {
+    sessionId,
+    started: true,
+    acceptedRunId: "run-terminal",
+    acceptedRunMessageId: "message-terminal",
+    acceptedRunThreadId: threadId,
+    acceptedRunPredecessorId: null,
+    lastRunStatus: "COMPLETED",
+    terminalQueuedRuns: [{
+      runId: "run-terminal",
+      messageId: "message-terminal",
+      threadId,
+      status: "COMPLETED",
+    }],
+    delegation: {
+      taskId: "task-terminal-progress",
+      parentSessionId: "session-1",
+      childSessionId: sessionId,
+      childSessionName: sessionId,
+      title: "terminal progress",
+      status: "RUNNING",
+      profileId: "kestrel",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:01.000Z",
+    },
+  });
+
+  await (appState.syncBackgroundSessionProgress as (input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId: string;
+    status: "WAITING";
+  }) => Promise<void>)({
+    sessionId,
+    threadId,
+    runId: "run-terminal",
+    messageId: "message-terminal",
+    status: "WAITING",
+  });
+
+  const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.acceptedRunId, "run-terminal");
+  assert.equal(current?.lastRunStatus, "COMPLETED");
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.pendingWaitFor, undefined);
+});
+
+test("overlapping terminal recovery pages cannot move the durable cursor backward", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const recovering: TuiSessionMeta = { ...base, terminalMessageCursor: "cursor-0" };
+  const sessionStore = appState.sessionStore as SessionStore;
+  appState.sessionsFile = sessionStore.upsert(appState.sessionsFile as never, recovering);
+  uiStore.patch({
+    activeSession: recovering,
+    sessions: (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions,
+  });
+  await sessionStore.save(appState.sessionsFile as never);
+  const pendingResponses: Array<(value: unknown) => void> = [];
+  appState.client = {
+    sendCommand: async (_type: string, payload: { afterCursor?: string | undefined }) => {
+      assert.equal(payload.afterCursor, "cursor-0");
+      return await new Promise((resolve) => pendingResponses.push(resolve));
+    },
+  };
+  const recover = appState.recoverTerminalMessages as (session: TuiSessionMeta) => Promise<void>;
+  const older = recover.call(app, recovering);
+  const newer = recover.call(app, recovering);
+  await waitFor(() => pendingResponses.length === 2);
+  pendingResponses[1]?.({
+    type: "conversation.messages",
+    payload: {
+      threadId: recovering.sessionId,
+      messages: [],
+      terminalOutcomes: [],
+      nextCursor: "cursor-new",
+      hasMore: false,
+    },
+  });
+  await newer;
+  pendingResponses[0]?.({
+    type: "conversation.messages",
+    payload: {
+      threadId: recovering.sessionId,
+      messages: [],
+      terminalOutcomes: [{
+        messageId: "terminal:run-stale-recovery",
+        turnId: "turn-stale-recovery",
+        threadId: terminalMessageRecoveryThreadId(recovering.sessionId),
+        sessionId: recovering.sessionId,
+        runId: "run-stale-recovery",
+        completedAt: "2026-08-29T00:00:01.000Z",
+        terminalStatus: "COMPLETED",
+        outcomeStatus: "completed",
+        handoffState: "delivered",
+        result: {
+          assistantText: "Stale recovery output.",
+          output: {
+            status: "COMPLETED",
+            sessionId: recovering.sessionId,
+            runId: "run-stale-recovery",
+            quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+            errors: [],
+            telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+          },
+        },
+      }],
+      nextCursor: "cursor-old",
+      hasMore: false,
+    },
+  });
+  await older;
+
+  assert.equal(uiStore.getState().activeSession.terminalMessageCursor, "cursor-new");
+  const restarted = new SessionStore(home).findByName(
+    await new SessionStore(home).load(),
+    recovering.name,
+  );
+  assert.equal(restarted?.terminalMessageCursor, "cursor-new");
+  assert.equal(uiStore.getState().transcript.some(
+    (line) => line.eventId === "terminal:run-stale-recovery",
+  ), false);
+});
+
+test("active history and terminal cursor serialize behind queued acceptance", async (t) => {
+  for (const failureMode of ["success", "before-write", "after-write"] as const) {
+    await t.test(failureMode, async () => {
+      const { app, home } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const initial = uiStore.getState().activeSession;
+      const threadId = `thread-main:${initial.sessionId}`;
+      const queued: TuiSessionMeta = {
+        ...initial,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: threadId,
+        queuedRunReservations: [{
+          runId: "run-q1",
+          messageId: "message-q1",
+          threadId,
+          predecessorRunId: "run-r0",
+        }],
+      };
+      const sessionStore = appState.sessionStore as SessionStore;
+      const originalSave = sessionStore.save.bind(sessionStore);
+      appState.sessionsFile = sessionStore.upsert(appState.sessionsFile as never, queued);
+      uiStore.patch({
+        activeSession: queued,
+        sessions: (appState.sessionsFile as { sessions: TuiSessionMeta[] }).sessions,
+      });
+      await originalSave(appState.sessionsFile as never);
+      appState.client = {
+        sendCommand: async (type: string) => {
+          assert.equal(type, "conversation.messages.list");
+          return {
+            type: "conversation.messages",
+            payload: {
+              threadId,
+              messages: [],
+              terminalOutcomes: [],
+              nextCursor: "cursor-q1",
+              hasMore: false,
+            },
+          };
+        },
+      };
+      let releaseSave: (() => void) | undefined;
+      let saveStartedResolve: (() => void) | undefined;
+      const saveStarted = new Promise<void>((resolve) => { saveStartedResolve = resolve; });
+      const saveRelease = new Promise<void>((resolve) => { releaseSave = resolve; });
+      let saveCount = 0;
+      sessionStore.save = async (file) => {
+        saveCount += 1;
+        if (saveCount === 1) {
+          saveStartedResolve?.();
+          await saveRelease;
+          if (failureMode !== "before-write") await originalSave(file);
+          if (failureMode !== "success") throw new Error(`active metadata ${failureMode}`);
+          return;
+        }
+        await originalSave(file);
+      };
+
+      const acceptance = (appState.syncForegroundSessionProgress as (input: {
+        sessionId: string;
+        threadId: string;
+        runId: string;
+        messageId: string;
+      }) => Promise<boolean>)({
+        sessionId: queued.sessionId,
+        threadId,
+        runId: "run-q1",
+        messageId: "message-q1",
+      });
+      await saveStarted;
+      const history = (appState.appendHistoryLine as (
+        role: "assistant",
+        text: string,
+        data?: undefined,
+        output?: undefined,
+        eventId?: string,
+      ) => Promise<void>)("assistant", `active metadata ${failureMode}`, undefined, undefined, `active-metadata:${failureMode}`);
+      const cursor = (appState.recoverTerminalMessages as (session: TuiSessionMeta) => Promise<void>)(queued);
+      releaseSave?.();
+      await acceptance;
+      await history;
+      await cursor;
+
+      const expectedRunId = failureMode === "success" ? "run-q1" : "run-r0";
+      const current = uiStore.getState().activeSession;
+      assert.equal(saveCount, 3);
+      assert.equal(current.acceptedRunId, expectedRunId);
+      assert.equal(current.lastMessagePreview, `active metadata ${failureMode}`);
+      assert.equal(current.terminalMessageCursor, "cursor-q1");
+      assert.equal(uiStore.getState().transcript.filter(
+        (line) => line.eventId === `active-metadata:${failureMode}`,
+      ).length, 1);
+      const restarted = new SessionStore(home).findByName(
+        await new SessionStore(home).load(),
+        queued.name,
+      );
+      assert.equal(restarted?.acceptedRunId, expectedRunId);
+      assert.equal(restarted?.lastMessagePreview, `active metadata ${failureMode}`);
+      assert.equal(restarted?.terminalMessageCursor, "cursor-q1");
+    });
+  }
+});
+
+test("background profile resolution failure leaves a truthful failed unstarted child", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.localCoreStatus = {
+    client: {
+      resolveExecutionProfile: async () => {
+        throw new Error("profile resolution unavailable");
+      },
+    },
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.delegation?.status, "FAILED");
+  assert.equal(child?.delegation?.errorMessage, "profile resolution unavailable");
+  assert.equal(child?.started, false);
+  assert.equal(child?.environmentPresetId, "cli_dev_local");
+});
+
+test("background Local Core preparation failure leaves a truthful failed unstarted child", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.prepareLocalCoreClient = async () => {
+    throw new Error("local core preparation unavailable");
+  };
+
+  await assert.doesNotReject(
+    (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+      "launch",
+      "kestrel",
+      "inspect dependencies",
+    ]),
+  );
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.delegation?.status, "FAILED");
+  assert.equal(child?.delegation?.errorMessage, "local core preparation unavailable");
+  assert.equal(child?.started, false);
+});
+
+test("background authoritative environment rejection leaves a truthful failed unstarted child", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "run.start") {
+        throw Object.assign(new Error("run environment rejected"), {
+          code: "SESSION_ENVIRONMENT_IDENTITY_CONFLICT",
+          details: { persisted: "cli_dev_local", runtime: "cli_safe_local" },
+        });
+      }
+      assert.equal(type, "session.describe");
+      return {
+        type: "session.described",
+        payload: {
+          sessionId: String(payload.sessionId),
+          version: 0,
+        },
+      };
+    },
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+  await waitFor(() => (appState.uiStore as UiStore).getState().sessions.some(
+    (session) => session.delegation?.status === "FAILED",
+  ));
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.delegation?.status, "FAILED");
+  assert.equal(child?.delegation?.errorMessage, "run environment rejected");
+  assert.equal(child?.started, false);
+});
+
+test("background response loss stays recoverable while durable describe is unavailable", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = {
+    sendCommand: async (type: string) => {
+      if (type === "run.start") throw new Error("run response lost");
+      throw new Error("describe temporarily unavailable");
+    },
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.delegation?.status, "PENDING");
+  assert.equal(child?.delegation?.errorMessage, undefined);
+  assert.equal(child?.lastRunStatus, undefined);
+  assert.equal(child?.started, false);
+});
+
+test("background pre-run.started failure response stays failed and unstarted", async () => {
+  const { app, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      assert.equal(type, "run.start");
+      const turn = payload.turn as Record<string, unknown>;
+      const sessionId = String(turn.sessionId);
+      const runId = String(turn.runId);
+      return {
+        type: "run.failed",
+        commandId: "command-preaccept-background",
+        payload: {
+          result: {
+            assistantText: null,
+            output: {
+              status: "FAILED",
+              sessionId,
+              runId,
+              quality: {
+                citationCoverage: 0,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              errors: [{ code: "RUN_START_REJECTED", message: "Rejected before reservation." }],
+              telemetry: { stepsExecuted: 0, toolCalls: 0, modelCalls: 0, durationMs: 0 },
+            },
+          },
+          error: { code: "RUN_START_REJECTED", message: "Rejected before reservation." },
+        },
+      };
+    },
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+  await waitFor(() => (appState.uiStore as UiStore).getState().sessions.some(
+    (session) => session.delegation?.status === "FAILED",
+  ));
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.started, false);
+  assert.equal(child?.lastRunStatus, "FAILED");
+  assert.doesNotMatch(existsSync(historyPath) ? await readFile(historyPath, "utf8") : "", /Background task started/u);
+});
+
+test("late exact background acceptance clears stale failure evidence idempotently", async () => {
+  const { app, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  appState.client = { sendCommand: async () => await new Promise(() => {}) };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+  let child = uiStore.getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  )!;
+  const failed = {
+    ...child,
+    started: false,
+    lastRunStatus: "FAILED" as const,
+    pendingRunId: "run-background",
+    pendingRunThreadId: `thread-main:${child.sessionId}`,
+    delegation: {
+      ...child.delegation!,
+      status: "RECOVERING" as const,
+      errorCode: "PROVISIONAL_TRANSPORT_FAILURE",
+      errorMessage: "response was lost",
+    },
+  };
+  const sessionsFile = appState.sessionsFile as { version: 5; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) => session.sessionId === failed.sessionId ? failed : session),
+  };
+  uiStore.patch({
+    sessions: uiStore.getState().sessions.map((session) => session.sessionId === failed.sessionId ? failed : session),
+  });
+  const startedEvent = {
+    id: "run-started-late-background",
+    type: "run.started",
+    ts: "2026-08-28T00:00:00.000Z",
+    commandId: "command-background",
+    sessionId: failed.sessionId,
+    threadId: `thread-main:${failed.sessionId}`,
+    runId: "run-background",
+    payload: {
+      sessionId: failed.sessionId,
+      runId: "run-background",
+      eventType: "user.message",
+    },
+  };
+
+  (appState.onRunnerEvent as (event: unknown) => void)(startedEvent);
+  (appState.onRunnerEvent as (event: unknown) => void)(startedEvent);
+  await waitFor(() => uiStore.getState().sessions.find(
+    (session) => session.sessionId === failed.sessionId,
+  )?.delegation?.status === "RUNNING");
+  child = uiStore.getState().sessions.find((session) => session.sessionId === failed.sessionId)!;
+
+  assert.equal(child.started, true);
+  assert.equal(child.lastRunStatus, undefined);
+  assert.equal(child.delegation?.errorCode, undefined);
+  assert.equal(child.delegation?.errorMessage, undefined);
+  await waitFor(() => existsSync(historyPath));
+  const history = await readFile(historyPath, "utf8");
+  assert.equal(history.match(/Background task started/g)?.length, 1);
+});
+
+test("startup reconciles every persisted pending child from durable runtime evidence", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const now = "2026-08-28T00:00:00.000Z";
+  const parent = uiStore.getState().activeSession;
+  const pendingChildren = ["child-one", "child-two"].map((sessionId) => ({
+    ...parent,
+    name: sessionId,
+    sessionId,
+    started: false,
+    effectiveAssemblyId: undefined,
+    createdAt: now,
+    updatedAt: now,
+    delegation: {
+      taskId: `task-${sessionId}`,
+      parentSessionId: parent.sessionId,
+      childSessionId: sessionId,
+      childSessionName: sessionId,
+      title: sessionId,
+      status: "PENDING" as const,
+      profileId: parent.profileId,
+      provider: "openrouter" as const,
+      model: "test-model",
+      createdAt: now,
+      updatedAt: now,
+    },
+  }));
+  const sessionsFile = appState.sessionsFile as { version: 5; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = { ...sessionsFile, sessions: [parent, ...pendingChildren] };
+  uiStore.patch({ sessions: [parent, ...pendingChildren] });
+  const described: string[] = [];
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      assert.equal(type, "session.describe");
+      const sessionId = String(payload.sessionId);
+      described.push(sessionId);
+      return {
+        type: "session.described",
+        payload: {
+          sessionId,
+          version: 1,
+          threadId: `thread-main:${sessionId}`,
+          activeAssembly: {
+            mode: "explicit",
+            bundleId: `bundle:${sessionId}`,
+            environmentPresetId: "cli_dev_local",
+          },
+          operatorThreadView: {
+            thread: {
+              threadId: `thread-main:${sessionId}`,
+              sessionId,
+              title: sessionId,
+              status: "RUNNING",
+              createdAt: now,
+              updatedAt: now,
+            },
+            childThreads: [],
+            childBlockerChain: [],
+            activeRun: { runId: `run-${sessionId}`, status: "RUNNING" },
+          },
+        },
+      };
+    },
+  };
+
+  await (appState.reconcilePendingBackgroundSessions as () => Promise<void>)();
+
+  assert.deepEqual(described.sort(), ["child-one", "child-two"]);
+  for (const child of uiStore.getState().sessions.filter((session) => session.delegation !== undefined)) {
+    assert.equal(child.delegation?.status, "RUNNING");
+    assert.equal(child.started, true);
+    assert.equal(child.delegation?.errorMessage, undefined);
+  }
+});
+
+test("assembly-only background recovery uses an explicit recoverable lifecycle state", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const now = "2026-08-28T00:00:00.000Z";
+  const parent = uiStore.getState().activeSession;
+  const child: TuiSessionMeta = {
+    ...parent,
+    name: "child-assembly-only",
+    sessionId: "child-assembly-only",
+    started: false,
+    effectiveAssemblyId: undefined,
+    delegation: {
+      taskId: "task-child-assembly-only",
+      parentSessionId: parent.sessionId,
+      childSessionId: "child-assembly-only",
+      childSessionName: "child-assembly-only",
+      title: "assembly only",
+      status: "PENDING",
+      profileId: parent.profileId,
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: now,
+      updatedAt: now,
+    },
+  };
+  const sessionsFile = appState.sessionsFile as { version: 5; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = { ...sessionsFile, sessions: [parent, child] };
+  uiStore.patch({ sessions: [parent, child] });
+  const payload = {
+    sessionId: child.sessionId,
+    version: 1,
+    activeAssembly: {
+      mode: "explicit" as const,
+      bundleId: "bundle:child-assembly-only",
+      environmentPresetId: "cli_dev_local" as const,
+    },
+  };
+
+  await (appState.reconcileBackgroundSessionDescription as (
+    describedPayload: SessionDescribedEventPayload,
+    appendStartedHistory: boolean,
+  ) => Promise<void>)(payload, true);
+
+  const recovered = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(recovered?.started, true, JSON.stringify(recovered));
+  assert.equal(recovered?.delegation?.status, "RECOVERING");
+  assert.equal(recovered?.lastRunStatus, undefined);
+  assert.equal(recovered?.effectiveAssemblyId, "bundle:child-assembly-only");
+});
+
+test("background lifecycle ignores delayed starts after terminal and stale run A terminals during run B", async () => {
+  const { app, historyPath } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = installBackgroundSession(appState, {
+    sessionId: "child-monotonic",
+  });
+  const child = installBackgroundSession(appState, {
+    ...base,
+    started: true,
+    focusedThreadId: "child-monotonic",
+    acceptedRunId: "run-b",
+    acceptedRunMessageId: "message-b",
+    acceptedRunThreadId: "child-monotonic",
+    delegation: {
+      ...base.delegation!,
+      status: "RUNNING",
+    },
+  });
+  const completedOutput = {
+    status: "COMPLETED" as const,
+    sessionId: child.sessionId,
+    runId: "run-a",
+    quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+    errors: [],
+    telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+  };
+
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "progress-run-a",
+    type: "run.progress",
+    ts: "2026-08-28T00:00:00.500Z",
+    sessionId: child.sessionId,
+    threadId: child.sessionId,
+    runId: "run-a",
+    payload: {
+      update: {
+        sessionId: child.sessionId,
+        runId: "run-a",
+        kind: "step",
+        phase: "execute",
+        code: "STEP_RUNNING",
+        message: "stale progress",
+        seq: 1,
+      },
+    },
+  });
+  const runController = (appState.getRunController as () => {
+    getConversationActivity(sessionId: string): unknown[];
+  })();
+  assert.deepEqual(runController.getConversationActivity(child.sessionId), []);
+
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "terminal-run-a",
+    type: "run.completed",
+    ts: "2026-08-28T00:00:01.000Z",
+    sessionId: child.sessionId,
+    threadId: child.sessionId,
+    runId: "run-a",
+    payload: { result: { assistantText: "stale", output: completedOutput } },
+  });
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "late-start-run-a",
+    type: "run.started",
+    ts: "2026-08-28T00:00:02.000Z",
+    sessionId: child.sessionId,
+    threadId: child.sessionId,
+    runId: "run-a",
+    payload: { sessionId: child.sessionId, runId: "run-a", eventType: "user.message" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const current = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
+  assert.equal(current?.acceptedRunId, "run-b");
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.lastRunStatus, undefined);
+  assert.doesNotMatch(existsSync(historyPath) ? await readFile(historyPath, "utf8") : "", /stale/u);
+
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "terminal-run-b",
+    type: "run.completed",
+    ts: "2026-08-28T00:00:03.000Z",
+    sessionId: child.sessionId,
+    threadId: child.sessionId,
+    runId: "run-b",
+    payload: {
+      result: {
+        assistantText: "current completion",
+        output: { ...completedOutput, runId: "run-b" },
+      },
+    },
+  });
+  await waitFor(() => uiStore.getState().sessions.find(
+    (item) => item.sessionId === child.sessionId,
+  )?.delegation?.status === "COMPLETED");
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "late-start-after-terminal",
+    type: "run.started",
+    ts: "2026-08-28T00:00:04.000Z",
+    sessionId: child.sessionId,
+    threadId: child.sessionId,
+    runId: "run-b",
+    payload: { sessionId: child.sessionId, runId: "run-b", eventType: "user.message" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const terminal = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
+  assert.equal(terminal?.delegation?.status, "COMPLETED");
+  assert.equal(terminal?.lastRunStatus, "COMPLETED");
+  assert.equal(terminal?.acceptedRunId, "run-b");
+});
+
+test("an unsolicited terminal cannot claim a pending background child", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-pending-terminal",
+    pendingRunId: "run-expected",
+    pendingRunThreadId: "child-pending-terminal",
+  });
+  const output = {
+    status: "FAILED" as const,
+    sessionId: child.sessionId,
+    runId: "run-unsolicited",
+    quality: { citationCoverage: 0, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+    errors: [{ code: "STALE", message: "stale terminal" }],
+    telemetry: { stepsExecuted: 0, toolCalls: 0, modelCalls: 0, durationMs: 0 },
+  };
+
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "unsolicited-terminal",
+    type: "run.failed",
+    ts: "2026-08-28T00:00:02.000Z",
+    sessionId: child.sessionId,
+    threadId: child.sessionId,
+    runId: output.runId,
+    payload: { result: { assistantText: null, output }, error: output.errors[0] },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const current = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "PENDING");
+  assert.equal(current?.started, false);
+  assert.equal(current?.acceptedRunId, undefined);
+  assert.equal(current?.pendingRunId, "run-expected");
+  assert.equal(current?.pendingRunMessageId, undefined);
+});
+
+test("stale assembly-only describe cannot regress a newer accepted background run", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = installBackgroundSession(appState, {
+    sessionId: "child-stale-describe",
+  });
+  const child = installBackgroundSession(appState, {
+    ...base,
+    started: true,
+    effectiveAssemblyId: "bundle:new",
+    acceptedRunId: "run-new",
+    delegation: {
+      ...base.delegation!,
+      status: "RUNNING",
+    },
+  });
+
+  await (appState.reconcileBackgroundSessionDescription as (
+    payload: Record<string, unknown>,
+    appendStartedHistory: boolean,
+  ) => Promise<void>)({
+    sessionId: child.sessionId,
+    version: 1,
+    activeAssembly: {
+      mode: "explicit",
+      bundleId: "bundle:stale",
+      environmentPresetId: "cli_dev_local",
+    },
+  }, false);
+
+  const current = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.effectiveAssemblyId, "bundle:new");
+  assert.equal(current?.acceptedRunId, "run-new");
+});
+
+test("live background acceptance wins over a describe projection delayed by profile loading", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-interleaved-describe",
+    profileId: "profile-loaded-late",
+    pendingRunId: "run-live",
+    pendingRunMessageId: "message-live",
+    pendingRunThreadId: "child-interleaved-describe",
+  });
+  const persistedStatuses: Array<string | undefined> = [];
+  const observedSessionStore = appState.sessionStore as SessionStore;
+  const saveSessionsFile = observedSessionStore.save.bind(observedSessionStore);
+  observedSessionStore.save = async (file) => {
+    persistedStatuses.push(file.sessions.find(
+      (session) => session.sessionId === child.sessionId,
+    )?.delegation?.status);
+    await saveSessionsFile(file);
+  };
+  let releaseProfileLoad: ((profiles: unknown[]) => void) | undefined;
+  let profileLoadStartedResolve: (() => void) | undefined;
+  const profileLoadStarted = new Promise<void>((resolve) => {
+    profileLoadStartedResolve = resolve;
+  });
+  appState.profileStore = {
+    load: async () => await new Promise<unknown[]>((resolve) => {
+      releaseProfileLoad = resolve;
+      profileLoadStartedResolve?.();
+    }),
+  };
+
+  const describing = (appState.reconcileBackgroundSessionDescription as (
+    payload: Record<string, unknown>,
+    appendStartedHistory: boolean,
+  ) => Promise<void>)({
+    sessionId: child.sessionId,
+    version: 1,
+    activeAssembly: {
+      mode: "explicit",
+      bundleId: "bundle:stale-assembly-only",
+      environmentPresetId: "cli_dev_local",
+    },
+  }, false);
+  await profileLoadStarted;
+
+  await (appState.syncBackgroundSessionProgress as (input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    messageId?: string | undefined;
+  }) => Promise<void>)({
+    sessionId: child.sessionId,
+    threadId: child.sessionId,
+    runId: "run-live",
+    messageId: "message-live",
+  });
+  releaseProfileLoad?.([]);
+  await describing;
+
+  const current = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.acceptedRunId, "run-live");
+  assert.equal(current?.lastRunStatus, undefined);
+  assert.deepEqual(persistedStatuses, ["RUNNING", "RUNNING", "RUNNING"]);
+});
+
+test("delegated pending and queued starts require exact run, thread, and message identity", async (t) => {
+  for (const source of ["pending", "queued"] as const) {
+    await t.test(source, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const sessionId = `child-exact-start-${source}`;
+      const threadId = `thread-main:${sessionId}`;
+      const child = installBackgroundSession(appState, {
+        sessionId,
+        started: true,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: threadId,
+        ...(source === "pending"
+          ? {
+              pendingRunId: "run-q1",
+              pendingRunMessageId: "message-q1",
+              pendingRunThreadId: threadId,
+            }
+          : {
+              queuedRunReservations: [{
+                runId: "run-q1",
+                messageId: "message-q1",
+                threadId,
+                predecessorRunId: "run-r0",
+              }],
+            }),
+      });
+      const sync = (appState.syncBackgroundSessionProgress as (input: {
+        sessionId: string;
+        threadId: string;
+        runId: string;
+        messageId?: string | undefined;
+      }) => Promise<void>).bind(app);
+
+      for (const candidate of [
+        { runId: "run-q1" },
+        { runId: "run-q1", messageId: "message-wrong" },
+        { runId: "run-wrong", messageId: "message-q1" },
+      ]) {
+        await sync({ sessionId, threadId, ...candidate });
+        assert.equal(
+          uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId)?.acceptedRunId,
+          "run-r0",
+        );
+      }
+
+      (appState.onRunnerEvent as (event: unknown) => void)({
+        id: `run-started-exact-${source}`,
+        type: "run.started",
+        ts: "2026-08-29T00:00:02.000Z",
+        sessionId,
+        threadId,
+        runId: "run-q1",
+        payload: {
+          sessionId,
+          runId: "run-q1",
+          eventType: "user.message",
+          sourceMessageId: "message-q1",
+        },
+      });
+      await waitFor(() => uiStore.getState().sessions.find(
+        (session) => session.sessionId === child.sessionId,
+      )?.acceptedRunId === "run-q1");
+      const accepted = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+      assert.equal(accepted?.acceptedRunId, "run-q1");
+      assert.equal(accepted?.acceptedRunMessageId, "message-q1");
+      assert.equal(accepted?.acceptedRunThreadId, threadId);
+      assert.equal(accepted?.delegation?.status, "RUNNING");
+    });
+  }
+});
+
+test("same-run background progress cannot regress WAITING to RUNNING", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-waiting-monotonic",
+    started: true,
+    acceptedRunId: "run-waiting",
+    lastRunStatus: "WAITING",
+    delegation: {
+      taskId: "task-child-waiting-monotonic",
+      parentSessionId: "session-1",
+      childSessionId: "child-waiting-monotonic",
+      childSessionName: "child-waiting-monotonic",
+      title: "waiting child",
+      status: "WAITING",
+      profileId: "kestrel",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: "2026-08-28T00:00:00.000Z",
+      updatedAt: "2026-08-28T00:00:00.000Z",
+    },
+  });
+
+  await (appState.syncBackgroundSessionProgress as (input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+  }) => Promise<void>)({
+    sessionId: child.sessionId,
+    threadId: child.sessionId,
+    runId: "run-waiting",
+  });
+
+  const current = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "WAITING");
+  assert.equal(current?.lastRunStatus, "WAITING");
+});
+
+test("exact accepted reply advances a delegated WAITING child to its new run", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const threadId = "thread-main:child-waiting-reply";
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-waiting-reply",
+    started: true,
+    focusedThreadId: threadId,
+    acceptedRunId: "run-waiting-old",
+    acceptedRunMessageId: "message-waiting-old",
+    pendingRunRequestId: "request-waiting-reply",
+    pendingRunThreadId: threadId,
+    pendingWaitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      interaction: {
+        version: "v1",
+        requestId: "request-waiting-reply",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Continue?",
+      },
+    },
+    lastRunStatus: "WAITING",
+    delegation: {
+      taskId: "task-child-waiting-reply",
+      parentSessionId: "session-1",
+      childSessionId: "child-waiting-reply",
+      childSessionName: "child-waiting-reply",
+      title: "waiting reply child",
+      status: "WAITING",
+      profileId: "kestrel",
+      provider: "openrouter",
+      model: "test-model",
+      createdAt: "2026-08-28T00:00:00.000Z",
+      updatedAt: "2026-08-28T00:00:00.000Z",
+    },
+  });
+
+  await (appState.syncBackgroundSessionProgress as (input: {
+    sessionId: string;
+    threadId: string;
+    runId: string;
+    requestId?: string | undefined;
+  }) => Promise<void>)({
+    sessionId: child.sessionId,
+    threadId,
+    runId: "run-waiting-new",
+    requestId: "request-waiting-reply",
+  });
+
+  const current = uiStore.getState().sessions.find((item) => item.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.acceptedRunId, "run-waiting-new");
+  assert.equal(current?.acceptedRunThreadId, threadId);
+  assert.equal(current?.pendingRunRequestId, undefined);
+  assert.equal(current?.pendingRunThreadId, undefined);
+  assert.equal(current?.pendingWaitFor, undefined);
+  assert.equal(current?.lastRunStatus, undefined);
+});
+
+test("exact describe acceptance persists identity and lifecycle in one session write", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-atomic-acceptance",
+    pendingRunId: "run-atomic",
+    pendingRunThreadId: "thread-main:child-atomic-acceptance",
+  });
+  const snapshots: TuiSessionMeta[][] = [];
+  const observedSessionStore = appState.sessionStore as SessionStore;
+  const saveSessionsFile = observedSessionStore.save.bind(observedSessionStore);
+  observedSessionStore.save = async (file) => {
+    snapshots.push(file.sessions.map((session) => ({ ...session })));
+    await saveSessionsFile(file);
+  };
+
+  await (appState.reconcileBackgroundSessionDescription as (
+    payload: Record<string, unknown>,
+    appendStartedHistory: boolean,
+  ) => Promise<void>)({
+    sessionId: child.sessionId,
+    version: 1,
+    threadId: "thread-main:child-atomic-acceptance",
+    activeAssembly: {
+      mode: "explicit",
+      bundleId: "bundle:atomic",
+      environmentPresetId: "cli_dev_local",
+    },
+    operatorThreadView: {
+      thread: {
+        threadId: "thread-main:child-atomic-acceptance",
+        sessionId: child.sessionId,
+        title: "atomic",
+        status: "RUNNING",
+        createdAt: child.createdAt,
+        updatedAt: child.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-atomic", status: "RUNNING" },
+    },
+  }, false);
+
+  assert.equal(snapshots.length, 1);
+  const persisted = snapshots[0]?.find((item) => item.sessionId === child.sessionId);
+  assert.equal(persisted?.started, true);
+  assert.equal(persisted?.delegation?.status, "RUNNING");
+  assert.equal(persisted?.effectiveAssemblyId, "bundle:atomic");
+  assert.equal(persisted?.acceptedRunId, "run-atomic");
+  assert.equal(persisted?.acceptedRunThreadId, "thread-main:child-atomic-acceptance");
+  assert.equal(persisted?.pendingRunId, undefined);
+  assert.equal(persisted?.pendingRunMessageId, undefined);
+  assert.equal(snapshots.some((snapshot) => snapshot.some(
+    (item) => item.sessionId === child.sessionId && item.started && item.delegation?.status === "PENDING",
+  )), false);
+});
+
+test("startup reconciles an active pending child atomically before generic describe persistence", async () => {
+  const { app } = await createAppHarness({ scripted: true });
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-active-startup",
+    pendingRunId: "run-active-startup",
+    pendingRunThreadId: "child-active-startup",
+  });
+  const sessionsFile = appState.sessionsFile as {
+    version: 5;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = { ...sessionsFile, activeSessionName: child.name };
+  uiStore.patch({
+    activeSession: child,
+    sessions: (appState.sessionsFile as SessionsFile).sessions,
+  });
+  const persisted: TuiSessionMeta[][] = [];
+  const observedSessionStore = appState.sessionStore as SessionStore;
+  const saveSessionsFile = observedSessionStore.save.bind(observedSessionStore);
+  observedSessionStore.save = async (file) => {
+    persisted.push(file.sessions.map(
+      (session) => structuredClone(session),
+    ));
+    await saveSessionsFile(file);
+  };
+  appState.client = {
+    start: () => {},
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      assert.equal(type, "session.describe");
+      assert.equal(payload.sessionId, child.sessionId);
+      return {
+        type: "session.described",
+        payload: {
+          sessionId: child.sessionId,
+          version: 1,
+          threadId: child.sessionId,
+          activeAssembly: {
+            mode: "explicit",
+            bundleId: "bundle:startup",
+            environmentPresetId: "cli_dev_local",
+          },
+          operatorThreadView: {
+            thread: {
+              threadId: child.sessionId,
+              sessionId: child.sessionId,
+              title: "startup child",
+              status: "RUNNING",
+              createdAt: child.createdAt,
+              updatedAt: child.updatedAt,
+            },
+            childThreads: [],
+            childBlockerChain: [],
+            activeRun: { runId: "run-active-startup", status: "RUNNING" },
+          },
+        },
+      };
+    },
+  };
+  appState.runnerUsesLocalCore = true;
+  const localCoreStatus = appState.localCoreStatus as { client: Record<string, unknown> };
+  localCoreStatus.client.providerReadiness = async () => ({
+    ok: true,
+    providerReadiness: {
+      openrouter: { ready: true, credential: "configured" },
+    },
+    toolReadiness: {
+      tavily: { ready: true, credential: "configured" },
+    },
+  });
+  appState.runSplashDatabaseCheck = async () => {};
+  appState.runSplashMcpCheck = async () => {};
+
+  await (appState.runSplashPreflight as () => Promise<void>)();
+
+  assert.equal(persisted.length > 0, true);
+  assert.equal(persisted.some((snapshot) => snapshot.some((session) =>
+    session.sessionId === child.sessionId
+    && session.started === true
+    && session.delegation?.status === "PENDING"
+  )), false);
+  const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "RUNNING");
+  assert.equal(current?.acceptedRunId, "run-active-startup");
+});
+
+test("background direct terminal response must match the expected child thread", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const child = installBackgroundSession(appState, {
+    sessionId: "child-thread-bound-response",
+    pendingRunId: "run-thread-bound",
+    pendingRunThreadId: "thread-main:child-thread-bound-response",
+  });
+  const output = {
+    status: "COMPLETED" as const,
+    sessionId: child.sessionId,
+    runId: "run-thread-bound",
+    quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+    errors: [],
+    telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+  };
+
+  await (appState.syncBackgroundLaunchResponse as (
+    sessionId: string,
+    threadId: string,
+    runId: string,
+    response: Record<string, unknown>,
+  ) => Promise<void>)(child.sessionId, "thread-main:child-thread-bound-response", output.runId, {
+    type: "run.completed",
+    sessionId: child.sessionId,
+    threadId: "thread-wrong",
+    runId: output.runId,
+    payload: { result: { assistantText: "wrong thread", output } },
+  });
+
+  const current = uiStore.getState().sessions.find((session) => session.sessionId === child.sessionId);
+  assert.equal(current?.delegation?.status, "PENDING");
+  assert.equal(current?.started, false);
+  assert.equal(current?.acceptedRunId, undefined);
+});
+
+test("background launch drops a cross-session terminal response", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      assert.equal(type, "run.start");
+      const turn = payload.turn as Record<string, unknown>;
+      const runId = String(turn.runId);
+      return {
+        type: "run.completed",
+        sessionId: String(turn.sessionId),
+        runId,
+        payload: {
+          result: {
+            assistantText: "wrong session",
+            output: {
+              status: "COMPLETED",
+              sessionId: "child-other",
+              runId,
+              quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+              errors: [],
+              telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+            },
+          },
+        },
+      };
+    },
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.delegation?.parentSessionId === "session-1",
+  );
+  assert.equal(child?.delegation?.status, "PENDING");
+  assert.equal(child?.started, false);
+  assert.equal(child?.acceptedRunId, undefined);
+  assert.equal(typeof child?.pendingRunId, "string");
+  assert.equal(child?.pendingRunMessageId, undefined);
+});
+
+test("background response loss reconciles authoritative running state", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  let childSessionId: string | undefined;
+  let childRunId: string | undefined;
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "run.start") {
+        const turn = payload.turn as Record<string, unknown>;
+        childSessionId = String(turn.sessionId);
+        childRunId = String(turn.runId);
+        throw new Error("run response lost");
+      }
+      assert.equal(type, "session.describe");
+      const sessionId = String(payload.sessionId);
+      assert.equal(sessionId, childSessionId);
+      return {
+        type: "session.described",
+        payload: {
+          sessionId,
+          version: 1,
+          threadId: sessionId,
+          activeAssembly: {
+            mode: "explicit",
+            bundleId: "bundle:kestrel:cli",
+            environmentPresetId: "cli_dev_local",
+          },
+          operatorThreadView: {
+            thread: {
+              threadId: sessionId,
+              sessionId,
+              title: "Background",
+              status: "RUNNING",
+              createdAt: "2026-08-28T00:00:00.000Z",
+              updatedAt: "2026-08-28T00:00:01.000Z",
+            },
+            childThreads: [],
+            childBlockerChain: [],
+            activeRun: { runId: childRunId, status: "RUNNING" },
+          },
+        },
+      };
+    },
+  };
+
+  await (appState.handleTasksCommand as (args: string[]) => Promise<void>)([
+    "launch",
+    "kestrel",
+    "inspect dependencies",
+  ]);
+  await waitFor(() => (appState.uiStore as UiStore).getState().sessions.some(
+    (session) => session.delegation?.status === "RUNNING",
+  ));
+
+  const child = (appState.uiStore as UiStore).getState().sessions.find(
+    (session) => session.sessionId === childSessionId,
+  );
+  assert.equal(child?.delegation?.status, "RUNNING");
+  assert.equal(child?.started, true);
+  assert.equal(child?.lastRunStatus, undefined);
+  assert.equal(child?.environmentPresetId, "cli_dev_local");
+  assert.equal(child?.effectiveAssemblyId, "bundle:kestrel:cli");
+});
+
+test("session description marks an unstarted session started from durable thread or assembly evidence", async (t) => {
+  for (const evidence of ["thread", "assembly"] as const) {
+    await t.test(evidence, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const unstarted = {
+        ...uiStore.getState().activeSession,
+        started: false,
+        effectiveAssemblyId: undefined,
+      };
+      const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === unstarted.sessionId ? unstarted : session
+        ),
+      };
+      uiStore.patch({ activeSession: unstarted, sessions: [unstarted] });
+
+      await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+        sessionId: unstarted.sessionId,
+        version: 1,
+        ...(evidence === "thread"
+          ? { threadId: `thread-main:${unstarted.sessionId}` }
+          : {
+              activeAssembly: {
+                mode: "explicit",
+                bundleId: "bundle:kestrel:cli",
+                environmentPresetId: "cli_dev_local",
+              },
+            }),
+      });
+
+      assert.equal(uiStore.getState().activeSession.started, true);
+      assert.equal(uiStore.getState().activeSession.environmentPresetId, "cli_dev_local");
+    });
+  }
+});
+
+test("session description backfills legacy accepted thread ownership only from an exact active or terminal run", async (t) => {
+  for (const evidence of ["foreground-active", "delegated-terminal"] as const) {
+    await t.test(evidence, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const acceptedRunId = `run-legacy:${evidence}`;
+      const threadId = `thread-exact:${evidence}`;
+      const base = uiStore.getState().activeSession;
+      const legacy: TuiSessionMeta = {
+        ...base,
+        started: true,
+        acceptedRunId,
+        acceptedRunMessageId: `message-legacy:${evidence}`,
+        acceptedRunThreadId: undefined,
+        ...(evidence === "delegated-terminal"
+          ? {
+              delegation: {
+                taskId: "task-legacy-thread",
+                parentSessionId: "parent-legacy-thread",
+                childSessionId: base.sessionId,
+                childSessionName: base.name,
+                title: "legacy accepted thread",
+                status: "RUNNING" as const,
+                profileId: base.profileId,
+                provider: "openrouter",
+                model: "test-model",
+                createdAt: base.createdAt,
+                updatedAt: base.updatedAt,
+              },
+            }
+          : {}),
+      };
+      const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === legacy.sessionId ? legacy : session
+        ),
+      };
+      uiStore.patch({ activeSession: legacy, sessions: [legacy] });
+
+      await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+        sessionId: legacy.sessionId,
+        version: 1,
+        threadId,
+        operatorThreadView: {
+          thread: {
+            threadId,
+            sessionId: legacy.sessionId,
+            title: "Legacy accepted thread",
+            status: evidence === "foreground-active" ? "RUNNING" : "COMPLETED",
+            lastRunStatus: evidence === "foreground-active" ? undefined : "COMPLETED",
+            createdAt: legacy.createdAt,
+            updatedAt: legacy.updatedAt,
+          },
+          childThreads: [],
+          childBlockerChain: [],
+          ...(evidence === "foreground-active"
+            ? { activeRun: { runId: acceptedRunId, status: "RUNNING" } }
+            : {
+                conversationTurns: [{
+                  turnId: "turn-legacy-thread",
+                  threadId,
+                  sessionId: legacy.sessionId,
+                  sequence: 1,
+                  status: "COMPLETED",
+                  rootRunId: acceptedRunId,
+                  terminalRunId: acceptedRunId,
+                  terminalStatus: "COMPLETED",
+                  startedAt: legacy.createdAt,
+                  completedAt: legacy.updatedAt,
+                  updatedAt: legacy.updatedAt,
+                }],
+              }),
+        },
+      });
+
+      assert.equal(uiStore.getState().activeSession.acceptedRunThreadId, threadId);
+    });
+  }
+});
+
+test("session description never backfills accepted thread ownership from a mismatched run or mutable focus", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const legacy: TuiSessionMeta = {
+    ...base,
+    started: true,
+    focusedThreadId: "thread-focus:legacy",
+    acceptedRunId: "run-accepted:legacy",
+    acceptedRunMessageId: "message-accepted:legacy",
+    acceptedRunThreadId: undefined,
+  };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === legacy.sessionId ? legacy : session
+    ),
+  };
+  uiStore.patch({ activeSession: legacy, sessions: [legacy] });
+
+  await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+    sessionId: legacy.sessionId,
+    version: 1,
+    threadId: "thread-described:legacy",
+    focusedThreadId: "thread-focus:legacy",
+    operatorThreadView: {
+      thread: {
+        threadId: "thread-described:legacy",
+        sessionId: legacy.sessionId,
+        title: "Mismatched run",
+        status: "RUNNING",
+        createdAt: legacy.createdAt,
+        updatedAt: legacy.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-other:legacy", status: "RUNNING" },
+      conversationTurns: [{
+        turnId: "turn-historical-accepted",
+        threadId: "thread-described:legacy",
+        sessionId: legacy.sessionId,
+        sequence: 1,
+        status: "COMPLETED",
+        rootRunId: "run-accepted:legacy",
+        terminalRunId: "run-accepted:legacy",
+        terminalStatus: "COMPLETED",
+        startedAt: legacy.createdAt,
+        completedAt: legacy.updatedAt,
+        updatedAt: legacy.updatedAt,
+      }],
+    },
+  });
+
+  assert.equal(uiStore.getState().activeSession.acceptedRunThreadId, undefined);
+});
+
+test("restart recovers a run-less queued route without letting its delayed start replace an intervening reply", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const queuedRunId = "run-restart-runless-queue";
+  const queuedMessageId = "message-restart-runless-queue";
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-current-before-queue",
+    acceptedRunMessageId: "message-current-before-queue",
+    acceptedRunThreadId: threadId,
+    pendingQueueSubmissions: [{
+      runId: queuedRunId,
+      messageId: queuedMessageId,
+      threadId,
+      predecessorRunId: "run-current-before-queue",
+    }],
+    pendingRunRequestId: "request-intervening-reply",
+    pendingRunThreadId: threadId,
+  };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+  await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Recovered queue",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-current-before-queue", status: "RUNNING" },
+      conversationMessageRoutes: [{
+        messageId: queuedMessageId,
+        disposition: "queued",
+        followUpId: "follow-up:restart-runless-queue",
+        createdAt: "2026-08-29T00:00:00.000Z",
+      }],
+    },
+  });
+
+  let session = uiStore.getState().activeSession;
+  assert.equal(session.pendingQueueSubmissions, undefined);
+  assert.deepEqual(session.queuedRunReservations, [{
+    runId: queuedRunId,
+    messageId: queuedMessageId,
+    threadId,
+    predecessorRunId: "run-current-before-queue",
+  }]);
+  assert.equal(session.pendingRunRequestId, "request-intervening-reply");
+
+  await (appState.setActiveSessionState as (patch: Partial<TuiSessionMeta>) => Promise<void>)({
+    pendingRunRequestId: undefined,
+    pendingRunThreadId: undefined,
+    acceptedRunId: "run-intervening-reply",
+    acceptedRunMessageId: "message-intervening-reply",
+    acceptedRunThreadId: threadId,
+    lastRunStatus: "WAITING",
+  });
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "run-started-recovered-queue",
+    type: "run.started",
+    ts: "2026-08-29T00:00:01.000Z",
+    sessionId: recovering.sessionId,
+    threadId,
+    runId: queuedRunId,
+    payload: {
+      sessionId: recovering.sessionId,
+      runId: queuedRunId,
+      eventType: "user.message",
+      sourceMessageId: queuedMessageId,
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  session = uiStore.getState().activeSession;
+  assert.deepEqual(session.queuedRunReservations, [{
+    runId: queuedRunId,
+    messageId: queuedMessageId,
+    threadId,
+    predecessorRunId: "run-current-before-queue",
+  }]);
+  assert.equal(session.acceptedRunId, "run-intervening-reply");
+  assert.equal(session.acceptedRunMessageId, "message-intervening-reply");
+  assert.equal(session.acceptedRunThreadId, threadId);
+  assert.equal(session.lastRunStatus, "WAITING");
+});
+
+test("a promoted queued run replaces only its exact accepted predecessor", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const promoted: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-predecessor",
+    acceptedRunMessageId: "message-predecessor",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: "run-promoted",
+      messageId: "message-promoted",
+      threadId,
+      predecessorRunId: "run-predecessor",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === promoted.sessionId ? promoted : session
+    ),
+  };
+  uiStore.patch({ activeSession: promoted, sessions: [promoted] });
+
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "run-started-exact-predecessor",
+    type: "run.started",
+    ts: "2026-08-29T00:00:01.000Z",
+    sessionId: promoted.sessionId,
+    threadId,
+    runId: "run-promoted",
+    payload: {
+      sessionId: promoted.sessionId,
+      runId: "run-promoted",
+      eventType: "user.message",
+      sourceMessageId: "message-promoted",
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const session = uiStore.getState().activeSession;
+  assert.equal(session.queuedRunReservations, undefined);
+  assert.equal(session.acceptedRunId, "run-promoted");
+  assert.equal(session.acceptedRunMessageId, "message-promoted");
+  assert.equal(session.acceptedRunThreadId, threadId);
+});
+
+test("restart reconciliation rebinds a promoted queued reservation to its runtime run", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const messageId = "message-promoted-after-restart";
+  const provisionalRunId = `runtime:${messageId}`;
+  const runtimeRunId = "run-promoted-after-restart";
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-predecessor",
+    acceptedRunMessageId: "message-predecessor",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: provisionalRunId,
+      messageId,
+      threadId,
+      predecessorRunId: "run-predecessor",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Promoted queue recovery",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: runtimeRunId, status: "RUNNING" },
+      conversationMessageRoutes: [{
+        messageId,
+        disposition: "started",
+        runId: runtimeRunId,
+        createdAt: recovering.createdAt,
+      }],
+    },
+  });
+
+  const session = uiStore.getState().activeSession;
+  assert.equal(session.queuedRunReservations, undefined);
+  assert.equal(session.acceptedRunId, runtimeRunId);
+  assert.equal(session.acceptedRunMessageId, messageId);
+  assert.equal(session.acceptedRunThreadId, threadId);
+  assert.equal(session.acceptedRunPredecessorId, "run-predecessor");
+});
+
+test("restart reconciliation does not order a reverse legacy fork from active-run arrival alone", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const chained: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-r0",
+    acceptedRunMessageId: "message-r0",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-r0",
+    }, {
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId,
+      predecessorRunId: "run-r0",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === chained.sessionId ? chained : session
+    ),
+  };
+  uiStore.patch({ activeSession: chained, sessions: [chained] });
+
+  for (const runId of ["run-q1", "run-q2"]) {
+    await (appState.syncSessionFromDescribePayload as (
+      payload: Record<string, unknown>,
+    ) => Promise<void>)({
+      sessionId: chained.sessionId,
+      version: 1,
+      threadId,
+      operatorThreadView: {
+        thread: {
+          threadId,
+          sessionId: chained.sessionId,
+          title: "Queued chain",
+          status: "RUNNING",
+          createdAt: chained.createdAt,
+          updatedAt: chained.updatedAt,
+        },
+        childThreads: [],
+        childBlockerChain: [],
+        activeRun: { runId, status: "RUNNING" },
+        conversationMessageRoutes: runId === "run-q1"
+          ? [{
+              messageId: "message-q2",
+              disposition: "queued",
+              runId: "run-q2",
+              createdAt: chained.createdAt,
+            }]
+          : [],
+      },
+    });
+  }
+
+  const session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q1");
+  assert.equal(session.acceptedRunMessageId, "message-q1");
+  assert.equal(session.acceptedRunThreadId, threadId);
+  assert.deepEqual(session.queuedRunReservations, [{
+    runId: "run-q2",
+    messageId: "message-q2",
+    threadId,
+    predecessorRunId: "run-r0",
+  }, {
+    runId: "run-q1",
+    messageId: "message-q1",
+    threadId,
+    predecessorRunId: "run-r0",
+  }]);
+});
+
+test("restart reconciliation repairs an active sibling from accepted terminal authority", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-q1",
+    acceptedRunMessageId: "message-q1",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-r0",
+    }],
+    terminalQueuedRuns: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId,
+      predecessorRunId: "run-r0",
+      status: "COMPLETED",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Terminal authority repair",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q2", status: "RUNNING" },
+    },
+  });
+
+  const session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q2");
+  assert.equal(session.acceptedRunMessageId, "message-q2");
+  assert.equal(session.queuedRunReservations, undefined);
+  assert.equal(session.terminalQueuedRuns?.[0]?.runId, "run-q1");
+});
+
+test("restart reconciliation does not rebind an accepted-active queue record with a missing predecessor", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-q1",
+    acceptedRunMessageId: "message-q1",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-r0",
+    }],
+    terminalQueuedRuns: undefined,
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Accepted active fork repair",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q1", status: "RUNNING" },
+      conversationMessageRoutes: [{
+        messageId: "message-q2",
+        disposition: "queued",
+        runId: "run-q2",
+        createdAt: recovering.createdAt,
+      }],
+    },
+  });
+
+  let session = uiStore.getState().activeSession;
+  assert.deepEqual(session.queuedRunReservations, [{
+    runId: "run-q2",
+    messageId: "message-q2",
+    threadId,
+    predecessorRunId: "run-r0",
+  }]);
+  assert.deepEqual(
+    new SessionStore(home).findByName(await new SessionStore(home).load(), recovering.name)
+      ?.queuedRunReservations,
+    session.queuedRunReservations,
+  );
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Accepted active fork repair",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q2", status: "RUNNING" },
+      conversationMessageRoutes: [],
+    },
+  });
+  session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q1");
+  assert.equal(session.queuedRunReservations?.[0]?.predecessorRunId, "run-r0");
+});
+
+test("restart reconciliation preserves explicit Q2 predecessor authority after a delayed Q1 terminal", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-q2",
+    acceptedRunMessageId: "message-q2",
+    acceptedRunThreadId: threadId,
+    acceptedRunPredecessorId: "run-r0",
+    queuedRunReservations: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId,
+      predecessorRunId: "run-r0",
+    }, {
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-r0",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+  assert.equal(await (appState.syncForegroundQueuedTerminal as (
+    input: Record<string, unknown>,
+  ) => Promise<boolean>)({
+    sessionId: recovering.sessionId,
+    threadId,
+    runId: "run-q1",
+    result: {
+      assistantText: "Delayed Q1",
+      output: {
+        status: "COMPLETED",
+        sessionId: recovering.sessionId,
+        runId: "run-q1",
+        quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+        errors: [],
+        telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+      },
+    },
+    authoritativeView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Delayed exact Q1",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q2", status: "RUNNING" },
+      conversationTurns: [{
+        turnId: "turn-q1-direct",
+        threadId,
+        sessionId: recovering.sessionId,
+        sequence: 1,
+        status: "COMPLETED",
+        rootRunId: "run-q1",
+        sourceMessageId: "message-q1",
+        terminalRunId: "run-q1",
+        terminalStatus: "COMPLETED",
+        startedAt: recovering.createdAt,
+        completedAt: recovering.updatedAt,
+        updatedAt: recovering.updatedAt,
+      }],
+    },
+  }), true);
+  let session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q2");
+  assert.equal(session.acceptedRunPredecessorId, "run-r0");
+  assert.equal(session.queuedRunReservations, undefined);
+  assert.equal(session.terminalQueuedRuns?.[0]?.runId, "run-q1");
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Q2 accepted after Q1",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q2", status: "RUNNING" },
+      conversationTurns: [{
+        turnId: "turn-q1",
+        threadId,
+        sessionId: recovering.sessionId,
+        sequence: 1,
+        status: "COMPLETED",
+        rootRunId: "run-q1",
+        sourceMessageId: "message-q1",
+        terminalRunId: "run-q1",
+        terminalStatus: "COMPLETED",
+        startedAt: recovering.createdAt,
+        completedAt: recovering.updatedAt,
+        updatedAt: recovering.updatedAt,
+      }],
+    },
+  });
+
+  session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q2");
+  assert.equal(session.acceptedRunPredecessorId, "run-r0");
+  assert.equal(session.queuedRunReservations, undefined);
+  assert.equal(session.terminalQueuedRuns?.[0]?.runId, "run-q1");
+  const persisted = new SessionStore(home).findByName(
+    await new SessionStore(home).load(),
+    recovering.name,
+  );
+  assert.equal(persisted?.acceptedRunPredecessorId, "run-r0");
+  assert.equal(persisted?.queuedRunReservations, undefined);
+});
+
+test("queued start authority is not published when its required session save fails", async (t) => {
+  for (const failureMode of ["before-write", "after-write"] as const) {
+    await t.test(failureMode, async () => {
+      const { app, home } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const base = uiStore.getState().activeSession;
+      const threadId = `thread-main:${base.sessionId}`;
+      const queued: TuiSessionMeta = {
+        ...base,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: threadId,
+        queuedRunReservations: [{
+          runId: "run-q1",
+          messageId: "message-q1",
+          threadId,
+          predecessorRunId: "run-r0",
+        }],
+      };
+      const sessionStore = appState.sessionStore as SessionStore;
+      const originalSave = sessionStore.save.bind(sessionStore);
+      const sessionsFile = appState.sessionsFile as {
+        version: number;
+        activeSessionName?: string;
+        sessions: TuiSessionMeta[];
+      };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === queued.sessionId ? queued : session
+        ),
+      };
+      uiStore.patch({ activeSession: queued, sessions: [queued], running: false });
+      await originalSave(appState.sessionsFile as never);
+      sessionStore.save = async (file) => {
+        if (failureMode === "after-write") await originalSave(file);
+        throw new Error(`required save failed ${failureMode}`);
+      };
+
+      assert.equal(await (appState.syncForegroundSessionProgress as (
+        input: { sessionId: string; threadId: string; runId: string; messageId: string },
+      ) => Promise<boolean>)({
+        sessionId: queued.sessionId,
+        threadId,
+        runId: "run-q1",
+        messageId: "message-q1",
+      }), false);
+      assert.equal(uiStore.getState().activeSession.acceptedRunId, "run-r0");
+      assert.equal(uiStore.getState().running, false);
+
+      const reloaded = new SessionStore(home).findByName(
+        await new SessionStore(home).load(),
+        queued.name,
+      );
+      assert.equal(
+        reloaded?.acceptedRunId,
+        failureMode === "after-write" ? "run-q1" : "run-r0",
+      );
+      assert.equal(
+        reloaded?.acceptedRunPredecessorId,
+        failureMode === "after-write" ? "run-r0" : undefined,
+      );
+    });
+  }
+});
+
+test("a deferred failed queue commit exposes no staged authority to concurrent describe reconciliation", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const queued: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-r0",
+    acceptedRunMessageId: "message-r0",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId,
+      predecessorRunId: "run-r0",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === queued.sessionId ? queued : session
+    ),
+  };
+  uiStore.patch({ activeSession: queued, sessions: [queued], running: false });
+  const sessionStore = appState.sessionStore as SessionStore;
+  const originalSave = sessionStore.save.bind(sessionStore);
+  await originalSave(appState.sessionsFile as never);
+  let releaseFirstSave: (() => void) | undefined;
+  let firstSaveStartedResolve: (() => void) | undefined;
+  const firstSaveStarted = new Promise<void>((resolve) => { firstSaveStartedResolve = resolve; });
+  const firstSaveRelease = new Promise<void>((resolve) => { releaseFirstSave = resolve; });
+  let saveCount = 0;
+  sessionStore.save = async (file) => {
+    saveCount += 1;
+    if (saveCount === 1) {
+      firstSaveStartedResolve?.();
+      await firstSaveRelease;
+      throw new Error("deferred queue commit failed before write");
+    }
+    await originalSave(file);
+  };
+
+  const startCommit = (appState.syncForegroundSessionProgress as (
+    input: { sessionId: string; threadId: string; runId: string; messageId: string },
+  ) => Promise<boolean>)({
+    sessionId: queued.sessionId,
+    threadId,
+    runId: "run-q1",
+    messageId: "message-q1",
+  });
+  await firstSaveStarted;
+  const describeCommit = (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: queued.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: queued.sessionId,
+        title: "Concurrent exact Q1",
+        status: "RUNNING",
+        createdAt: queued.createdAt,
+        updatedAt: queued.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q1", status: "RUNNING" },
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(uiStore.getState().activeSession.acceptedRunId, "run-r0");
+  assert.equal(
+    (appState.sessionsFile as typeof sessionsFile).sessions.find(
+      (session) => session.sessionId === queued.sessionId,
+    )?.acceptedRunId,
+    "run-r0",
+  );
+
+  releaseFirstSave?.();
+  assert.equal(await startCommit, false);
+  await describeCommit;
+  assert.equal(uiStore.getState().activeSession.acceptedRunId, "run-q1");
+  assert.equal(saveCount, 2);
+  assert.equal(
+    new SessionStore(home).findByName(await new SessionStore(home).load(), queued.name)
+      ?.acceptedRunId,
+    "run-q1",
+  );
+});
+
+test("the global sessions-file coordinator preserves an interleaved ordinary session update", async (t) => {
+  for (const failureMode of ["success", "before-write", "after-write"] as const) {
+    await t.test(failureMode, async () => {
+      const { app, home } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const base = uiStore.getState().activeSession;
+      const threadId = `thread-main:${base.sessionId}`;
+      const queued: TuiSessionMeta = {
+        ...base,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: threadId,
+        queuedRunReservations: [{
+          runId: "run-q1",
+          messageId: "message-q1",
+          threadId,
+          predecessorRunId: "run-r0",
+        }],
+      };
+      const ordinary: TuiSessionMeta = {
+        ...base,
+        name: "ordinary-b",
+        sessionId: "session-b",
+        updatedAt: base.updatedAt,
+      };
+      const sessionStore = appState.sessionStore as SessionStore;
+      const originalSave = sessionStore.save.bind(sessionStore);
+      let file = appState.sessionsFile as SessionsFile;
+      file = sessionStore.upsert(file, queued);
+      file = sessionStore.upsert(file, ordinary);
+      appState.sessionsFile = file;
+      uiStore.patch({ activeSession: queued, sessions: file.sessions, running: false });
+      await originalSave(file as never);
+
+      let releaseSave: (() => void) | undefined;
+      let saveStartedResolve: (() => void) | undefined;
+      const saveStarted = new Promise<void>((resolve) => { saveStartedResolve = resolve; });
+      const saveRelease = new Promise<void>((resolve) => { releaseSave = resolve; });
+      let saveCount = 0;
+      sessionStore.save = async (snapshot) => {
+        saveCount += 1;
+        if (saveCount === 1) {
+          saveStartedResolve?.();
+          await saveRelease;
+          if (failureMode !== "before-write") await originalSave(snapshot);
+          if (failureMode !== "success") throw new Error(`queue ${failureMode}`);
+          return;
+        }
+        await originalSave(snapshot);
+      };
+
+      const queueCommit = (appState.syncForegroundSessionProgress as (
+        input: { sessionId: string; threadId: string; runId: string; messageId: string },
+      ) => Promise<boolean>)({
+        sessionId: queued.sessionId,
+        threadId,
+        runId: "run-q1",
+        messageId: "message-q1",
+      });
+      await saveStarted;
+      await (appState.setSessionState as (
+        sessionId: string,
+        patch: Partial<TuiSessionMeta>,
+      ) => Promise<TuiSessionMeta | undefined>)(ordinary.sessionId, { lastRunStatus: "WAITING" });
+      const ordinarySave = (appState.saveSessionsFile as (
+        options?: { requireSessionSave?: boolean },
+      ) => Promise<void>)({ requireSessionSave: true });
+      releaseSave?.();
+      assert.equal(await queueCommit, failureMode === "success");
+      await ordinarySave;
+
+      const reloaded = await new SessionStore(home).load();
+      assert.equal(
+        reloaded.sessions.find((session) => session.sessionId === ordinary.sessionId)?.lastRunStatus,
+        "WAITING",
+      );
+      assert.equal(
+        reloaded.sessions.find((session) => session.sessionId === queued.sessionId)?.acceptedRunId,
+        failureMode === "success" ? "run-q1" : "run-r0",
+      );
+      assert.equal(
+        (appState.sessionsFile as typeof file).sessions.find(
+          (session) => session.sessionId === queued.sessionId,
+        )?.acceptedRunId,
+        failureMode === "success" ? "run-q1" : "run-r0",
+      );
+      assert.equal(saveCount, 2);
+    });
+  }
+});
+
+test("a first queued successor needs an exact terminal turn before promotion", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const queued: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-r0",
+    acceptedRunMessageId: "message-r0",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId,
+      predecessorRunId: "run-r0",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === queued.sessionId ? queued : session
+    ),
+  };
+  uiStore.patch({ activeSession: queued, sessions: [queued] });
+  const result = {
+    assistantText: "Q1 complete",
+    output: {
+      status: "COMPLETED" as const,
+      sessionId: queued.sessionId,
+      runId: "run-q1",
+      quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+      errors: [],
+      telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+    },
+  };
+  const staleView = {
+    thread: {
+      threadId,
+      sessionId: queued.sessionId,
+      title: "Stale Q1 active",
+      status: "RUNNING" as const,
+      createdAt: queued.createdAt,
+      updatedAt: queued.updatedAt,
+    },
+    childThreads: [],
+    childBlockerChain: [],
+    activeRun: { runId: "run-q1", status: "RUNNING" as const },
+  };
+
+  assert.equal(await (appState.syncForegroundQueuedTerminal as (
+    input: Record<string, unknown>,
+  ) => Promise<boolean>)({
+    sessionId: queued.sessionId,
+    threadId,
+    runId: "run-q1",
+    result,
+    authoritativeView: staleView,
+  }), false);
+  assert.equal(uiStore.getState().activeSession.acceptedRunId, "run-r0");
+  assert.equal(uiStore.getState().activeSession.terminalQueuedRuns?.some(
+    (terminal) => terminal.runId === "run-q1",
+  ) ?? false, false);
+
+  const exactView = {
+    ...staleView,
+    thread: { ...staleView.thread, status: "COMPLETED" as const, lastRunStatus: "COMPLETED" as const },
+    activeRun: undefined,
+    conversationTurns: [{
+      turnId: "turn-q1",
+      threadId,
+      sessionId: queued.sessionId,
+      sequence: 1,
+      status: "COMPLETED" as const,
+      rootRunId: "run-q1",
+      sourceMessageId: "message-q1",
+      terminalRunId: "run-q1",
+      terminalStatus: "COMPLETED" as const,
+      startedAt: queued.createdAt,
+      completedAt: queued.updatedAt,
+      updatedAt: queued.updatedAt,
+    }],
+  };
+  assert.equal(await (appState.syncForegroundQueuedTerminal as (
+    input: Record<string, unknown>,
+  ) => Promise<boolean>)({
+    sessionId: queued.sessionId,
+    threadId,
+    runId: "run-q1",
+    result,
+    authoritativeView: exactView,
+  }), true);
+  assert.equal(uiStore.getState().activeSession.acceptedRunId, "run-q1");
+  assert.equal(uiStore.getState().activeSession.acceptedRunPredecessorId, "run-r0");
+  const reloaded = new SessionStore(home).findByName(
+    await new SessionStore(home).load(),
+    queued.name,
+  );
+  assert.equal(reloaded?.acceptedRunId, "run-q1");
+});
+
+test("queued terminal authority is not published when its required session save fails", async (t) => {
+  for (const failureMode of ["before-write", "after-write"] as const) {
+    await t.test(failureMode, async () => {
+      const { app, home } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const base = uiStore.getState().activeSession;
+      const threadId = `thread-main:${base.sessionId}`;
+      const queued: TuiSessionMeta = {
+        ...base,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: threadId,
+        queuedRunReservations: [{
+          runId: "run-q1",
+          messageId: "message-q1",
+          threadId,
+          predecessorRunId: "run-r0",
+        }],
+      };
+      const result = {
+        assistantText: "Q1 complete",
+        output: {
+          status: "COMPLETED" as const,
+          sessionId: queued.sessionId,
+          runId: "run-q1",
+          quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+          errors: [],
+          telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+        },
+      };
+      const sessionStore = appState.sessionStore as SessionStore;
+      const originalSave = sessionStore.save.bind(sessionStore);
+      const sessionsFile = appState.sessionsFile as {
+        version: number;
+        activeSessionName?: string;
+        sessions: TuiSessionMeta[];
+      };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === queued.sessionId ? queued : session
+        ),
+      };
+      uiStore.patch({ activeSession: queued, sessions: [queued] });
+      await originalSave(appState.sessionsFile as never);
+      sessionStore.save = async (file) => {
+        if (failureMode === "after-write") await originalSave(file);
+        throw new Error(`terminal save failed ${failureMode}`);
+      };
+
+      assert.equal(await (appState.syncForegroundQueuedTerminal as (
+        input: Record<string, unknown>,
+      ) => Promise<boolean>)({
+        sessionId: queued.sessionId,
+        threadId,
+        runId: "run-q1",
+        result,
+      }), false);
+      assert.equal(uiStore.getState().activeSession.acceptedRunId, "run-r0");
+      assert.equal(uiStore.getState().activeSession.lastRunStatus, undefined);
+
+      const reloaded = new SessionStore(home).findByName(
+        await new SessionStore(home).load(),
+        queued.name,
+      );
+      assert.equal(
+        reloaded?.acceptedRunId,
+        "run-r0",
+      );
+      assert.equal(
+        reloaded?.lastRunStatus,
+        undefined,
+      );
+
+      sessionStore.save = originalSave;
+      const exactView = {
+        thread: {
+          threadId,
+          sessionId: queued.sessionId,
+          title: "Q1 terminal authority",
+          status: "COMPLETED" as const,
+          lastRunStatus: "COMPLETED" as const,
+          createdAt: queued.createdAt,
+          updatedAt: queued.updatedAt,
+        },
+        childThreads: [],
+        childBlockerChain: [],
+        conversationTurns: [{
+          turnId: "turn-q1",
+          threadId,
+          sessionId: queued.sessionId,
+          sequence: 1,
+          status: "COMPLETED" as const,
+          rootRunId: "run-q1",
+          sourceMessageId: "message-q1",
+          terminalRunId: "run-q1",
+          terminalStatus: "COMPLETED" as const,
+          startedAt: queued.createdAt,
+          completedAt: queued.updatedAt,
+          updatedAt: queued.updatedAt,
+        }],
+      };
+      assert.equal(await (appState.syncForegroundQueuedTerminal as (
+        input: Record<string, unknown>,
+      ) => Promise<boolean>)({
+        sessionId: queued.sessionId,
+        threadId,
+        runId: "run-q1",
+        result,
+        authoritativeView: exactView,
+      }), true);
+      assert.equal(uiStore.getState().activeSession.acceptedRunId, "run-q1");
+      assert.equal(uiStore.getState().activeSession.lastRunStatus, "COMPLETED");
+    });
+  }
+});
+
+test("duplicate accepted start preserves an already ordered Q1 to Q2 to Q3 queue", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const ordered: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-q1",
+    acceptedRunMessageId: "message-q1",
+    acceptedRunThreadId: threadId,
+    acceptedRunPredecessorId: "run-r0",
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-q1",
+    }, {
+      runId: "run-q3",
+      messageId: "message-q3",
+      threadId,
+      predecessorRunId: "run-q2",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === ordered.sessionId ? ordered : session
+    ),
+  };
+  uiStore.patch({ activeSession: ordered, sessions: [ordered] });
+
+  assert.equal(await (appState.syncForegroundSessionProgress as (
+    input: { sessionId: string; threadId: string; runId: string; messageId: string },
+  ) => Promise<boolean>)({
+    sessionId: ordered.sessionId,
+    threadId,
+    runId: "run-q1",
+    messageId: "message-q1",
+  }), true);
+  assert.deepEqual(uiStore.getState().activeSession.queuedRunReservations, ordered.queuedRunReservations);
+  assert.equal(uiStore.getState().activeSession.acceptedRunPredecessorId, "run-r0");
+});
+
+test("describe preserves an explicit accepted-predecessor conflict and does not bind the active successor", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const conflicted: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-q1",
+    acceptedRunMessageId: "message-q1",
+    acceptedRunThreadId: threadId,
+    acceptedRunPredecessorId: "run-r0",
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-other",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as SessionsFile;
+  appState.sessionsFile = (appState.sessionStore as SessionStore).upsert(sessionsFile, conflicted);
+  uiStore.patch({ activeSession: conflicted, sessions: (appState.sessionsFile as typeof sessionsFile).sessions });
+  appState.recoverTerminalMessages = async () => {};
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: conflicted.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: conflicted.sessionId,
+        title: "Conflicted queue",
+        status: "RUNNING",
+        createdAt: conflicted.createdAt,
+        updatedAt: conflicted.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q2", status: "RUNNING" },
+      conversationTurns: [{
+        turnId: "turn-q1",
+        threadId,
+        sessionId: conflicted.sessionId,
+        sequence: 1,
+        status: "COMPLETED",
+        rootRunId: "run-q1",
+        sourceMessageId: "message-q1",
+        terminalRunId: "run-q1",
+        terminalStatus: "COMPLETED",
+        startedAt: conflicted.createdAt,
+        completedAt: conflicted.updatedAt,
+        updatedAt: conflicted.updatedAt,
+      }],
+      conversationMessageRoutes: [{
+        messageId: "message-q2",
+        disposition: "queued",
+        runId: "run-q2",
+      }],
+    },
+  });
+
+  const session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q1");
+  assert.equal(session.acceptedRunPredecessorId, "run-r0");
+  assert.equal(session.queuedRunReservations?.[0]?.predecessorRunId, "run-other");
+});
+
+test("describe preserves a legacy undefined-predecessor conflict without a complete successor turn sequence", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const conflicted: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-q1",
+    acceptedRunMessageId: "message-q1",
+    acceptedRunThreadId: threadId,
+    acceptedRunPredecessorId: undefined,
+    queuedRunReservations: [{
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-other",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as SessionsFile;
+  appState.sessionsFile = (appState.sessionStore as SessionStore).upsert(sessionsFile, conflicted);
+  uiStore.patch({ activeSession: conflicted, sessions: (appState.sessionsFile as typeof sessionsFile).sessions });
+  appState.recoverTerminalMessages = async () => {};
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: conflicted.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: conflicted.sessionId,
+        title: "Legacy predecessor conflict",
+        status: "RUNNING",
+        createdAt: conflicted.createdAt,
+        updatedAt: conflicted.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q2", status: "RUNNING" },
+      conversationTurns: [{
+        turnId: "turn-q1",
+        threadId,
+        sessionId: conflicted.sessionId,
+        sequence: 1,
+        status: "COMPLETED",
+        rootRunId: "run-q1",
+        sourceMessageId: "message-q1",
+        terminalRunId: "run-q1",
+        terminalStatus: "COMPLETED",
+        startedAt: conflicted.createdAt,
+        completedAt: conflicted.updatedAt,
+        updatedAt: conflicted.updatedAt,
+      }],
+      conversationMessageRoutes: [{
+        messageId: "message-q2",
+        disposition: "queued",
+        runId: "run-q2",
+      }],
+    },
+  });
+
+  const session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q1");
+  assert.equal(session.acceptedRunPredecessorId, undefined);
+  assert.equal(session.queuedRunReservations?.[0]?.predecessorRunId, "run-other");
+  assert.equal(session.terminalQueuedRuns, undefined);
+});
+
+test("incremental exact terminal reconciliation extends Q1 to Q2 with Q3", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const queued: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-r0",
+    acceptedRunMessageId: "message-r0",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: ["q1", "q2", "q3"].map((suffix) => ({
+      runId: `run-${suffix}`,
+      messageId: `message-${suffix}`,
+      threadId,
+      predecessorRunId: "run-r0",
+    })),
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === queued.sessionId ? queued : session
+    ),
+  };
+  uiStore.patch({ activeSession: queued, sessions: [queued] });
+  appState.recoverTerminalMessages = async () => {};
+  const describe = async (terminalCount: number): Promise<void> => {
+    await (appState.syncSessionFromDescribePayload as (
+      payload: Record<string, unknown>,
+    ) => Promise<void>)({
+      sessionId: queued.sessionId,
+      version: 1,
+      threadId,
+      operatorThreadView: {
+        thread: {
+          threadId,
+          sessionId: queued.sessionId,
+          title: "Incremental exact queue",
+          status: "COMPLETED",
+          lastRunStatus: "COMPLETED",
+          createdAt: queued.createdAt,
+          updatedAt: queued.updatedAt,
+        },
+        childThreads: [],
+        childBlockerChain: [],
+        conversationTurns: Array.from({ length: terminalCount }, (_, index) => ({
+          turnId: `turn-q${index + 1}`,
+          threadId,
+          sessionId: queued.sessionId,
+          sequence: index + 1,
+          status: "COMPLETED",
+          rootRunId: `run-q${index + 1}`,
+          sourceMessageId: `message-q${index + 1}`,
+          terminalRunId: `run-q${index + 1}`,
+          terminalStatus: "COMPLETED",
+          startedAt: queued.createdAt,
+          completedAt: queued.updatedAt,
+          updatedAt: queued.updatedAt,
+        })),
+      },
+    });
+  };
+
+  await describe(2);
+  let session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q2");
+  assert.equal(session.acceptedRunPredecessorId, "run-q1");
+  assert.equal(session.queuedRunReservations?.[0]?.runId, "run-q3");
+  assert.deepEqual(session.terminalQueuedRuns?.map((record) => [
+    record.runId,
+    record.predecessorRunId,
+  ]), [["run-q1", "run-r0"], ["run-q2", "run-q1"]]);
+
+  await describe(3);
+  session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q3");
+  assert.equal(session.acceptedRunPredecessorId, "run-q2");
+  assert.equal(session.queuedRunReservations, undefined);
+  assert.deepEqual(session.terminalQueuedRuns?.map((record) => [
+    record.runId,
+    record.predecessorRunId,
+  ]), [["run-q1", "run-r0"], ["run-q2", "run-q1"], ["run-q3", "run-q2"]]);
+});
+
+test("exact terminal sequence does not chain queued runs from distinct durable epochs", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const queued: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-r0",
+    acceptedRunMessageId: "message-r0",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: [{
+      runId: "run-q1",
+      messageId: "message-q1",
+      threadId,
+      predecessorRunId: "run-r0",
+    }, {
+      runId: "run-q2",
+      messageId: "message-q2",
+      threadId,
+      predecessorRunId: "run-r1",
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === queued.sessionId ? queued : session
+    ),
+  };
+  uiStore.patch({ activeSession: queued, sessions: [queued] });
+  appState.recoverTerminalMessages = async () => {};
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: queued.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: queued.sessionId,
+        title: "Distinct queue epochs",
+        status: "COMPLETED",
+        lastRunStatus: "COMPLETED",
+        createdAt: queued.createdAt,
+        updatedAt: queued.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      conversationTurns: [
+        { runId: "run-q1", messageId: "message-q1", sequence: 1 },
+        { runId: "run-q2", messageId: "message-q2", sequence: 2 },
+      ].map((turn) => ({
+        turnId: `turn-${turn.runId}`,
+        threadId,
+        sessionId: queued.sessionId,
+        sequence: turn.sequence,
+        status: "COMPLETED",
+        rootRunId: turn.runId,
+        sourceMessageId: turn.messageId,
+        terminalRunId: turn.runId,
+        terminalStatus: "COMPLETED",
+        startedAt: queued.createdAt,
+        completedAt: queued.updatedAt,
+        updatedAt: queued.updatedAt,
+      })),
+    },
+  });
+
+  const session = uiStore.getState().activeSession;
+  assert.equal(session.acceptedRunId, "run-q1");
+  assert.deepEqual(session.terminalQueuedRuns?.map((record) => [
+    record.runId,
+    record.predecessorRunId,
+  ]), [["run-q1", "run-r0"], ["run-q2", "run-r1"]]);
+  assert.equal(
+    session.terminalQueuedRuns?.find((record) => record.runId === "run-q2")?.predecessorRunId,
+    "run-r1",
+  );
+});
+
+test("legacy partial route evidence preserves an existing deep Q1 to Q2 to Q3 chain", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const queuedRunReservations = [{
+    runId: "run-q2",
+    messageId: "message-q2",
+    threadId,
+    predecessorRunId: "run-q1",
+  }, {
+    runId: "run-q3",
+    messageId: "message-q3",
+    threadId,
+    predecessorRunId: "run-q2",
+  }];
+  const legacy: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-q1",
+    acceptedRunMessageId: "message-q1",
+    acceptedRunThreadId: threadId,
+    acceptedRunPredecessorId: undefined,
+    queuedRunReservations,
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === legacy.sessionId ? legacy : session
+    ),
+  };
+  uiStore.patch({ activeSession: legacy, sessions: [legacy] });
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: legacy.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: legacy.sessionId,
+        title: "Legacy partial route",
+        status: "RUNNING",
+        createdAt: legacy.createdAt,
+        updatedAt: legacy.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-q1", status: "RUNNING" },
+      conversationMessageRoutes: [{
+        messageId: "message-q3",
+        disposition: "queued",
+        runId: "run-q3",
+        createdAt: legacy.updatedAt,
+      }],
+    },
+  });
+
+  assert.equal(uiStore.getState().activeSession.acceptedRunId, "run-q1");
+  assert.equal(uiStore.getState().activeSession.acceptedRunPredecessorId, undefined);
+  assert.deepEqual(uiStore.getState().activeSession.queuedRunReservations, queuedRunReservations);
+});
+
+test("restart reconciliation orders a terminal fork only from exact conversation-turn sequence", async (t) => {
+  for (const exact of [true, false]) {
+    await t.test(exact ? "exact" : "ambiguous", async () => {
+      const { app, home } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const base = uiStore.getState().activeSession;
+      const threadId = `thread-main:${base.sessionId}`;
+      const reservations = [{
+        runId: "run-q1",
+        messageId: "message-q1",
+        threadId,
+        predecessorRunId: "run-r0",
+      }, {
+        runId: "run-q2",
+        messageId: "message-q2",
+        threadId,
+        predecessorRunId: "run-r0",
+      }];
+      const recovering: TuiSessionMeta = {
+        ...base,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: threadId,
+        queuedRunReservations: reservations,
+        terminalQueuedRuns: undefined,
+      };
+      const sessionsFile = appState.sessionsFile as {
+        version: number;
+        activeSessionName?: string;
+        sessions: TuiSessionMeta[];
+      };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === recovering.sessionId ? recovering : session
+        ),
+      };
+      uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+      appState.recoverTerminalMessages = async () => {};
+
+      await (appState.syncSessionFromDescribePayload as (
+        payload: Record<string, unknown>,
+      ) => Promise<void>)({
+        sessionId: recovering.sessionId,
+        version: 1,
+        threadId,
+        operatorThreadView: {
+          thread: {
+            threadId,
+            sessionId: recovering.sessionId,
+            title: "Terminal fork",
+            status: "COMPLETED",
+            createdAt: recovering.createdAt,
+            updatedAt: recovering.updatedAt,
+          },
+          childThreads: [],
+          childBlockerChain: [],
+          conversationTurns: [{
+            turnId: "turn-q2",
+            threadId,
+            sessionId: recovering.sessionId,
+            sequence: 2,
+            status: "COMPLETED",
+            rootRunId: "run-q2",
+            sourceMessageId: "message-q2",
+            terminalRunId: "run-q2",
+            terminalStatus: "COMPLETED",
+            startedAt: recovering.createdAt,
+            completedAt: recovering.updatedAt,
+            updatedAt: recovering.updatedAt,
+          }, {
+            turnId: "turn-q1",
+            threadId,
+            sessionId: recovering.sessionId,
+            sequence: exact ? 1 : 2,
+            status: "COMPLETED",
+            rootRunId: "run-q1",
+            ...(exact ? { sourceMessageId: "message-q1" } : {}),
+            terminalRunId: "run-q1",
+            terminalStatus: "COMPLETED",
+            startedAt: recovering.createdAt,
+            completedAt: recovering.updatedAt,
+            updatedAt: recovering.updatedAt,
+          }],
+        },
+      });
+
+      const session = uiStore.getState().activeSession;
+      const reloaded = new SessionStore(home).findByName(
+        await new SessionStore(home).load(),
+        recovering.name,
+      );
+      if (exact) {
+        assert.equal(session.acceptedRunId, "run-q2");
+        assert.equal(session.acceptedRunPredecessorId, "run-q1");
+        assert.equal(session.queuedRunReservations, undefined);
+        assert.deepEqual(session.terminalQueuedRuns, [{
+          ...reservations[0]!,
+          status: "COMPLETED",
+        }, {
+          ...reservations[1]!,
+          predecessorRunId: "run-q1",
+          status: "COMPLETED",
+        }]);
+        assert.deepEqual(reloaded?.terminalQueuedRuns, session.terminalQueuedRuns);
+      } else {
+        assert.equal(session.acceptedRunId, "run-r0");
+        assert.deepEqual(session.queuedRunReservations, reservations);
+        assert.equal(session.terminalQueuedRuns, undefined);
+        assert.throws(
+          () => exactTuiQueueTailRunId(session, normalizeTuiQueueGraph(session)),
+          /unresolved queue fork/u,
+        );
+        assert.deepEqual(reloaded?.queuedRunReservations, reservations);
+      }
+    });
+  }
+});
+
+test("restart reconciliation rejects a single terminal candidate without its exact source message", async (t) => {
+  for (const sourceMessageId of [undefined, "message-wrong"] as const) {
+    await t.test(sourceMessageId === undefined ? "missing" : "wrong", async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const base = uiStore.getState().activeSession;
+      const threadId = `thread-main:${base.sessionId}`;
+      const recovering: TuiSessionMeta = {
+        ...base,
+        acceptedRunId: "run-r0",
+        acceptedRunMessageId: "message-r0",
+        acceptedRunThreadId: threadId,
+        queuedRunReservations: [{
+          runId: "run-q1",
+          messageId: "message-q1",
+          threadId,
+          predecessorRunId: "run-r0",
+        }],
+      };
+      const sessionsFile = appState.sessionsFile as {
+        version: number;
+        activeSessionName?: string;
+        sessions: TuiSessionMeta[];
+      };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === recovering.sessionId ? recovering : session
+        ),
+      };
+      uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+      await (appState.syncSessionFromDescribePayload as (
+        payload: Record<string, unknown>,
+      ) => Promise<void>)({
+        sessionId: recovering.sessionId,
+        version: 1,
+        threadId,
+        operatorThreadView: {
+          thread: {
+            threadId,
+            sessionId: recovering.sessionId,
+            title: "Single terminal correlation",
+            status: "COMPLETED",
+            createdAt: recovering.createdAt,
+            updatedAt: recovering.updatedAt,
+          },
+          childThreads: [],
+          childBlockerChain: [],
+          conversationTurns: [{
+            turnId: "turn-q1",
+            threadId,
+            sessionId: recovering.sessionId,
+            sequence: 1,
+            status: "COMPLETED",
+            rootRunId: "run-q1",
+            ...(sourceMessageId === undefined ? {} : { sourceMessageId }),
+            terminalRunId: "run-q1",
+            terminalStatus: "COMPLETED",
+            startedAt: recovering.createdAt,
+            completedAt: recovering.updatedAt,
+            updatedAt: recovering.updatedAt,
+          }],
+        },
+      });
+
+      const session = uiStore.getState().activeSession;
+      assert.equal(session.acceptedRunId, "run-r0");
+      assert.equal(session.terminalQueuedRuns, undefined);
+      assert.equal(session.queuedRunReservations?.[0]?.runId, "run-q1");
+    });
+  }
+});
+
+test("restart reconciliation rewires an absent queued predecessor before promoting its successor", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-r0",
+    acceptedRunMessageId: "message-r0",
+    acceptedRunThreadId: threadId,
+    pendingQueueSubmissions: [{
+      runId: "run-absent-q1",
+      messageId: "message-absent-q1",
+      threadId,
+      predecessorRunId: "run-r0",
+      indeterminate: true,
+    }, {
+      runId: "run-accepted-q2",
+      messageId: "message-accepted-q2",
+      threadId,
+      predecessorRunId: "run-absent-q1",
+      indeterminate: true,
+    }],
+  };
+  const sessionsFile = appState.sessionsFile as {
+    version: number;
+    activeSessionName?: string;
+    sessions: TuiSessionMeta[];
+  };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+  await (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Rewired queue",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-r0", status: "RUNNING" },
+      conversationMessageRoutes: [{
+        messageId: "message-accepted-q2",
+        disposition: "queued",
+        runId: "run-accepted-q2",
+        createdAt: recovering.updatedAt,
+      }],
+    },
+  });
+
+  const rewired = uiStore.getState().activeSession;
+  assert.equal(rewired.pendingQueueSubmissions, undefined);
+  assert.deepEqual(rewired.queuedRunReservations, [{
+    runId: "run-accepted-q2",
+    messageId: "message-accepted-q2",
+    threadId,
+    predecessorRunId: "run-r0",
+  }]);
+
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "run-started-rewired-q2",
+    type: "run.started",
+    ts: "2026-08-29T00:00:02.000Z",
+    sessionId: recovering.sessionId,
+    threadId,
+    runId: "run-accepted-q2",
+    payload: {
+      sessionId: recovering.sessionId,
+      runId: "run-accepted-q2",
+      eventType: "user.message",
+      sourceMessageId: "message-accepted-q2",
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(uiStore.getState().activeSession.acceptedRunId, "run-accepted-q2");
+});
+
+test("restart reconciles an exact pending queue submission already active, waiting, or terminal", async (t) => {
+  for (const status of ["RUNNING", "WAITING", "COMPLETED", "FAILED"] as const) {
+    await t.test(status, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const base = uiStore.getState().activeSession;
+      const threadId = `thread-main:${base.sessionId}`;
+      const runId = `run-pending-promoted:${status}`;
+      const messageId = `message-pending-promoted:${status}`;
+      const recovering: TuiSessionMeta = {
+        ...base,
+        pendingQueueSubmissions: [{ runId, messageId, threadId }],
+      };
+      const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === recovering.sessionId ? recovering : session
+        ),
+      };
+      uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+      const recoveredTerminals: string[] = [];
+      appState.recoverTerminalMessages = async (session: TuiSessionMeta) => {
+        recoveredTerminals.push(session.acceptedRunId ?? "missing");
+      };
+
+      await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+        sessionId: recovering.sessionId,
+        version: 1,
+        threadId,
+        operatorThreadView: {
+          thread: {
+            threadId,
+            sessionId: recovering.sessionId,
+            title: "Promoted queued submission",
+            status,
+            ...(status === "WAITING" ? { waitFor: { kind: "user", eventType: "user.reply" } } : {}),
+            createdAt: recovering.createdAt,
+            updatedAt: recovering.updatedAt,
+          },
+          childThreads: [],
+          childBlockerChain: [],
+          ...(status === "RUNNING" || status === "WAITING"
+            ? { activeRun: { runId, status } }
+            : {
+                conversationTurns: [{
+                  turnId: `turn:${status}`,
+                  threadId,
+                  sessionId: recovering.sessionId,
+                  sequence: 1,
+                  status,
+                  sourceMessageId: messageId,
+                  rootRunId: runId,
+                  terminalRunId: runId,
+                  terminalStatus: status,
+                  startedAt: recovering.createdAt,
+                  completedAt: recovering.updatedAt,
+                  updatedAt: recovering.updatedAt,
+                }],
+              }),
+          conversationMessageRoutes: [{
+            messageId,
+            disposition: "started",
+            runId,
+            turnId: `turn:${status}`,
+            createdAt: recovering.createdAt,
+          }],
+        },
+      });
+
+      const session = uiStore.getState().activeSession;
+      assert.equal(session.pendingQueueSubmissions, undefined);
+      assert.equal(session.queuedRunReservations, undefined);
+      assert.equal(session.acceptedRunId, runId);
+      assert.equal(session.acceptedRunMessageId, messageId);
+      assert.equal(session.acceptedRunThreadId, threadId);
+      assert.equal(session.lastRunStatus, status === "RUNNING" ? undefined : status);
+      assert.deepEqual(
+        recoveredTerminals,
+        status === "COMPLETED" || status === "FAILED" ? [runId] : [],
+      );
+    });
+  }
+});
+
+test("restart reconciles an exact terminal for a confirmed queued reservation and rejects delayed start", async (t) => {
+  for (const terminal of ["COMPLETED", "FAILED", "CANCELLED"] as const) {
+    await t.test(terminal, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const base = uiStore.getState().activeSession;
+      const threadId = `thread-main:${base.sessionId}`;
+      const runId = `run-confirmed-terminal:${terminal}`;
+      const messageId = `message-confirmed-terminal:${terminal}`;
+      const queued: TuiSessionMeta = {
+        ...base,
+        queuedRunReservations: [{ runId, messageId, threadId }],
+      };
+      const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+      appState.sessionsFile = {
+        ...sessionsFile,
+        sessions: sessionsFile.sessions.map((session) =>
+          session.sessionId === queued.sessionId ? queued : session
+        ),
+      };
+      uiStore.patch({ activeSession: queued, sessions: [queued] });
+      const recoveredTerminals: string[] = [];
+      appState.recoverTerminalMessages = async (session: TuiSessionMeta) => {
+        recoveredTerminals.push(session.acceptedRunId ?? "missing");
+      };
+      const durableStatus = terminal === "COMPLETED" ? "COMPLETED" : "FAILED";
+
+      await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+        sessionId: queued.sessionId,
+        version: 1,
+        threadId,
+        operatorThreadView: {
+          thread: {
+            threadId,
+            sessionId: queued.sessionId,
+            title: "Queued terminal before callback save",
+            status: durableStatus,
+            createdAt: queued.createdAt,
+            updatedAt: queued.updatedAt,
+          },
+          childThreads: [],
+          childBlockerChain: [],
+          conversationTurns: [{
+            turnId: `turn:${terminal}`,
+            threadId,
+            sessionId: queued.sessionId,
+            sequence: 1,
+            status: durableStatus,
+            sourceMessageId: messageId,
+            rootRunId: runId,
+            terminalRunId: runId,
+            terminalStatus: durableStatus,
+            startedAt: queued.createdAt,
+            completedAt: queued.updatedAt,
+            updatedAt: queued.updatedAt,
+          }],
+        },
+      });
+
+      let session = uiStore.getState().activeSession;
+      assert.equal(session.queuedRunReservations, undefined);
+      assert.equal(session.acceptedRunId, runId);
+      assert.equal(session.acceptedRunMessageId, messageId);
+      assert.equal(session.acceptedRunThreadId, threadId);
+      assert.equal(session.lastRunStatus, durableStatus);
+      assert.deepEqual(recoveredTerminals, [runId]);
+
+      (appState.onRunnerEvent as (event: unknown) => void)({
+        id: `delayed-start:${terminal}`,
+        type: "run.started",
+        ts: "2026-08-29T00:00:01.000Z",
+        sessionId: queued.sessionId,
+        threadId,
+        runId,
+        payload: {
+          sessionId: queued.sessionId,
+          runId,
+          eventType: "user.message",
+          sourceMessageId: messageId,
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      session = uiStore.getState().activeSession;
+      assert.equal(session.lastRunStatus, durableStatus);
+      assert.equal(uiStore.getState().running, false);
+    });
+  }
+});
+
+test("startup scans inactive foreground queue evidence by exact session identity", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const visible = uiStore.getState().activeSession;
+  const ownerSessionId = "inactive-queue-restart-owner";
+  const threadId = `thread-main:${ownerSessionId}`;
+  const runId = "run-inactive-restart-owner";
+  const messageId = "message-inactive-restart-owner";
+  const owner: TuiSessionMeta = {
+    ...visible,
+    name: "inactive-queue-owner",
+    sessionId: ownerSessionId,
+    pendingQueueSubmissions: [{ runId, messageId, threadId }],
+  };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: [...sessionsFile.sessions, owner],
+  };
+  uiStore.patch({ sessions: [...uiStore.getState().sessions, owner] });
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      assert.equal(type, "session.describe");
+      assert.equal(payload.sessionId, ownerSessionId);
+      return {
+        type: "session.described",
+        payload: {
+          sessionId: ownerSessionId,
+          version: 1,
+          threadId,
+          operatorThreadView: {
+            thread: {
+              threadId,
+              sessionId: ownerSessionId,
+              title: "Inactive promoted queue",
+              status: "RUNNING",
+              createdAt: owner.createdAt,
+              updatedAt: owner.updatedAt,
+            },
+            childThreads: [],
+            childBlockerChain: [],
+            activeRun: { runId, status: "RUNNING" },
+            conversationMessageRoutes: [{
+              messageId,
+              disposition: "started",
+              runId,
+              createdAt: owner.createdAt,
+            }],
+          },
+        },
+      };
+    },
+  };
+
+  await (appState.reconcilePendingForegroundQueueSessions as (
+    skipSessionId?: string,
+  ) => Promise<void>)(visible.sessionId);
+
+  const reconciled = uiStore.getState().sessions.find(
+    (session) => session.sessionId === ownerSessionId,
+  );
+  assert.equal(reconciled?.pendingQueueSubmissions, undefined);
+  assert.equal(reconciled?.acceptedRunId, runId);
+  assert.equal(reconciled?.acceptedRunMessageId, messageId);
+  assert.equal(reconciled?.acceptedRunThreadId, threadId);
+  assert.equal(uiStore.getState().activeSession.sessionId, visible.sessionId);
+  assert.equal(
+    (appState.sessionsFile as { activeSessionName?: string }).activeSessionName,
+    visible.name,
+  );
+});
+
+test("session-scoped inactive start mutation preserves visible and durable active selection", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const visible = uiStore.getState().activeSession;
+  const inactive: TuiSessionMeta = {
+    ...visible,
+    name: "inactive-start-owner",
+    sessionId: "inactive-start-owner",
+    started: false,
+  };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = { ...sessionsFile, sessions: [...sessionsFile.sessions, inactive] };
+  uiStore.patch({ sessions: [...uiStore.getState().sessions, inactive] });
+
+  await (appState.setSessionState as (
+    sessionId: string,
+    patch: Partial<TuiSessionMeta>,
+  ) => Promise<TuiSessionMeta | undefined>)(inactive.sessionId, {
+    started: true,
+    acceptedRunId: "run-inactive-start",
+  });
+
+  assert.equal(uiStore.getState().activeSession.sessionId, visible.sessionId);
+  assert.equal(
+    (appState.sessionsFile as { activeSessionName?: string }).activeSessionName,
+    visible.name,
+  );
+  assert.equal(
+    uiStore.getState().sessions.find((session) => session.sessionId === inactive.sessionId)?.acceptedRunId,
+    "run-inactive-start",
+  );
+});
+
+test("restart tombstones exact undefined-root terminals without inventing queue order", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const terminals = ["COMPLETED", "FAILED", "COMPLETED"] as const;
+  const reservations = terminals.map((status, index) => ({
+    runId: `run-offline-terminal-${index}`,
+    messageId: `message-offline-terminal-${index}`,
+    threadId,
+    status,
+  }));
+  const recovering: TuiSessionMeta = {
+    ...base,
+    acceptedRunId: "run-current",
+    acceptedRunMessageId: "message-current",
+    acceptedRunThreadId: threadId,
+    queuedRunReservations: reservations.map(({ status: _status, ...identity }) => identity),
+  };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+  appState.recoverTerminalMessages = async () => {};
+
+  await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Multiple offline queue terminals",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-current", status: "RUNNING" },
+      conversationTurns: reservations.map((terminal, index) => ({
+        turnId: `turn-offline-terminal-${index}`,
+        threadId,
+        sessionId: recovering.sessionId,
+        sequence: index + 1,
+        status: terminal.status,
+        rootRunId: terminal.runId,
+        sourceMessageId: terminal.messageId,
+        terminalRunId: terminal.runId,
+        terminalStatus: terminal.status,
+        startedAt: recovering.createdAt,
+        completedAt: recovering.updatedAt,
+        updatedAt: recovering.updatedAt,
+      })),
+    },
+  });
+
+  const reconciled = uiStore.getState().activeSession as TuiSessionMeta & {
+    terminalQueuedRuns?: Array<{ runId: string; messageId: string; threadId: string; status: string }>;
+  };
+  assert.equal(reconciled.acceptedRunId, "run-current");
+  assert.equal(reconciled.acceptedRunMessageId, "message-current");
+  assert.equal(reconciled.queuedRunReservations, undefined);
+  const orderedTerminals = reservations;
+  assert.deepEqual(reconciled.terminalQueuedRuns, orderedTerminals);
+  const reloaded = new SessionStore(home).findByName(
+    await new SessionStore(home).load(),
+    recovering.name,
+  );
+  assert.deepEqual(reloaded?.terminalQueuedRuns, orderedTerminals);
+  for (const terminal of reservations) {
+    assert.equal(await (appState.syncForegroundSessionProgress as (
+      input: { sessionId: string; threadId: string; runId: string; messageId: string },
+    ) => Promise<boolean>)({
+      sessionId: recovering.sessionId,
+      threadId: terminal.threadId,
+      runId: terminal.runId,
+      messageId: terminal.messageId,
+    }), false);
+  }
+  assert.deepEqual(
+    (uiStore.getState().activeSession as TuiSessionMeta).terminalQueuedRuns,
+    orderedTerminals,
+  );
+});
+
+test("startup scans delegated running and waiting queue owners without changing active selection", async (t) => {
+  for (const status of ["RUNNING", "WAITING"] as const) {
+    await t.test(status, async () => {
+      const { app } = await createAppHarness();
+      const appState = app as unknown as Record<string, unknown>;
+      const uiStore = appState.uiStore as UiStore;
+      const visible = uiStore.getState().activeSession;
+      const ownerSessionId = `delegated-queue-${status.toLowerCase()}`;
+      const threadId = `thread-main:${ownerSessionId}`;
+      const runId = `run-delegated-${status.toLowerCase()}`;
+      const messageId = `message-delegated-${status.toLowerCase()}`;
+      const now = visible.updatedAt;
+      const owner: TuiSessionMeta = {
+        ...visible,
+        name: `delegated-${status.toLowerCase()}`,
+        sessionId: ownerSessionId,
+        queuedRunReservations: [{ runId, messageId, threadId }],
+        delegation: {
+          taskId: `task-${ownerSessionId}`,
+          title: "Delegated queued owner",
+          status,
+          childSessionId: ownerSessionId,
+          childSessionName: `delegated-${status.toLowerCase()}`,
+          profileId: visible.profileId,
+          provider: "openrouter",
+          model: "test-model",
+          createdAt: now,
+          updatedAt: now,
+        },
+      };
+      const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+      appState.sessionsFile = { ...sessionsFile, sessions: [...sessionsFile.sessions, owner] };
+      uiStore.patch({ sessions: [...uiStore.getState().sessions, owner] });
+      appState.client = {
+        sendCommand: async (type: string, payload: Record<string, unknown>) => {
+          assert.equal(type, "session.describe");
+          assert.equal(payload.sessionId, ownerSessionId);
+          return {
+            type: "session.described",
+            payload: {
+              sessionId: ownerSessionId,
+              version: 1,
+              threadId,
+              operatorThreadView: {
+                thread: {
+                  threadId,
+                  sessionId: ownerSessionId,
+                  title: "Delegated queue owner",
+                  status,
+                  waitFor: status === "WAITING" ? { kind: "user", eventType: "user.reply" } : undefined,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+                childThreads: [],
+                childBlockerChain: [],
+                activeRun: { runId, status },
+              },
+            },
+          };
+        },
+      };
+
+      await (appState.reconcilePendingForegroundQueueSessions as (
+        skipSessionId?: string,
+      ) => Promise<void>)(visible.sessionId);
+
+      const reconciled = uiStore.getState().sessions.find(
+        (session) => session.sessionId === ownerSessionId,
+      );
+      assert.equal(reconciled?.queuedRunReservations, undefined);
+      assert.equal(reconciled?.acceptedRunId, runId);
+      assert.equal(reconciled?.acceptedRunMessageId, messageId);
+      assert.equal(reconciled?.delegation?.status, status);
+      assert.equal(uiStore.getState().activeSession.sessionId, visible.sessionId);
+      assert.equal(
+        (appState.sessionsFile as { activeSessionName?: string }).activeSessionName,
+        visible.name,
+      );
+    });
+  }
+});
+
+test("queued-route restart recovery rebinds runtime identities and removes an exactly absent route", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const base = uiStore.getState().activeSession;
+  const threadId = `thread-main:${base.sessionId}`;
+  const pendingQueueSubmissions = [{
+    runId: "run-wrong-thread",
+    messageId: "message-wrong-thread",
+    threadId: `thread-other:${base.sessionId}`,
+  }, {
+    runId: "run-wrong-message",
+    messageId: "message-without-route",
+    threadId,
+  }, {
+    runId: "run-conflicting-route",
+    messageId: "message-conflicting-route",
+    threadId,
+  }];
+  const recovering: TuiSessionMeta = { ...base, pendingQueueSubmissions };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: sessionsFile.sessions.map((session) =>
+      session.sessionId === recovering.sessionId ? recovering : session
+    ),
+  };
+  uiStore.patch({ activeSession: recovering, sessions: [recovering] });
+
+  await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+    sessionId: recovering.sessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: recovering.sessionId,
+        title: "Conflicting queue routes",
+        status: "RUNNING",
+        createdAt: recovering.createdAt,
+        updatedAt: recovering.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-current", status: "RUNNING" },
+      conversationMessageRoutes: [{
+        messageId: "message-wrong-thread",
+        disposition: "queued",
+        followUpId: "follow-up:wrong-thread",
+        createdAt: "2026-08-29T00:00:00.000Z",
+      }, {
+        messageId: "message-conflicting-route",
+        disposition: "queued",
+        runId: "run-different",
+        followUpId: "follow-up:conflicting-run",
+        createdAt: "2026-08-29T00:00:01.000Z",
+      }],
+    },
+  });
+
+  assert.deepEqual(uiStore.getState().activeSession.pendingQueueSubmissions, [{
+    ...pendingQueueSubmissions[0],
+  }]);
+  assert.deepEqual(uiStore.getState().activeSession.queuedRunReservations, [{
+    runId: "run-different",
+    messageId: "message-conflicting-route",
+    threadId,
+    predecessorRunId: "run-wrong-thread",
+  }]);
+});
+
+test("inactive foreground queued terminal ownership is written to the owning session file", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const visible = uiStore.getState().activeSession;
+  const activeProfile = uiStore.getState().activeProfile;
+  const owningProfile = {
+    ...activeProfile,
+    id: "inactive-owner-profile",
+    modelProvider: "openai" as const,
+    model: "owner-profile-model",
+  };
+  appState.profileStore = {
+    load: async () => [owningProfile],
+    findById: (profiles: typeof owningProfile[], id: string) =>
+      profiles.find((profile) => profile.id === id),
+  };
+  const ownerSessionId = "inactive-foreground-owner";
+  const threadId = `thread-main:${ownerSessionId}`;
+  const runId = "run-inactive-owner-terminal";
+  const messageId = "message-inactive-owner-terminal";
+  const owner: TuiSessionMeta = {
+    ...visible,
+    name: "inactive-owner",
+    sessionId: ownerSessionId,
+    profileId: owningProfile.id,
+    queuedRunReservations: [{ runId, messageId, threadId }],
+  };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: [...sessionsFile.sessions, owner],
+  };
+  uiStore.patch({ sessions: [...uiStore.getState().sessions, owner] });
+
+  assert.equal(await (appState.syncForegroundQueuedTerminal as (input: Record<string, unknown>) => Promise<boolean>)({
+    sessionId: ownerSessionId,
+    threadId,
+    runId,
+    result: {
+      assistantText: "Inactive result",
+      output: {
+        status: "COMPLETED",
+        sessionId: ownerSessionId,
+        runId,
+        quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+        errors: [],
+        telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+      },
+      operatorAffordance: {
+        interactionMode: "plan",
+        allowedToolClasses: ["read_only"],
+      },
+    },
+    authoritativeView: {
+      thread: {
+        threadId,
+        sessionId: ownerSessionId,
+        title: "Inactive exact terminal",
+        status: "COMPLETED",
+        lastRunStatus: "COMPLETED",
+        createdAt: owner.createdAt,
+        updatedAt: owner.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      conversationTurns: [{
+        turnId: `turn-${runId}`,
+        threadId,
+        sessionId: ownerSessionId,
+        sequence: 1,
+        status: "COMPLETED",
+        rootRunId: runId,
+        sourceMessageId: messageId,
+        terminalRunId: runId,
+        terminalStatus: "COMPLETED",
+        startedAt: owner.createdAt,
+        completedAt: owner.updatedAt,
+        updatedAt: owner.updatedAt,
+      }],
+    },
+  }), true);
+
+  assert.equal(uiStore.getState().activeSession.sessionId, visible.sessionId);
+  const reloadedFile = await new SessionStore(home).load();
+  const persisted = new SessionStore(home).findByName(
+    reloadedFile,
+    owner.name,
+  );
+  assert.equal(reloadedFile.activeSessionName, visible.name);
+  assert.equal(persisted?.queuedRunReservations, undefined);
+  assert.equal(persisted?.acceptedRunId, runId);
+  assert.equal(persisted?.acceptedRunMessageId, messageId);
+  assert.equal(persisted?.acceptedRunThreadId, threadId);
+  assert.equal(persisted?.lastRunStatus, "COMPLETED");
+  assert.deepEqual(persisted?.terminalQueuedRuns, [{
+    runId,
+    messageId,
+    threadId,
+    status: "COMPLETED",
+  }]);
+  assert.deepEqual(persisted?.operatorState?.provider, {
+    id: "openai",
+    model: "owner-profile-model",
+  });
+});
+
+test("inactive queued terminal wins over a stale describe delayed by owner profile loading", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const visible = uiStore.getState().activeSession;
+  const ownerSessionId = "inactive-terminal-interleaved-describe";
+  const threadId = `thread-main:${ownerSessionId}`;
+  const runId = "run-terminal-interleaved-describe";
+  const messageId = "message-terminal-interleaved-describe";
+  const owner: TuiSessionMeta = {
+    ...visible,
+    name: "inactive-interleaved-owner",
+    sessionId: ownerSessionId,
+    profileId: "profile-loaded-after-terminal",
+    queuedRunReservations: [{ runId, messageId, threadId }],
+  };
+  const sessionsFile = appState.sessionsFile as { version: number; activeSessionName?: string; sessions: TuiSessionMeta[] };
+  appState.sessionsFile = {
+    ...sessionsFile,
+    sessions: [...sessionsFile.sessions, owner],
+  };
+  uiStore.patch({ sessions: [...uiStore.getState().sessions, owner] });
+
+  const persistedStatuses: Array<string | undefined> = [];
+  const sessionStore = appState.sessionStore as SessionStore;
+  const saveSessionsFile = sessionStore.save.bind(sessionStore);
+  sessionStore.save = async (file) => {
+    persistedStatuses.push(file.sessions.find(
+      (session) => session.sessionId === ownerSessionId,
+    )?.lastRunStatus);
+    await saveSessionsFile(file);
+  };
+  let releaseProfileLoad: ((profiles: unknown[]) => void) | undefined;
+  let profileLoadStartedResolve: (() => void) | undefined;
+  const profileLoadStarted = new Promise<void>((resolve) => {
+    profileLoadStartedResolve = resolve;
+  });
+  appState.profileStore = {
+    load: async () => await new Promise<unknown[]>((resolve) => {
+      releaseProfileLoad = resolve;
+      profileLoadStartedResolve?.();
+    }),
+    findById: (profiles: Array<{ id: string }>, id: string) =>
+      profiles.find((profile) => profile.id === id),
+  };
+
+  const describing = (appState.syncSessionFromDescribePayload as (
+    payload: Record<string, unknown>,
+  ) => Promise<void>)({
+    sessionId: ownerSessionId,
+    version: 1,
+    threadId,
+    operatorThreadView: {
+      thread: {
+        threadId,
+        sessionId: ownerSessionId,
+        title: "Stale queued description",
+        status: "RUNNING",
+        createdAt: owner.createdAt,
+        updatedAt: owner.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      activeRun: { runId: "run-other-active", status: "RUNNING" },
+      conversationMessageRoutes: [{
+        messageId,
+        disposition: "queued",
+        followUpId: "follow-up:stale-queued-description",
+        createdAt: owner.updatedAt,
+      }],
+    },
+  });
+  await profileLoadStarted;
+
+  assert.equal(await (appState.syncForegroundQueuedTerminal as (input: Record<string, unknown>) => Promise<boolean>)({
+    sessionId: ownerSessionId,
+    threadId,
+    runId,
+    result: {
+      assistantText: "Terminal wins",
+      output: {
+        status: "COMPLETED",
+        sessionId: ownerSessionId,
+        runId,
+        quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+        errors: [],
+        telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+      },
+    },
+    authoritativeView: {
+      thread: {
+        threadId,
+        sessionId: ownerSessionId,
+        title: "Interleaved exact terminal",
+        status: "COMPLETED",
+        lastRunStatus: "COMPLETED",
+        createdAt: owner.createdAt,
+        updatedAt: owner.updatedAt,
+      },
+      childThreads: [],
+      childBlockerChain: [],
+      conversationTurns: [{
+        turnId: `turn-${runId}`,
+        threadId,
+        sessionId: ownerSessionId,
+        sequence: 1,
+        status: "COMPLETED",
+        rootRunId: runId,
+        sourceMessageId: messageId,
+        terminalRunId: runId,
+        terminalStatus: "COMPLETED",
+        startedAt: owner.createdAt,
+        completedAt: owner.updatedAt,
+        updatedAt: owner.updatedAt,
+      }],
+    },
+  }), true);
+  releaseProfileLoad?.([{
+    ...uiStore.getState().activeProfile,
+    id: owner.profileId,
+  }]);
+  await describing;
+
+  const current = uiStore.getState().sessions.find((session) => session.sessionId === ownerSessionId);
+  assert.equal(current?.queuedRunReservations, undefined);
+  assert.equal(current?.acceptedRunId, runId);
+  assert.equal(current?.acceptedRunMessageId, messageId);
+  assert.equal(current?.acceptedRunThreadId, threadId);
+  assert.equal(current?.lastRunStatus, "COMPLETED");
+  assert.equal(uiStore.getState().activeSession.sessionId, visible.sessionId);
+  assert.deepEqual(persistedStatuses, ["COMPLETED"]);
+  const persistedFile = await new SessionStore(home).load();
+  assert.equal(persistedFile.activeSessionName, visible.name);
+  assert.equal(
+    persistedFile.sessions.find((session) => session.sessionId === ownerSessionId)?.lastRunStatus,
+    "COMPLETED",
+  );
 });
 
 test("start task journey clears inherited preset metadata when preset none is selected", async () => {
@@ -1246,6 +6937,7 @@ test("start task journey clears inherited preset metadata when preset none is se
   await (appState.handleLine as (line: string) => Promise<void>)("investigation-task");
   await (appState.handleLine as (line: string) => Promise<void>)("none");
   await (appState.handleLine as (line: string) => Promise<void>)("detached");
+  await (appState.handleLine as (line: string) => Promise<void>)("default");
   await (appState.handleLine as (line: string) => Promise<void>)("Investigate queue latency");
   await (appState.handleLine as (line: string) => Promise<void>)("current");
   await (appState.handleLine as (line: string) => Promise<void>)("default");
@@ -1297,6 +6989,7 @@ test("start task journey treats launch workspace as current when active session 
   await (appState.handleLine as (line: string) => Promise<void>)("none");
   await (appState.handleLine as (line: string) => Promise<void>)("none");
   await (appState.handleLine as (line: string) => Promise<void>)("current");
+  await (appState.handleLine as (line: string) => Promise<void>)("default");
   await (appState.handleLine as (line: string) => Promise<void>)("Scaffold app");
   await (appState.handleLine as (line: string) => Promise<void>)("current");
   await (appState.handleLine as (line: string) => Promise<void>)("default");
@@ -1304,6 +6997,7 @@ test("start task journey treats launch workspace as current when active session 
 
   const state = (appState.uiStore as UiStore).getState();
   assert.equal(state.activeSession.workspaceBinding, "active");
+  assert.equal(state.activeSession.environmentPresetId, "cli_dev_local");
   assert.equal(state.activeSession.workspaceId, workspace.manifest.workspaceId);
   assert.equal(state.activeSession.workspaceRoot, workspace.rootPath);
 });
@@ -1372,6 +7066,7 @@ test("start task journey accepts a discovered workspace id", async () => {
   await (appState.handleLine as (line: string) => Promise<void>)("none");
   await (appState.handleLine as (line: string) => Promise<void>)("none");
   await (appState.handleLine as (line: string) => Promise<void>)(workspace.manifest.workspaceId);
+  await (appState.handleLine as (line: string) => Promise<void>)("default");
   await (appState.handleLine as (line: string) => Promise<void>)("Investigate workspace selection");
   await (appState.handleLine as (line: string) => Promise<void>)("current");
   await (appState.handleLine as (line: string) => Promise<void>)("default");
@@ -1381,6 +7076,36 @@ test("start task journey accepts a discovered workspace id", async () => {
   assert.equal(state.activeSession.workspaceId, workspace.manifest.workspaceId);
   assert.equal(state.activeSession.workspaceRoot, workspace.rootPath);
   assert.equal(state.activeSession.workspaceBinding, "active");
+});
+
+test("operator-launched background sessions inherit the parent environment", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const initialState = (appState.uiStore as UiStore).getState();
+  let runProfileId: string | undefined;
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      assert.equal(type, "run.start");
+      runProfileId = typeof payload.profileId === "string" ? payload.profileId : undefined;
+      return { type: "run.completed", payload: {} };
+    },
+  };
+
+  await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
+    kind: "command",
+    command: "tasks",
+    args: ["launch", initialState.activeProfile.id, "inspect", "the", "workspace"],
+  });
+
+  const state = (appState.uiStore as UiStore).getState();
+  const background = state.sessions.find((session) =>
+    session.delegation?.parentSessionId === initialState.activeSession.sessionId
+  );
+  assert.equal(background?.environmentPresetId, "cli_dev_local");
+  assert.equal(
+    runProfileId,
+    "kestrel:cli_dev_local:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  );
 });
 
 test("/mcp opens the MCP workspace and stores the latest MCP snapshot", async () => {
@@ -1961,6 +7686,7 @@ test("SessionsView renders additive assembly state in the detail drawer", async 
           threadId: session.sessionId,
           bundleId: "bundle:reference:default",
           label: "Reference default",
+          environmentPresetId: "cli_dev_local",
           authority: "profile",
           cause: "thread_start",
           provider: {
@@ -2055,7 +7781,8 @@ test("SessionsView renders additive assembly state in the detail drawer", async 
     }),
   );
 
-  assert.match(rendered, /assembly=Reference default/u);
+  assert.match(rendered, /assembly=Kestrel on Developer workspace/u);
+  assert.doesNotMatch(rendered, /bundle:reference:default|cli_dev_local/u);
   assert.match(rendered, /openrouter\/google\/gemini-3\.1-flash-lite-preview/u);
   assert.match(rendered, /variant:reference-react:plan/u);
   assert.match(rendered, /compat:downgraded/u);
@@ -2075,6 +7802,23 @@ test("TasksView renders additive assembly provider, variant, and downgrade marke
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
     started: true,
+    pendingRunId: "internal-pending-run-id",
+    pendingRunRequestId: "internal-pending-request-id",
+    pendingRunMessageId: "internal-pending-message-id",
+    pendingRunThreadId: "internal-pending-thread-id",
+    queuedRunReservations: [{
+      runId: "internal-queued-run-id",
+      messageId: "internal-queued-message-id",
+      threadId: "internal-queued-thread-id",
+    }],
+    pendingQueueSubmissions: [{
+      runId: "internal-pending-queue-run-id",
+      messageId: "internal-pending-queue-message-id",
+      threadId: "internal-pending-queue-thread-id",
+    }],
+    acceptedRunId: "internal-accepted-run-id",
+    acceptedRunMessageId: "internal-accepted-message-id",
+    acceptedRunThreadId: "internal-accepted-thread-id",
     delegation: {
       taskId: "task-1",
       title: "Delegated compatibility check",
@@ -2093,6 +7837,7 @@ test("TasksView renders additive assembly provider, variant, and downgrade marke
         threadId: "task-thread-1",
         bundleId: "bundle:ops:task",
         label: "Task downgraded bundle",
+        environmentPresetId: "workspace_hosted",
         authority: "policy",
         cause: "capability_loss",
         provider: {
@@ -2175,7 +7920,8 @@ test("TasksView renders additive assembly provider, variant, and downgrade marke
     }),
   );
 
-  assert.match(rendered, /Task downgraded bundle/u);
+  assert.match(rendered, /Kestrel on Developer workspace \(hosted\)/u);
+  assert.doesNotMatch(rendered, /bundle:ops:task|workspace_hosted/u);
   assert.match(rendered, /var:ops\.approval/u);
   assert.match(rendered, /!downgraded/u);
   assert.match(rendered, /assemblyProvider=openrouter\/google\/gemini-3\.1-flash-lite-preview/u);
@@ -2188,6 +7934,7 @@ test("TasksView renders additive assembly provider, variant, and downgrade marke
   assert.match(rendered, /superseded:1/u);
   assert.match(rendered, /ev:3/u);
   assert.match(rendered, /childThreads=total:2 running:0 waiting:1 completed:1 failed:0 cancelled:1/u);
+  assert.doesNotMatch(rendered, /internal-(?:pending|queued|accepted)/u);
   assert.match(
     rendered,
     /childResults=task-thread-child status=COMPLETED resultStatus=completed[\s\S]*result=Child result ready\./u,
@@ -2585,6 +8332,65 @@ test("interactive operator command failures surface in the TUI instead of escapi
   assert.match(rawHistory, /Input failed: Postgres is not reachable/u);
 });
 
+test("primary session selection surfaces an unavailable authoring profile", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+  const sessionStore = appState.sessionStore as SessionStore;
+  const activeSession = uiStore.getState().activeSession;
+  const target: TuiSessionMeta = {
+    ...activeSession,
+    name: "missing-profile-session",
+    sessionId: "session-missing-profile",
+    profileId: "missing-authoring-profile",
+    effectiveAssemblyId: "bundle:missing-profile",
+    started: true,
+  };
+  appState.sessionsFile = sessionStore.upsert(
+    appState.sessionsFile as { sessions: TuiSessionMeta[] },
+    target,
+  );
+  uiStore.patch({
+    activeView: "chat",
+    activeRegion: "sessions",
+    focusRegion: "sessions",
+    sessions: [target],
+    scroll: {
+      ...uiStore.getState().scroll,
+      sessions: {
+        ...uiStore.getState().scroll.sessions,
+        cursor: 0,
+      },
+    },
+  });
+  appState.client = {
+    sendCommand: async () => ({
+      type: "session.described",
+      payload: {
+        sessionId: target.sessionId,
+        version: 1,
+        activeAssembly: {
+          mode: "explicit",
+          bundleId: target.effectiveAssemblyId,
+          environmentPresetId: target.environmentPresetId,
+        },
+      },
+    }),
+  };
+
+  const controller = (appState.buildController as () => InkAppController)();
+  controller.activatePrimaryAction();
+
+  await waitFor(() =>
+    uiStore.getState().errorOverlay?.code === "TUI_AUTHORING_PROFILE_UNAVAILABLE"
+  );
+  assert.equal(uiStore.getState().activeSession.sessionId, activeSession.sessionId);
+  assert.match(
+    uiStore.getState().errorOverlay?.message ?? "",
+    /authoring profile 'missing-authoring-profile' is unavailable/u,
+  );
+});
+
 test("plain submissions during a running turn reach authoritative conversation routing immediately", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
@@ -2633,6 +8439,63 @@ test("queue command during a running turn delegates immediately with explicit qu
   assert.equal(turns.length, 1);
   assert.equal(turns[0]?.submittedMessage, "also check the failing test output");
   assert.equal(turns[0]?.queueRequested, true);
+});
+
+test("queued dispatch stops at the acknowledged App session-save barrier", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const sessionStore = appState.sessionStore as SessionStore;
+  const save = sessionStore.save.bind(sessionStore);
+  sessionStore.save = async (file) => {
+    if (file.sessions.some((session) => (session.pendingQueueSubmissions?.length ?? 0) > 0)) {
+      throw new Error("injected pending queue save failure");
+    }
+    await save(file);
+  };
+  let submissionCount = 0;
+  appState.client = {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "session.describe") {
+        return {
+          type: "session.described",
+          payload: {
+            sessionId: String(payload.sessionId),
+            version: 1,
+            threadId: `thread-main:${String(payload.sessionId)}`,
+            activeAssembly: {
+              mode: "explicit",
+              bundleId: "bundle:kestrel:cli",
+              environmentPresetId: "cli_dev_local",
+            },
+          },
+        };
+      }
+      if (type === "conversation.message.submit") submissionCount += 1;
+      throw new Error(`Unexpected command '${type}'.`);
+    },
+  };
+  const runController = (appState.getRunController as () => {
+    startActiveTurn(input: {
+      messageId: string;
+      submittedMessage: string;
+      queueRequested: boolean;
+    }): Promise<boolean>;
+  })();
+
+  assert.equal(await runController.startActiveTurn({
+    messageId: "message-app-save-barrier",
+    submittedMessage: "must remain local",
+    queueRequested: true,
+  }), false);
+  assert.equal(submissionCount, 0);
+  assert.equal(
+    (appState.uiStore as UiStore).getState().activeSession.pendingQueueSubmissions,
+    undefined,
+  );
+  assert.match(
+    (appState.uiStore as UiStore).getState().errorOverlay?.message ?? "",
+    /injected pending queue save failure/u,
+  );
 });
 
 test("delegation workspace renders result-only error and reference child outcomes", async () => {
@@ -3103,11 +8966,12 @@ test("startup resolves a unique session id fragment to the matching session", as
   const appState = app as unknown as Record<string, unknown>;
   const sessionStore = appState.sessionStore as SessionStore;
   const profiles = await (appState.profileStore as ProfileStore).load();
+  const activeProfile = (appState.uiStore as UiStore).getState().activeProfile;
   const now = new Date().toISOString();
   const targetSession: TuiSessionMeta = {
     name: "session-1783373851798",
     sessionId: "reference-session-1783373851798-1783373851801",
-    profileId: "reference",
+    profileId: activeProfile.id,
     createdAt: now,
     updatedAt: now,
     started: true,
@@ -3814,29 +9678,53 @@ test("natural-language mode switches are forwarded for runtime intent classifica
     pendingWaitFor: {
       kind: "user",
       eventType: "user.reply",
+      interaction: {
+        version: "v1",
+        requestId: "request-natural-mode",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Switch to Build?",
+      },
       metadata: {
         reason: "planner_mode_blocked",
         requiredToolClass: "sandboxed_only",
+        requiredCapabilities: ["filesystem.write"],
       },
     },
     updatedAt: new Date().toISOString(),
   });
 
   let capturedCommandType: string | undefined;
-  let capturedTurn: Record<string, unknown> | undefined;
+  let capturedPayload: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedCommandType = type;
-      capturedTurn = payload.turn;
+      capturedPayload = payload;
       return {
-        type: "run.completed",
+        type: "operator.controlled",
+        sessionId: "session-1",
+        threadId: "thread-main:session-1",
+        runId: "run-natural-mode",
         payload: {
+          sessionId: "session-1",
+          threadId: "thread-main:session-1",
+          disposition: "completed",
+          runId: "run-natural-mode",
+          modeResolution: {
+            version: "mode_resolution_v1",
+            requestId: "request-natural-mode",
+            runId: "run-natural-mode",
+            interactionMode: "build",
+            source: "classified_reply",
+            disposition: "resume",
+          },
           result: {
             assistantText: null,
             output: {
               status: "COMPLETED",
               sessionId: "session-1",
-              runId: "run-1",
+              runId: "run-natural-mode",
               quality: {
                 citationCoverage: 1,
                 unresolvedClaims: 0,
@@ -3862,13 +9750,39 @@ test("natural-language mode switches are forwarded for runtime intent classifica
 
   await (appState.handleLine as (line: string) => Promise<void>)("switch to build");
 
-  assert.equal(capturedCommandType, "conversation.message.submit");
-  assert.equal(capturedTurn?.eventType, undefined);
-  assert.equal(capturedTurn?.message, "switch to build");
-  assert.equal(capturedTurn?.resumeBlockedRun, undefined);
+  assert.equal(capturedCommandType, "operator.control");
+  assert.equal(capturedPayload?.requestId, "request-natural-mode");
+  assert.equal(capturedPayload?.message, "switch to build");
+  assert.equal(capturedPayload?.interactionMode, undefined);
+  assert.equal((appState.uiStore as UiStore).getState().activeSession.interactionMode, "build");
 
   const rawHistory = await readFile(historyPath, "utf8");
   assert.match(rawHistory, /switch to build/u);
+});
+
+test("session description restores the Local Core interaction mode after restart", async () => {
+  const { app } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const uiStore = appState.uiStore as UiStore;
+
+  await (appState.syncSessionFromDescribePayload as (payload: Record<string, unknown>) => Promise<void>)({
+    sessionId: "session-1",
+    version: 3,
+    interactionMode: "build",
+    actSubmode: "safe",
+    modeResolution: {
+      version: "mode_resolution_v1",
+      requestId: "request-restart-mode",
+      runId: "run-restart-mode",
+      interactionMode: "build",
+      actSubmode: "safe",
+      source: "classified_reply",
+      disposition: "resume",
+    },
+  });
+
+  assert.equal(uiStore.getState().activeSession.interactionMode, "build");
+  assert.equal(uiStore.getState().activeSession.actSubmode, "safe");
 });
 
 test("mode command resumes blocked runs with an explicit resume flag", async () => {
@@ -3898,12 +9812,29 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
   let capturedPayload: Record<string, unknown> | undefined;
   appState.client = {
     sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedCommandType = type;
       capturedPayload = payload;
       return {
-        type: "run.completed",
+        type: "operator.controlled",
+        sessionId: "session-1",
+        threadId: "thread-main:session-1",
+        runId: "run-2",
         payload: {
+          sessionId: "session-1",
+          threadId: "thread-main:session-1",
+          disposition: "completed",
+          runId: "run-2",
+          modeResolution: {
+            version: "mode_resolution_v1",
+            requestId: "request-mode-command",
+            runId: "run-2",
+            interactionMode: "build",
+            source: "explicit_command",
+            disposition: "resume",
+          },
           result: {
+            assistantText: null,
             output: {
               status: "COMPLETED",
               sessionId: "session-1",
@@ -3943,7 +9874,8 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
   assert.equal(capturedPayload?.message, "/mode build");
 
   const rawHistory = await readFile(historyPath, "utf8");
-  assert.match(rawHistory, /Mode set to Build\. Resuming blocked run\./u);
+  assert.match(rawHistory, /Mode set to Build\./u);
+  assert.doesNotMatch(rawHistory, /Resuming blocked run\./u);
 });
 
 test("mode build succeeds without a trailing submode and does not print usage", async () => {
@@ -4052,7 +9984,8 @@ test("mode build forwards canonical build mode on run.start", async () => {
 
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (_type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: { turn?: Record<string, unknown> }) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedTurn = payload.turn;
       return {
         type: "run.completed",
@@ -4120,43 +10053,48 @@ test("run completion appends finalize provenance notice when reporting grounding
   const appState = app as unknown as Record<string, unknown>;
 
   appState.client = {
-    sendCommand: async () => ({
-      type: "run.completed",
-      payload: {
-        result: {
-          assistantText: "Implemented requested repository update.",
-          output: {
-            status: "COMPLETED",
-            sessionId: "session-1",
-            runId: "run-1",
-            quality: {
-              citationCoverage: 1,
-              unresolvedClaims: 0,
-              reworkRate: 0,
-              thrashIndex: 0,
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
+      const runId = String((payload.turn as Record<string, unknown>).runId);
+      return {
+        type: "run.completed",
+        runId,
+        payload: {
+          result: {
+            assistantText: "Implemented requested repository update.",
+            output: {
+              status: "COMPLETED",
+              sessionId: "session-1",
+              runId,
+              quality: {
+                citationCoverage: 1,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              errors: [],
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 1,
+                modelCalls: 1,
+                durationMs: 1,
+              },
             },
-            errors: [],
-            telemetry: {
-              stepsExecuted: 1,
-              toolCalls: 1,
-              modelCalls: 1,
-              durationMs: 1,
-            },
-          },
-          finalizedPayload: {
-            message: "Implemented requested repository update.",
-            data: {
-              reportingGrounding: {
-                summary: "model_authored",
-                blockers: "runtime_linked",
-                residualRisks: "model_authored",
-                completionState: "inferred_from_workplan",
+            finalizedPayload: {
+              message: "Implemented requested repository update.",
+              data: {
+                reportingGrounding: {
+                  summary: "model_authored",
+                  blockers: "runtime_linked",
+                  residualRisks: "model_authored",
+                  completionState: "inferred_from_workplan",
+                },
               },
             },
           },
         },
-      },
-    }),
+      };
+    },
   };
 
   await (appState.handleLine as (line: string) => Promise<void>)("ship it");
@@ -4183,43 +10121,48 @@ test("continuation grant history line confirms resumption without raw counters",
   });
 
   appState.client = {
-    sendCommand: async () => ({
-      type: "run.completed",
-      payload: {
-        result: {
-          output: {
-            status: "WAITING",
-            sessionId: "session-1",
-            runId: "run-1",
-            waitFor: {
-              kind: "user",
-              eventType: "user.reply",
-              metadata: {
-                reason: "max_steps_continuation",
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
+      const runId = String((payload.turn as Record<string, unknown>).runId);
+      return {
+        type: "run.completed",
+        runId,
+        payload: {
+          result: {
+            output: {
+              status: "WAITING",
+              sessionId: "session-1",
+              runId,
+              waitFor: {
+                kind: "user",
+                eventType: "user.reply",
+                metadata: {
+                  reason: "max_steps_continuation",
+                },
               },
-            },
-            continuation: {
-              outcome: "granted",
-              extraStepsGranted: 10,
-              continuationCount: 1,
-            },
-            quality: {
-              citationCoverage: 1,
-              unresolvedClaims: 0,
-              reworkRate: 0,
-              thrashIndex: 0,
-            },
-            errors: [],
-            telemetry: {
-              stepsExecuted: 1,
-              toolCalls: 0,
-              modelCalls: 0,
-              durationMs: 1,
+              continuation: {
+                outcome: "granted",
+                extraStepsGranted: 10,
+                continuationCount: 1,
+              },
+              quality: {
+                citationCoverage: 1,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              errors: [],
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 0,
+                durationMs: 1,
+              },
             },
           },
         },
-      },
-    }),
+      };
+    },
   };
 
   await (appState.handleLine as (line: string) => Promise<void>)("go on");
@@ -4309,6 +10252,7 @@ test("continuation replies are forwarded for runtime intent classification", asy
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
     sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedCommandType = type;
       capturedTurn = payload.turn;
       return {
@@ -4379,6 +10323,7 @@ test("non-continuation text during an ordinary wait leaves routing to the runtim
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
     sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedCommandType = type;
       capturedTurn = payload.turn;
       return {
@@ -4448,12 +10393,16 @@ test("exact continuation text during ordinary waits is routed by the runtime", a
   let capturedPayload: Record<string, unknown> | undefined;
   appState.client = {
     sendCommand: async (type: string, payload: Record<string, unknown>) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedCommandType = type;
       capturedPayload = payload;
       return {
-        type: "run.completed",
+        type: "operator.controlled",
         payload: {
+          threadId: "thread-main:session-1",
+          disposition: "completed",
           result: {
+            assistantText: null,
             output: {
               status: "COMPLETED",
               sessionId: "session-1",
@@ -4590,7 +10539,8 @@ test("continuation replies apply manual compaction when adaptation already recom
 
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (_type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
       capturedTurn = payload.turn;
       return {
         type: "run.completed",
@@ -4660,43 +10610,46 @@ test("continuation-like replies do not synthesize a grant line without runtime c
   });
 
   appState.client = {
-    sendCommand: async () => ({
-      type: "run.completed",
-      payload: {
-        result: {
-          output: {
-            status: "WAITING",
-            sessionId: "session-1",
-            runId: "run-2",
-            waitFor: {
-              kind: "user",
-              eventType: "user.reply",
-              metadata: {
-                reason: "max_steps_continuation",
+    sendCommand: async (type: string) => {
+      if (type === "session.describe") return makeExactTuiSessionDescription();
+      return {
+        type: "run.completed",
+        payload: {
+          result: {
+            output: {
+              status: "WAITING",
+              sessionId: "session-1",
+              runId: "run-2",
+              waitFor: {
+                kind: "user",
+                eventType: "user.reply",
+                metadata: {
+                  reason: "max_steps_continuation",
+                },
               },
-            },
-            continuation: {
-              outcome: "requested",
-              extraStepsRequested: 50,
-              continuationCount: 0,
-            },
-            quality: {
-              citationCoverage: 1,
-              unresolvedClaims: 0,
-              reworkRate: 0,
-              thrashIndex: 0,
-            },
-            errors: [],
-            telemetry: {
-              stepsExecuted: 1,
-              toolCalls: 0,
-              modelCalls: 0,
-              durationMs: 1,
+              continuation: {
+                outcome: "requested",
+                extraStepsRequested: 50,
+                continuationCount: 0,
+              },
+              quality: {
+                citationCoverage: 1,
+                unresolvedClaims: 0,
+                reworkRate: 0,
+                thrashIndex: 0,
+              },
+              errors: [],
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 0,
+                durationMs: 1,
+              },
             },
           },
         },
-      },
-    }),
+      };
+    },
   };
 
   await (appState.handleLine as (line: string) => Promise<void>)("go on");

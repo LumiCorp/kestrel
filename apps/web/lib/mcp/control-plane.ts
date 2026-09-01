@@ -989,6 +989,12 @@ export async function reviewEnvironmentMcpSnapshot(input: {
               mcpServerId: input.serverId,
               mcpKind: capability.kind,
               definitionDigest: digestCanonicalJson(capability.definition),
+              ...(capability.kind === "tool" &&
+              capability.definition.inputSchema &&
+              typeof capability.definition.inputSchema === "object" &&
+              !Array.isArray(capability.definition.inputSchema)
+                ? { inputSchema: capability.definition.inputSchema }
+                : {}),
             },
             createdAt: now,
             updatedAt: now,
@@ -1010,6 +1016,12 @@ export async function reviewEnvironmentMcpSnapshot(input: {
                 mcpServerId: input.serverId,
                 mcpKind: capability.kind,
                 definitionDigest: digestCanonicalJson(capability.definition),
+                ...(capability.kind === "tool" &&
+                capability.definition.inputSchema &&
+                typeof capability.definition.inputSchema === "object" &&
+                !Array.isArray(capability.definition.inputSchema)
+                  ? { inputSchema: capability.definition.inputSchema }
+                  : {}),
               },
               updatedAt: now,
             },

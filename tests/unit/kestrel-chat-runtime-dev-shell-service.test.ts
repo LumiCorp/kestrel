@@ -35,12 +35,31 @@ test("resolveDevShellServiceForProfile prefers the Terminal-Bench bridge when co
 });
 
 test("resolveDevShellServiceForProfile falls back to the local dev shell service when no bridge is configured", () => {
-  const service = resolveDevShellServiceForProfile(profileWithDevShell, {
+  const runtimeEnv = {
     ...process.env,
     KESTREL_DEV_SHELL_BRIDGE_URL: "",
-  });
+    KESTREL_STORE_DRIVER: "sqlite",
+    DATABASE_URL: undefined,
+  };
+  const storeBinding = {
+    driver: "sqlite" as const,
+    revision: "local-core-binding",
+  };
+  const service = resolveDevShellServiceForProfile(
+    profileWithDevShell,
+    {
+      ...runtimeEnv,
+      DATABASE_URL: "postgres://application.example/workspace",
+    },
+    storeBinding,
+  );
 
   assert.ok(service instanceof LocalDevShellService);
+  assert.equal(
+    (service as any).env.DATABASE_URL,
+    "postgres://application.example/workspace",
+  );
+  assert.deepEqual((service as any).storeBinding, storeBinding);
 });
 
 test("resolveDevShellServiceForProfile returns undefined when dev shell tools are disabled", () => {

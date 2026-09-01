@@ -1,7 +1,6 @@
 import {
-  parseExecutionTicketAuthorization,
+  parseHostedExecutionAuthorization,
   parseHostedMcpContext,
-  parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
 import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
 import { parseModelCredentialReferenceV1 } from "../../src/kestrel/contracts/model-route.js";
@@ -9,6 +8,7 @@ import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/eval
 import { parseKestrelManagedConfiguration } from "../config/ProfileStore.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
+import { isSessionEnvironmentIdentityFailureCode } from "../../src/runtime/environmentIdentity.js";
 import {
   KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE,
 } from "../../src/profile/kestrelOnePolicy.js";
@@ -554,7 +554,8 @@ export class CommandRouter {
     };
     const preserveRuntimeCode =
       runtimeError.code ===
-      KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE;
+      KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE
+      || isSessionEnvironmentIdentityFailureCode(runtimeError.code);
     const code =
       normalizedFailure?.code ??
       (preserveRuntimeCode
@@ -1668,12 +1669,7 @@ function validateRunStartPayload(value: unknown): RunStartCommandPayload {
   const mcpAuthorization =
     turnRecord.mcpAuthorization === undefined
       ? undefined
-      : mcpContext === undefined
-        ? parseExecutionTicketAuthorization(turnRecord.mcpAuthorization)
-        : parseHostedMcpRuntimeConnection({
-            mcpContext,
-            mcpAuthorization: turnRecord.mcpAuthorization,
-          }).executionTicket;
+      : parseHostedExecutionAuthorization(turnRecord.mcpAuthorization);
   if (
     turnRecord.clientCapabilities !== undefined &&
     (typeof turnRecord.clientCapabilities !== "object" ||
@@ -1717,7 +1713,7 @@ function validateRunStartPayload(value: unknown): RunStartCommandPayload {
     ...(turn as RunStartCommandPayload["turn"]),
     ...(mcpContext !== undefined ? { mcpContext } : {}),
     ...(mcpAuthorization !== undefined
-      ? { mcpAuthorization: { executionTicket: mcpAuthorization } }
+      ? { mcpAuthorization }
       : {}),
   };
   return hasProfileObject
@@ -1981,6 +1977,20 @@ function validateExecutionProfileResolvePayload(
       "execution-profile.resolve payload.authoringProfileId must be a non-empty string when present",
     );
   }
+  if (
+    record.exactToolNames !== undefined &&
+    (!Array.isArray(record.exactToolNames) ||
+      record.exactToolNames.length === 0 ||
+      record.exactToolNames.some(
+        (toolName) =>
+          typeof toolName !== "string" || toolName.trim().length === 0,
+      ) ||
+      new Set(record.exactToolNames).size !== record.exactToolNames.length)
+  ) {
+    throw new Error(
+      "execution-profile.resolve payload.exactToolNames must be a non-empty array of unique non-empty strings when present",
+    );
+  }
   return {
     environmentPresetId: record.environmentPresetId,
     ...(managedConfiguration !== undefined
@@ -1993,6 +2003,9 @@ function validateExecutionProfileResolvePayload(
       : {}),
     ...(record.authoringProfileId !== undefined
       ? { authoringProfileId: record.authoringProfileId }
+      : {}),
+    ...(record.exactToolNames !== undefined
+      ? { exactToolNames: [...record.exactToolNames] as string[] }
       : {}),
   };
 }

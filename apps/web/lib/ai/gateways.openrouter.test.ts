@@ -25,6 +25,11 @@ test("OpenRouter detail resolution uses the exact route and bearer credential", 
           canonical_slug: "z-ai/glm-5.2-20260616",
           context_length: 256_000,
           top_provider: { max_completion_tokens: 256_000 },
+          supported_parameters: ["tools", "response_format"],
+          endpoints: [
+            { id: "together", supported_parameters: ["tools", "response_format"] },
+            { id: "novita", supported_parameters: ["tools"] },
+          ],
         },
       });
     },
@@ -32,6 +37,13 @@ test("OpenRouter detail resolution uses the exact route and bearer credential", 
   assert.equal(request?.url, "https://openrouter.ai/api/v1/model/z-ai/glm-5.2%3Afree");
   assert.deepEqual(request?.init?.headers, { Authorization: "Bearer secret" });
   assert.equal(details.id, "z-ai/glm-5.2:free");
+  assert.deepEqual(details.kestrelOpenRouterCapabilityEvidence.supportedParameters, ["response_format", "tools"]);
+  assert.deepEqual(details.kestrelOpenRouterCapabilityEvidence.routing, {
+    kind: "provider",
+    policyId: "openrouter:z-ai/glm-5.2:free:qualified-endpoints",
+    allowedEndpointIds: ["novita", "together"],
+  });
+  assert.match(details.kestrelOpenRouterCapabilityEvidence.sourceHash, /^sha256:[a-f0-9]{64}$/u);
 });
 
 test("OpenRouter detail resolution classifies auth, transient, and exact-ID failures", async () => {

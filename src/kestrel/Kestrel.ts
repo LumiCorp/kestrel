@@ -13,6 +13,7 @@ import { ExecutionEngine } from "../engine/ExecutionEngine.js";
 import { EffectRegistry } from "../effects/EffectRegistry.js";
 import { InlineEffectRunner } from "../effects/EffectRunner.js";
 import { createExecuteToolCallHandler } from "../effects/handlers/executeToolCall.js";
+import { createReleasePreparedToolCallHandler } from "../effects/handlers/releasePreparedToolCall.js";
 import { sendMessageHandler } from "../effects/handlers/sendMessage.js";
 import { testNoopHandler } from "../effects/handlers/testNoop.js";
 import { NoopRuntimeEventDispatcher, type RuntimeEventDispatcher } from "../events/InlineDispatcher.js";
@@ -38,6 +39,8 @@ import { RunReplayService, type ReplayQuery, type ReplayResult } from "../replay
 import type { HeapDiagnosticsReporter } from "../runtime/heapDiagnostics.js";
 import type { ProviderReasoningVault } from "../runtime/ProviderReasoningVault.js";
 import type { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBoundaryPolicy.js";
+import type { EffectiveModelContractResolverV1 } from "./effective-model-contract.js";
+import type { ModeResolutionV1 } from "../mode/contracts.js";
 
 export interface KestrelOptions {
   store: SessionStore;
@@ -58,6 +61,7 @@ export interface KestrelOptions {
   heapDiagnostics?: HeapDiagnosticsReporter | undefined;
   evaluationRuntime?: import("../evaluation/RuntimeEvaluationCoordinator.js").RuntimeEvaluationRuntimeConfiguration | undefined;
   executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
+  effectiveModelContractResolver?: EffectiveModelContractResolverV1 | undefined;
 }
 
 export class Kestrel {
@@ -79,12 +83,18 @@ export class Kestrel {
     this.providerReasoningVault = options.providerReasoningVault;
 
     const executeToolCallHandler = createExecuteToolCallHandler(this.toolGateway);
+    const releasePreparedToolCallHandler =
+      createReleasePreparedToolCallHandler(this.toolGateway);
     this.effectRegistry.register("send_message", sendMessageHandler);
     this.effectRegistry.register("assistant.respond", sendMessageHandler);
     this.effectRegistry.register("test_noop", testNoopHandler);
     this.effectRegistry.register("test.noop", testNoopHandler);
     this.effectRegistry.register("execute_tool_call", executeToolCallHandler);
     this.effectRegistry.register("tool.execute", executeToolCallHandler);
+    this.effectRegistry.register(
+      "release_prepared_tool_call",
+      releasePreparedToolCallHandler,
+    );
 
     const baseRunLogger = new StructuredRunLogger(this.store);
     const runLogger =
@@ -130,7 +140,11 @@ export class Kestrel {
         ...(options.providerReasoningVault !== undefined
           ? { providerReasoningVault: options.providerReasoningVault }
           : {}),
-        effectRunner: new InlineEffectRunner(this.store, this.effectRegistry),
+        effectRunner: new InlineEffectRunner(
+          this.store,
+          this.effectRegistry,
+          this.toolGateway,
+        ),
         outbox,
         runLogger,
         progressReporter,
@@ -141,6 +155,9 @@ export class Kestrel {
         ...(options.evaluationRuntime !== undefined ? { evaluationRuntime: options.evaluationRuntime } : {}),
         ...(options.executionBoundaryRuntime !== undefined
           ? { executionBoundaryRuntime: options.executionBoundaryRuntime }
+          : {}),
+        ...(options.effectiveModelContractResolver !== undefined
+          ? { effectiveModelContractResolver: options.effectiveModelContractResolver }
           : {}),
         outputNormalizer: new DefaultOutputNormalizer(),
       },
@@ -175,6 +192,29 @@ export class Kestrel {
 
   async getSession(sessionId: string) {
     return this.store.getSession(sessionId);
+  }
+
+  async persistModeResolution(sessionId: string, resolution: ModeResolutionV1) {
+    const session = await this.store.getSession(sessionId);
+    if (session === null) {
+      throw new Error(`Session '${sessionId}' does not exist.`);
+    }
+    const agent = typeof session.state.agent === "object" && session.state.agent !== null
+      ? session.state.agent as Record<string, unknown>
+      : {};
+    return this.store.patchSessionState({
+      sessionId,
+      expectedVersion: session.version,
+      reason: "mode_resolution",
+      statePatch: {
+        agent: {
+          ...agent,
+          interactionMode: resolution.interactionMode,
+          actSubmode: resolution.actSubmode,
+          latestModeResolution: resolution,
+        },
+      },
+    });
   }
 
   async updateManagedWorktreeBinding(

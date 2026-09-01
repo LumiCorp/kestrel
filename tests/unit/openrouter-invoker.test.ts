@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
+import { createModelRequestV2 } from "../../src/kestrel/contracts/model-registration.js";
 
 import { createOpenRouterInvoker } from "../../models/index.js";
-
+import type { OpenRouterQualifiedRouteEvidence } from "../../models/openrouter/OpenRouterV2Codec.js";
 
 const BASE_ENV = {
   apiKey: "key",
@@ -70,7 +71,10 @@ test("OpenRouter invoker fails fast on constrained schema rejection", async () =
   await assert.rejects(
     async () => invoker<{ ok: boolean }>(decisionRequest()),
     (error: unknown) => {
-      const cast = error as { code?: string; details?: Record<string, unknown> };
+      const cast = error as {
+        code?: string;
+        details?: Record<string, unknown>;
+      };
       assert.equal(cast.code, "MODEL_PROVIDER_SCHEMA");
       assert.equal(cast.details?.category, "provider_schema");
       return true;
@@ -86,8 +90,14 @@ test("OpenRouter invoker reports text fallback parse separately from schema requ
     env: BASE_ENV,
     fetchImpl: async (_url, init) => {
       calls += 1;
-      const parsedBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-      const responseFormat = parsedBody.response_format as Record<string, unknown>;
+      const parsedBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+        string,
+        unknown
+      >;
+      const responseFormat = parsedBody.response_format as Record<
+        string,
+        unknown
+      >;
       assert.equal(responseFormat?.type, "json_schema");
       return new Response(
         JSON.stringify({
@@ -111,12 +121,19 @@ test("OpenRouter invoker reports text fallback parse separately from schema requ
   assert.equal(response.output?.ok, true);
   assert.equal(response.rawResponse, undefined);
   assert.equal(response.provider.structuredOutput?.mode, "constrained");
-  assert.equal(response.provider.structuredOutput?.outcome, "text_fallback_parsed");
+  assert.equal(
+    response.provider.structuredOutput?.outcome,
+    "text_fallback_parsed",
+  );
   assert.equal(response.provider.structuredOutput?.source, "text_fallback");
   assert.equal(response.provider.structuredOutput?.schemaRequested, true);
-  assert.equal(response.provider.structuredOutput?.schemaName, "kestrel_response");
   assert.equal(
-    typeof response.provider.structuredOutput?.compilerDiagnostics?.requiredPropertyExpansions,
+    response.provider.structuredOutput?.schemaName,
+    "kestrel_response",
+  );
+  assert.equal(
+    typeof response.provider.structuredOutput?.compilerDiagnostics
+      ?.requiredPropertyExpansions,
     "number",
   );
 });
@@ -184,7 +201,7 @@ test("OpenRouter invoker reports structured parse failure without success teleme
           choices: [
             {
               message: {
-                content: "{\"ok\":",
+                content: '{"ok":',
               },
             },
           ],
@@ -196,7 +213,178 @@ test("OpenRouter invoker reports structured parse failure without success teleme
   const response = await invoker<{ ok: boolean }>(decisionRequest());
 
   assert.equal(response.output, undefined);
-  assert.equal(response.text, "{\"ok\":");
+  assert.equal(response.text, '{"ok":');
   assert.equal(response.provider.structuredOutput?.outcome, "parse_failed");
   assert.equal(response.provider.structuredOutput?.source, "none");
+});
+
+test("OpenRouter Responses stream carries function-argument deltas into the terminal V2 response", async () => {
+  const encoder = new TextEncoder();
+  const request = createModelRequestV2({
+    version: "model_request_v2",
+    model: "openai/gpt-5.2-chat",
+    input: "look this up",
+    tools: [
+      {
+        name: "lookup",
+        description: "Look up a value.",
+        inputSchema: {
+          type: "object",
+          properties: { query: { type: "string" } },
+          required: ["query"],
+          additionalProperties: false,
+        },
+      },
+    ],
+    requirements: {
+      runtimeRole: "test",
+      output: { kind: "text", assurance: "none" },
+      tools: {
+        choice: "required",
+        strictArguments: true,
+        parallelism: "forbidden",
+      },
+      reasoning: { mode: "off", continuationKinds: [] },
+      streaming: { required: true, terminalBehavior: "required" },
+      inputModalities: ["text"],
+      endpoint: "responses",
+    },
+  });
+  const route: OpenRouterQualifiedRouteEvidence = {
+    modelId: "openai/gpt-5.2-chat",
+    endpoint: "responses",
+    supportedParameters: ["tools", "tool_choice", "strict_tool_inputs", "parallel_tool_calls"],
+    endpoints: [
+      {
+        id: "openai",
+        supportedParameters: ["tools", "tool_choice", "strict_tool_inputs", "parallel_tool_calls"],
+      },
+    ],
+    routing: {
+      kind: "fixed",
+      policyId: "openai-responses",
+      allowedEndpointIds: ["openai"],
+    },
+    sourceHash: `sha256:${"f".repeat(64)}`,
+  };
+  const invoker = createOpenRouterInvoker({
+    env: BASE_ENV,
+    routeEvidence: route,
+    fetchImpl: async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "response.function_call_arguments.delta", call_id: "call-1", name: "lookup", delta: '{"query":"Kestrel"' })}\n\n`,
+              ),
+            );
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "response.function_call_arguments.delta", call_id: "call-1", delta: "}" })}\n\n`,
+              ),
+            );
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "response.completed", response: { status: "completed", output: [] } })}\n\n`,
+              ),
+            );
+            controller.close();
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+  });
+
+  const response = await invoker(request, { onEvent: async () => {} });
+
+  assert.deepEqual(response.toolIntents, [
+    { id: "call-1", name: "lookup", input: { query: "Kestrel" } },
+  ]);
+  assert.equal(
+    (response as { terminal?: { providerTerminalEvent?: string } }).terminal
+      ?.providerTerminalEvent,
+    "response.completed",
+  );
+});
+
+test("OpenRouter V2 rejects a split-capability route before transport", async () => {
+  let transportCalls = 0;
+  const invoker = createOpenRouterInvoker({
+    env: BASE_ENV,
+    routeEvidence: {
+      modelId: "openai/gpt-5.2-chat",
+      endpoint: "chat",
+      supportedParameters: [
+        "response_format",
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+      ],
+      endpoints: [
+        { id: "together", supportedParameters: ["response_format", "tools"] },
+        {
+          id: "novita",
+          supportedParameters: ["tool_choice", "parallel_tool_calls"],
+        },
+      ],
+      routing: {
+        kind: "provider",
+        policyId: "glm-split-capabilities",
+        allowedEndpointIds: ["together", "novita"],
+      },
+      sourceHash: `sha256:${"e".repeat(64)}`,
+    },
+    fetchImpl: async () => {
+      transportCalls += 1;
+      return new Response("unexpected transport");
+    },
+  });
+  const request = createModelRequestV2({
+    version: "model_request_v2",
+    model: "openai/gpt-5.2-chat",
+    input: "hello",
+    tools: [
+      {
+        name: "lookup",
+        description: "Look up a value.",
+        inputSchema: {
+          type: "object",
+          properties: { query: { type: "string" } },
+          required: ["query"],
+          additionalProperties: false,
+        },
+      },
+    ],
+    responseFormat: "json",
+    responseSchema: {
+      type: "object",
+      properties: { ok: { type: "boolean" } },
+      required: ["ok"],
+      additionalProperties: false,
+    },
+    requirements: {
+      runtimeRole: "test",
+      output: {
+        kind: "json_schema",
+        assurance: "provider_strict_schema",
+        schemaName: "result",
+      },
+      tools: {
+        choice: "required",
+        strictArguments: true,
+        parallelism: "forbidden",
+      },
+      reasoning: { mode: "off", continuationKinds: [] },
+      streaming: { required: false, terminalBehavior: "not_required" },
+      inputModalities: ["text"],
+      endpoint: "chat",
+    },
+  });
+
+  await assert.rejects(
+    () => invoker(request),
+    /no eligible provider endpoint/u,
+  );
+  assert.equal(transportCalls, 0);
 });

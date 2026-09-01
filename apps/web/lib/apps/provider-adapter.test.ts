@@ -10,7 +10,13 @@ test(
   () => {
     assert.deepEqual(
       listAppProviderAdapters().map((adapter) => adapter.appKey),
-      ["built_in.weather", "tavily", "built_in.previews", "vercel"],
+      [
+        "built_in.weather",
+        "tavily",
+        "built_in.previews",
+        "built_in.browser",
+        "vercel",
+      ],
     );
     assert.equal(
       getAppProviderAdapter(["n", "g", "r", "o", "k"].join("")),

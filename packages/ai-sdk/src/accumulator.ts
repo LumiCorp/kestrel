@@ -1,9 +1,12 @@
 import type {
-  RunnerInteractionRequestV1,
   RunnerRunStreamEvent,
   RunnerRunTerminalEvent,
   RunnerTelemetry,
 } from "@kestrel-agents/sdk";
+import {
+  parseRunnerInteractionRequest,
+  type RunnerInteractionRequest,
+} from "@kestrel-agents/protocol";
 import type {
   KestrelArtifactPresentation,
   KestrelCitationPresentation,
@@ -14,6 +17,7 @@ import type {
   KestrelProgressPresentation,
   KestrelAgentProgressPresentation,
   KestrelProviderReasoningPresentation,
+  KestrelStatusPresentation,
   KestrelTerminalStatus,
   KestrelToolPresentation,
   KestrelDialogMessagePresentation,
@@ -300,6 +304,9 @@ export function createKestrelPresentationAccumulator(input: {
         if (event.runId !== undefined) {
           runId = event.runId;
         }
+        const result = event.payload.result;
+        telemetry = result.output.telemetry;
+        runId = result.output.runId;
         if (event.type === "run.failed") {
           terminalStatus = "failed";
           errorCode = event.payload.error.code;
@@ -310,12 +317,14 @@ export function createKestrelPresentationAccumulator(input: {
           );
         } else if (event.type === "run.cancelled") {
           terminalStatus = "cancelled";
+          const cancellationError = result.output.errors.find(
+            (error) => error.code === "RUN_CANCELLED",
+          );
+          errorCode = cancellationError?.code ?? "RUN_CANCELLED";
+          errorDetails = cancellationError?.details;
           errorMessage = "The run was cancelled before it finished.";
         } else {
-          const result = event.payload.result;
           finalizedPayload = result.finalizedPayload;
-          telemetry = result.output.telemetry;
-          runId = result.output.runId;
           if (result.output.status === "COMPLETED") {
             assistantText = requireNonEmptyString(
               result.assistantText,
@@ -373,12 +382,37 @@ export function createKestrelPresentationAccumulator(input: {
           ...(runId !== undefined ? { runId } : {}),
           ...(errorCode !== undefined ? { errorCode } : {}),
           ...(errorMessage !== null ? { errorMessage } : {}),
+          ...(telemetry !== undefined
+            ? { telemetry: projectSafeTerminalTelemetry(telemetry) }
+            : {}),
         },
       });
       return snapshot();
     },
     snapshot,
   };
+}
+
+function projectSafeTerminalTelemetry(telemetry: RunnerTelemetry) {
+  const projection: NonNullable<KestrelStatusPresentation["telemetry"]> = {};
+  for (const field of [
+    "modelCalls",
+    "inputTokens",
+    "cachedInputTokens",
+    "cacheWriteInputTokens",
+    "outputTokens",
+    "reasoningTokens",
+    "totalTokens",
+    "durationMs",
+    "pricedCostUsd",
+    "validationRejections",
+  ] as const) {
+    const value = telemetry[field];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      projection[field] = value;
+    }
+  }
+  return projection;
 }
 
 function publicRuntimeErrorMessage(code: string | undefined, message: string) {
@@ -415,6 +449,9 @@ function decodeDialogMessage(value: unknown): KestrelDialogMessagePresentation {
     throw new KestrelPresentationContractError("task.updated.payload.dialogMessage.sender is invalid.");
   }
   const status = record.status === "failed" || record.status === "cancelled" ? record.status : undefined;
+  const dialogActivity = record.dialogActivity === "idle" || record.dialogActivity === "working" || record.dialogActivity === "waiting" || record.dialogActivity === "interrupted"
+    ? record.dialogActivity
+    : undefined;
   if (record.dialogStatus !== "open" && record.dialogStatus !== "closed") {
     throw new KestrelPresentationContractError("task.updated.payload.dialogMessage.dialogStatus is invalid.");
   }
@@ -428,6 +465,7 @@ function decodeDialogMessage(value: unknown): KestrelDialogMessagePresentation {
     text: requireNonEmptyString(record.text, "task.updated.payload.dialogMessage.text"),
     createdAt: requireNonEmptyString(record.createdAt, "task.updated.payload.dialogMessage.createdAt"),
     dialogStatus: record.dialogStatus,
+    ...(dialogActivity !== undefined ? { dialogActivity } : {}),
     ...(status !== undefined ? { status } : {}),
   };
 }
@@ -469,21 +507,19 @@ function decodeTool(value: unknown, eventType: string): KestrelToolPresentation 
   };
 }
 
-function requireInteraction(value: unknown): RunnerInteractionRequestV1 & { requestId: string } {
-  const interaction = requireRecord(value, "run.completed.payload.result.output.waitFor.interaction");
-  const requestId = requireNonEmptyString(interaction.requestId, "interaction.requestId");
-  const kind = interaction.kind;
-  if (kind !== "user_input" && kind !== "approval") {
-    throw new KestrelPresentationContractError("interaction.kind is invalid.");
+function requireInteraction(value: unknown): RunnerInteractionRequest & { requestId: string } {
+  try {
+    const interaction = parseRunnerInteractionRequest(value);
+    const requestId = requireNonEmptyString(interaction.requestId, "interaction.requestId");
+    return { ...interaction, requestId };
+  } catch (error) {
+    if (error instanceof KestrelPresentationContractError) {
+      throw error;
+    }
+    throw new KestrelPresentationContractError(
+      error instanceof Error ? error.message : "interaction contract is invalid.",
+    );
   }
-  return {
-    ...interaction,
-    version: "v1",
-    requestId,
-    kind,
-    eventType: requireNonEmptyString(interaction.eventType, "interaction.eventType"),
-    prompt: requireNonEmptyString(interaction.prompt, "interaction.prompt"),
-  } as RunnerInteractionRequestV1 & { requestId: string };
 }
 
 function decodeCitations(value: unknown): KestrelCitationPresentation[] {

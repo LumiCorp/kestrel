@@ -65,6 +65,15 @@ test("Project Apps and Skills lead with resource state and disclose advanced con
   assert.doesNotMatch(skills, /rounded-xl border bg-card/u);
 });
 
+test("Browser Project settings only narrow Environment authority", () => {
+  const appSheet = read("components/projects/project-shared-app-sheet.tsx");
+  assert.match(appSheet, /Browser Project narrowing/u);
+  assert.match(appSheet, /Additional blocked domains/u);
+  assert.match(appSheet, /cannot[\s\S]*add public domains/u);
+  assert.doesNotMatch(appSheet, /configuredPublicDomains/u);
+  assert.doesNotMatch(appSheet, /listHostedBrowserPersonalDomains/u);
+});
+
 test("Threads and Search keep one primary action and flat grouped results", () => {
   const threadsPage = read("app/(workspace)/threads/page.tsx");
   const threadIndex = read("components/threads/thread-index.tsx");

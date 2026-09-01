@@ -33,7 +33,7 @@ import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
 import type { RuntimeTurnInput } from "../runtime/RuntimeTurn.js";
 import type { EvidenceRecoverySummary } from "../runtime/evidenceQuality.js";
 import type { ThreadWorkspaceAuthorityProjection } from "../workspace/threadWorkspaceBinding.js";
-import type { RunnerInteractionRequestV1 } from "@kestrel-agents/protocol";
+import type { RunnerInteractionRequest } from "@kestrel-agents/protocol";
 
 export type ContextPolicyAction =
   | "continue"
@@ -218,7 +218,6 @@ export interface SubmitConversationMessageInput {
   metadata?: Record<string, unknown> | undefined;
   runtimeTurn?: Omit<
     RuntimeTurnInput,
-    | "runId"
     | "eventId"
     | "eventType"
     | "resumeBlockedRun"
@@ -306,7 +305,7 @@ export interface OperatorInboxItem {
   childThreadId?: string | undefined;
   recommendedAction?: string | undefined;
   detail?: string | undefined;
-  interaction?: RunnerInteractionRequestV1 | undefined;
+  interaction?: RunnerInteractionRequest | undefined;
   metadata?: Record<string, unknown> | undefined;
 }
 
@@ -716,6 +715,9 @@ export interface DialogView {
   dialogId: string;
   name: string;
   status: "open" | "closed";
+  activity: "idle" | "working" | "waiting" | "interrupted";
+  revision: number;
+  errorMessage?: string | undefined;
   childThreadId: string;
   messages: Array<{
     messageId: string;
@@ -726,6 +728,7 @@ export interface DialogView {
     sender: "kestrel" | "collaborator" | "system";
     text: string;
     createdAt: string;
+    dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
     status?: "failed" | "cancelled" | undefined;
   }>;
 }
@@ -735,7 +738,6 @@ export type FollowUpQueuePauseReason = "waiting" | "failed" | "cancelled" | "ope
 export type FollowUpRuntimeContext = Omit<
   RuntimeTurnInput,
   | "sessionId"
-  | "runId"
   | "eventId"
   | "message"
   | "eventType"
@@ -761,6 +763,8 @@ export interface FollowUpQueueEntry {
   dialogId?: string | undefined;
   dialogName?: string | undefined;
   sourceMessageId?: string | undefined;
+  dialogStatus?: "open" | "closed" | undefined;
+  dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
   /** Durable execution context used only when promoting this queue entry. */
   runtimeContext?: FollowUpRuntimeContext | undefined;
   /** Trusted actor captured when the queue entry was accepted. */
@@ -785,6 +789,8 @@ export interface EnqueueFollowUpInput {
   dialogId?: string | undefined;
   dialogName?: string | undefined;
   sourceMessageId?: string | undefined;
+  dialogStatus?: "open" | "closed" | undefined;
+  dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
 }
 
 export interface PendingSteerRecord {

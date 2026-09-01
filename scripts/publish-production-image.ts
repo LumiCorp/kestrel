@@ -8,7 +8,10 @@ import {
 type RunResult = { status: number | null; stdout: string };
 type Runner = (command: string, args: string[], inherit?: boolean) => RunResult;
 
-export function parsePublishProductionImageArgs(args: string[]) {
+export function parsePublishProductionImageArgs(args: string[]): {
+  role: string;
+  tag: string;
+} {
   const normalized = operatorArgs(args);
   const role = argument(normalized, "--role");
   const tag = productionImageTagSchema.parse(argument(normalized, "--tag"));
@@ -23,10 +26,14 @@ function operatorArgs(args: string[]) {
 export function productionImageBuildCommands(input: {
   dockerfile: string;
   image: string;
+  prepare?: string | undefined;
   tag: string;
   smoke: string;
 }) {
   return [
+    ...(input.prepare
+      ? [{ command: "pnpm", args: ["run", input.prepare] }]
+      : []),
     {
       command: "docker",
       args: [
@@ -44,8 +51,19 @@ export function productionImageBuildCommands(input: {
         ".",
       ],
     },
-    { command: "bash", args: [input.smoke, input.image] },
+    {
+      command: "bash",
+      args: [
+        input.smoke,
+        input.image,
+      ],
+    },
     { command: "docker", args: ["push", input.image] },
+    {
+      command: "docker",
+      args: ["image", "inspect", "--format", "{{index .RepoDigests 0}}", input.image],
+      evidence: "repo-digest" as const,
+    },
   ] as const;
 }
 
@@ -62,15 +80,38 @@ export async function publishProductionImage(
   if (!image) throw new Error(`Unknown production image role: ${role}.`);
   assertProductionImageCanaryEnvironment(role, environment);
   const taggedImage = `${image.repository}:${tag}`;
+  let digestImage: string | undefined;
   for (const command of productionImageBuildCommands({
     dockerfile: image.dockerfile,
     image: taggedImage,
+    prepare: image.prepare,
     tag,
     smoke: image.smoke,
   })) {
-    requireSuccess(runner(command.command, [...command.args], true), command.command);
+    const evidence = "evidence" in command ? command.evidence : undefined;
+    const commandResult = runner(
+      command.command,
+      [...command.args],
+      evidence === undefined,
+    );
+    requireSuccess(commandResult, command.command);
+    if (evidence === "repo-digest") {
+      digestImage = commandResult.stdout.trim();
+      const [digestRepository, digest] = digestImage.split("@");
+      if (
+        digestRepository !== image.repository ||
+        !/^sha256:[a-f0-9]{64}$/u.test(digest ?? "")
+      ) {
+        throw new Error(`${role} publication did not produce immutable digest evidence.`);
+      }
+    }
   }
-  const result = { role: image.role, tag, image: taggedImage };
+  const result = {
+    role: image.role,
+    tag,
+    image: taggedImage,
+    digestImage: digestImage!,
+  };
   process.stdout.write(`${JSON.stringify(result)}\n`);
   return result;
 }
@@ -100,6 +141,14 @@ function argument(args: string[], name: string) {
       "Usage: production:image:publish --role <role> --tag <tag>",
     );
   }
+  return value;
+}
+
+function optionalArgument(args: string[], name: string) {
+  const index = args.indexOf(name);
+  if (index === -1) return undefined;
+  const value = args[index + 1]?.trim();
+  if (!value) throw new Error(`${name} requires a value.`);
   return value;
 }
 

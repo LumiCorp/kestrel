@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   isRunnerEventAllowedForCommand,
+  isRunnerExpectedResponseEvent,
   isRunnerTerminalResponseEvent,
 } from "@kestrel-agents/protocol";
 
@@ -198,7 +199,7 @@ export class ProtocolClient {
       return;
     }
 
-    if (isRunnerTerminalResponseEvent(event.type)) {
+    if (isRunnerExpectedResponseEvent(pending.commandType, event)) {
       this.pending.delete(commandId);
       if (event.type === "runner.error") {
         pending.reject(toKestrelError(event.payload));

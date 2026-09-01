@@ -1,5 +1,6 @@
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { parseRememberedToolApprovalEvidenceSetV1 } from "@kestrel-agents/protocol";
 
 import type { CodeModeProfileConfig } from "../../src/code/contracts.js";
 import { DEFAULT_CODE_MODE_DISABLED_CONFIG } from "../../src/code/contracts.js";
@@ -12,6 +13,7 @@ import {
   parseModelEconomicsProfileV1,
 } from "../../src/economics/policy.js";
 import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/evaluation.js";
+import { parseModelCredentialReferenceV1 } from "../../src/kestrel/contracts/model-route.js";
 import type { McpServerConfig } from "../../src/mcp/contracts.js";
 import {
   DEFAULT_ACT_SUBMODE,
@@ -74,7 +76,6 @@ const DEFAULT_PROFILE_TOOL_QUEUE: ToolQueueProfileConfig = {
 };
 const DEFAULT_DELEGATION_POLICY = {
   allowAgentSpawn: false,
-  maxConcurrentChildSessions: 2,
   maxDepth: 2,
 };
 
@@ -881,6 +882,7 @@ const KESTREL_MANAGED_CONFIGURATION_FIELDS = new Set([
   "storeDriver",
   "kestrelOneAppApprovalModes",
   "kestrelOneAppApprovalPolicies",
+  "rememberedToolApprovalEvidence",
 ]);
 
 export function parseKestrelManagedConfiguration(
@@ -991,6 +993,14 @@ export function parseKestrelManagedConfiguration(
             record.kestrelOneAppApprovalPolicies,
             KESTREL_ONE_POLICY_ID,
           ),
+        }
+      : {}),
+    ...(record.rememberedToolApprovalEvidence !== undefined
+      ? {
+          rememberedToolApprovalEvidence:
+            parseRememberedToolApprovalEvidenceSetV1(
+              record.rememberedToolApprovalEvidence,
+            ),
         }
       : {}),
     ...overlay,
@@ -1294,35 +1304,11 @@ function parseModelCredential(
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`Profile '${profileId}' modelCredential must be an object`);
   }
-  const candidate = value as Record<string, unknown>;
-  if (
-    candidate.source !== "kestrel-one" ||
-    typeof candidate.runId !== "string" ||
-    candidate.runId.trim().length === 0 ||
-    typeof candidate.gatewayId !== "string" ||
-    candidate.gatewayId.trim().length === 0 ||
-    typeof candidate.organizationId !== "string" ||
-    candidate.organizationId.trim().length === 0 ||
-    typeof candidate.environmentId !== "string" ||
-    candidate.environmentId.trim().length === 0 ||
-    typeof candidate.rawModelId !== "string" ||
-    candidate.rawModelId.trim().length === 0 ||
-    (candidate.provider !== "openai" &&
-      candidate.provider !== "openrouter" &&
-      candidate.provider !== "anthropic" &&
-      candidate.provider !== "ollama")
-  ) {
+  try {
+    return parseModelCredentialReferenceV1(value);
+  } catch {
     throw new Error(`Profile '${profileId}' has invalid modelCredential`);
   }
-  return {
-    source: "kestrel-one",
-    runId: candidate.runId.trim(),
-    gatewayId: candidate.gatewayId.trim(),
-    organizationId: candidate.organizationId.trim(),
-    environmentId: candidate.environmentId.trim(),
-    rawModelId: candidate.rawModelId.trim(),
-    provider: candidate.provider,
-  };
 }
 
 function parseStoreDriver(
@@ -1347,11 +1333,17 @@ function parseApprovalPolicyPackId(
   if (value === undefined) {
     return;
   }
-  if (value === "dev" || value === "isolated_code" || value === "ci_bot" || value === "production") {
+  if (
+    value === "dev" ||
+    value === "isolated_code" ||
+    value === "ci_bot" ||
+    value === "hosted_workspace" ||
+    value === "production"
+  ) {
     return value;
   }
   throw new Error(
-    `Profile '${profileId}' field 'approvalPolicyPackId' must be dev, isolated_code, ci_bot, or production`,
+    `Profile '${profileId}' field 'approvalPolicyPackId' must be dev, isolated_code, ci_bot, hosted_workspace, or production`,
   );
 }
 
@@ -1697,9 +1689,10 @@ function parseCodeMode(
   const sandbox = parseCodeModeSandbox(input.sandbox, profileId);
   const retention = parseCodeModeRetention(input.retention, profileId);
   const approvalMode = input.approvalMode;
-  const capabilities = input.capabilities === undefined
-    ? undefined
-    : normalizeSandboxCapabilityProfilesV2(input.capabilities);
+  const capabilities =
+    input.capabilities === undefined
+      ? undefined
+      : normalizeSandboxCapabilityProfilesV2(input.capabilities);
   if (approvalMode !== undefined && approvalMode !== "auto") {
     throw new Error(
       `Profile '${profileId}' field 'codeMode.approvalMode' must be 'auto'`,

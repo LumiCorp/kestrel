@@ -26,6 +26,7 @@ import type {
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import {
   createPreparedToolCallV1,
+  createPreparedToolApprovalAuthorityV2,
   createToolSurfaceForDescriptorsV1,
   executePinnedToolCallV1,
   fingerprintToolRunScopeV1,
@@ -282,9 +283,30 @@ export class AllowlistedToolGateway implements ToolGateway {
         },
       );
     }
+    const stableApproval =
+      input.policy.decision === "approval_required" &&
+      input.approval !== undefined &&
+      options.runContext !== undefined
+        ? createPreparedToolApprovalAuthorityV2({
+            activation: input.activation,
+            executionClass: module.descriptor.capability.executionClass,
+            effectiveInput: input.rawInput,
+            policyRevision: input.policy.policyRevision,
+            approvalAuthorityRevision: input.approval.authorityRevision,
+            capabilities: input.approvalCapabilities ?? [],
+            runContext: options.runContext,
+          })
+        : undefined;
     return createPreparedToolCallV1({
-      ...input,
+      runId: input.runId,
+      sessionId: input.sessionId,
+      callId: input.callId,
+      activation: input.activation,
+      origin: input.origin,
       effectiveInput: input.rawInput,
+      policy: input.policy,
+      ...(input.approval === undefined ? {} : { approval: input.approval }),
+      ...(stableApproval ?? {}),
     });
   }
 

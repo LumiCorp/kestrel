@@ -2,10 +2,14 @@ import { createHash } from "node:crypto";
 
 import {
   parseRunnerExternalApprovalBindingV1,
+  parseRunnerExternalApprovalBindingV2,
+  parseRunnerPreparedApprovalCleanupV1,
   RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION,
+  RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
   serializeCanonicalApprovalPayload,
   type RunnerExternalApprovalAuthorityKind,
   type RunnerExternalApprovalBindingV1,
+  type RunnerExternalApprovalBindingV2,
 } from "@kestrel-agents/protocol";
 
 import type { StepIO, Transition, WaitForMatcher } from "../../../../../src/kestrel/contracts/execution.js";
@@ -17,13 +21,20 @@ import {
 import { evaluateAutonomyPolicy } from "../../../../../src/governance/autonomy.js";
 import type { AutonomyPolicy } from "../../../../../src/governance/contracts.js";
 import {
-  areApprovalCapabilitiesAllowed,
-  isToolEligibleForInteractionMode,
   needsPerCallApproval,
   readBlockedApprovalCapability,
+  resolveEffectiveToolDecisionV1,
+  type EffectiveToolDecisionV1,
   type ToolApprovalDispositionV1,
 } from "../../../../../src/mode/contracts.js";
 import { isMutationCapableToolName } from "../../../../../src/runtime/mutationTools.js";
+import { derivePreparedToolApprovalAuthorityRevisionV1 } from "../../../../../src/io/ToolInvocationSupport.js";
+import { createPreparedApprovalCleanupTerminalV1 } from "../../../../../src/runtime/preparedApprovalCleanupTerminal.js";
+import {
+  parseDurablePreparedToolCallV1,
+  parsePreparedToolCallV1,
+  type PreparedToolCallV1,
+} from "../../../../../src/kestrel/contracts/tool-invocation.js";
 import {
   approvalReasonExplanation,
   buildToolApprovalPresentation,
@@ -58,8 +69,61 @@ import type {
 import { appendAgentObservation } from "./shared.js";
 
 export type PolicyGateResult =
-  | { kind: "allowed" }
+  | { kind: "allowed"; preparedToolCall?: PreparedToolCallV1 | undefined }
   | { kind: "blocked"; transition: Transition };
+
+export async function prepareExactToolCallForPolicyGate(input: {
+  io: StepIO;
+  toolName: string;
+  toolInput: unknown;
+  policyRevision: string;
+  authorityRevision: string;
+  capabilities: readonly string[];
+  toolIntent?:
+    | {
+        modelToolCallId?: string | undefined;
+        toolSurfaceSnapshot?:
+          | import("../../../../../src/kestrel/contracts/tool-contract.js").ToolSurfaceSnapshotV1
+          | undefined;
+      }
+    | undefined;
+}): Promise<
+  | { kind: "prepared"; preparedToolCall: PreparedToolCallV1 }
+  | { kind: "denied" }
+> {
+  if (input.io.prepareToolForApproval === undefined) {
+    throw createRuntimeFailure(
+      "TOOL_PREPARATION_UNAVAILABLE",
+      `Tool '${input.toolName}' requires exact preparation before policy dispatch.`,
+      {
+        subsystem: "react",
+        classification: "configuration",
+        recoverable: false,
+        toolName: input.toolName,
+      },
+    );
+  }
+  try {
+    return {
+      kind: "prepared",
+      preparedToolCall: await input.io.prepareToolForApproval(
+        input.toolName,
+        input.toolInput,
+        {
+          policyRevision: input.policyRevision,
+          authorityRevision: input.authorityRevision,
+          capabilities: input.capabilities,
+        },
+        input.toolIntent,
+      ),
+    };
+  } catch (error) {
+    if (error instanceof RuntimeFailure && error.code === "TOOL_POLICY_DENIED") {
+      return { kind: "denied" };
+    }
+    throw error;
+  }
+}
 
 export async function checkToolPolicyGate(input: {
   reactState: Record<string, unknown>;
@@ -79,6 +143,12 @@ export async function checkToolPolicyGate(input: {
   allowedInteractionModes?: readonly CanonicalInteractionMode[] | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
   approvalDisposition?: ToolApprovalDispositionV1 | undefined;
+  trustedPolicyDecision?:
+    | "allow"
+    | "deny"
+    | "approval_required"
+    | undefined;
+  trustedPolicyRevision?: string | undefined;
   approvalAuthority?:
     | {
         kind: RunnerExternalApprovalAuthorityKind;
@@ -93,6 +163,7 @@ export async function checkToolPolicyGate(input: {
           | undefined;
       }
     | undefined;
+  preparedToolCall?: PreparedToolCallV1 | undefined;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   modeSystemV2Enabled: boolean;
@@ -103,6 +174,61 @@ export async function checkToolPolicyGate(input: {
   proposalProvider?: ((request: ManagedTaskWorktreeRequest) => Promise<ManagedTaskWorktreeProposal>) | undefined;
   io: StepIO;
 }): Promise<PolicyGateResult> {
+  const effectiveDecision = resolveEffectiveToolDecisionV1({
+    interactionMode: input.interactionMode,
+    actSubmode: input.actSubmode,
+    toolClass: input.toolClass,
+    allowedInteractionModes: input.allowedInteractionModes,
+    executionPolicy: input.executionPolicy,
+    requiredCapabilities: input.requiredApprovalCapabilities,
+    approvalDisposition:
+      input.approvalDisposition ??
+      legacyApprovalDisposition(input.requiredApprovalCapabilities),
+  });
+  const currentPendingApproval = asRecord(
+    asRecord(input.reactState.exec)?.pendingApproval,
+  );
+  if (input.modeSystemV2Enabled && currentPendingApproval !== undefined) {
+    const approvalTransition = await maybeRequireToolApproval({
+      reactState: input.reactState,
+      activeRegion: input.activeRegion,
+      deliberationStepId: input.deliberationStepId,
+      acterStepId: input.acterStepId,
+      currentStepAgent: input.currentStepAgent,
+      runId: input.runId,
+      sessionId: input.sessionId,
+      stepIndex: input.stepIndex,
+      eventType: input.eventType,
+      eventPayload: input.eventPayload,
+      toolName: input.toolName,
+      toolInput: input.toolInput,
+      toolClass: input.toolClass,
+      interactionMode: input.interactionMode,
+      actSubmode: input.actSubmode,
+      executionPolicy: input.executionPolicy,
+      requiredApprovalCapabilities: input.requiredApprovalCapabilities,
+      approvalDisposition: effectiveDecision.approvalDisposition,
+      effectiveDecision,
+      trustedPolicyDecision: input.trustedPolicyDecision,
+      trustedPolicyRevision: input.trustedPolicyRevision,
+      approvalAuthority: input.approvalAuthority,
+      toolIntent: input.toolIntent,
+      preparedToolCall: input.preparedToolCall,
+      io: input.io,
+    });
+    if (
+      approvalTransition !== undefined &&
+      "preparedToolCall" in approvalTransition
+    ) {
+      return {
+        kind: "allowed",
+        preparedToolCall: approvalTransition.preparedToolCall,
+      };
+    }
+    if (approvalTransition !== undefined) {
+      return { kind: "blocked", transition: approvalTransition };
+    }
+  }
   const modeGate = checkModeAndCapabilityPolicy({
       reactState: input.reactState,
       activeRegion: input.activeRegion,
@@ -115,6 +241,7 @@ export async function checkToolPolicyGate(input: {
       interactionMode: input.interactionMode,
       actSubmode: input.actSubmode,
       executionPolicy: input.executionPolicy,
+      effectiveDecision,
   });
   if (modeGate.kind === "blocked") {
     return modeGate;
@@ -188,17 +315,35 @@ export async function checkToolPolicyGate(input: {
       actSubmode: input.actSubmode,
       executionPolicy: input.executionPolicy,
       requiredApprovalCapabilities: input.requiredApprovalCapabilities,
-      approvalDisposition: input.approvalDisposition,
+      approvalDisposition: effectiveDecision.approvalDisposition,
+      effectiveDecision,
+      trustedPolicyDecision: input.trustedPolicyDecision,
+      trustedPolicyRevision: input.trustedPolicyRevision,
       approvalAuthority: input.approvalAuthority,
       toolIntent: input.toolIntent,
+      preparedToolCall: input.preparedToolCall,
       io: input.io,
     });
+    if (
+      approvalTransition !== undefined &&
+      "preparedToolCall" in approvalTransition
+    ) {
+      return {
+        kind: "allowed",
+        preparedToolCall: approvalTransition.preparedToolCall,
+      };
+    }
     if (approvalTransition !== undefined) {
       return { kind: "blocked", transition: approvalTransition };
     }
   }
 
-  return { kind: "allowed" };
+  return {
+    kind: "allowed",
+    ...(input.preparedToolCall === undefined
+      ? {}
+      : { preparedToolCall: input.preparedToolCall }),
+  };
 }
 
 export async function checkToolBatchPolicyGate(input: {
@@ -388,20 +533,19 @@ function checkToolItemsModeAndCapabilityPolicy(input: {
 }): PolicyGateResult {
   const disallowedItem = input.items.find((item) => {
     const toolClass = input.toolExecutionClassByName[item.name] ?? "read_only";
-    const classAllowed = isToolEligibleForInteractionMode({
+    return resolveEffectiveToolDecisionV1({
       interactionMode: input.interactionMode,
       actSubmode: input.actSubmode,
       toolClass,
       allowedInteractionModes: input.toolAllowedInteractionModesByName[item.name],
       executionPolicy: input.executionPolicy,
-    });
-    if (classAllowed === false) {
-      return true;
-    }
-    return areApprovalCapabilitiesAllowed({
-      executionPolicy: input.executionPolicy,
       requiredCapabilities: input.toolApprovalCapabilitiesByName[item.name],
-    }) === false;
+      approvalDisposition: {
+        mode: "auto",
+        reasonCode: "environment_policy",
+        authority: { kind: "runtime_policy", revision: "legacy-default:v1" },
+      },
+    }).available === false;
   });
 
   if (disallowedItem === undefined) {
@@ -444,16 +588,10 @@ function checkModeAndCapabilityPolicy(input: {
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   executionPolicy: ExecutionPolicy | undefined;
+  effectiveDecision: EffectiveToolDecisionV1;
 }): PolicyGateResult {
-  if (
-    isToolEligibleForInteractionMode({
-      interactionMode: input.interactionMode,
-      actSubmode: input.actSubmode,
-      toolClass: input.toolClass,
-      allowedInteractionModes: input.allowedInteractionModes,
-      executionPolicy: input.executionPolicy,
-    }) === false
-  ) {
+  if (input.effectiveDecision.available === false) {
+    const blockedCapability = input.effectiveDecision.evidence.blockedCapability;
     return {
       kind: "blocked",
       transition: toPolicyBlockedTransition({
@@ -463,36 +601,17 @@ function checkModeAndCapabilityPolicy(input: {
         stepIndex: input.stepIndex,
         toolName: input.toolName,
         toolClass: input.toolClass,
-        reason: "tool class is blocked by current interaction mode or execution policy",
+        reason:
+          blockedCapability === undefined
+            ? `tool is unavailable because of ${input.effectiveDecision.availabilityReason}`
+            : `tool requires blocked capability '${blockedCapability}'`,
         interactionMode: input.interactionMode,
         actSubmode: input.actSubmode,
+        blockedCapability,
       }),
     };
   }
-
-  const blockedCapability = readBlockedApprovalCapability({
-    executionPolicy: input.executionPolicy,
-    requiredCapabilities: input.requiredApprovalCapabilities,
-  });
-  if (blockedCapability === undefined) {
-    return { kind: "allowed" };
-  }
-
-  return {
-    kind: "blocked",
-    transition: toPolicyBlockedTransition({
-      reactState: input.reactState,
-      activeRegion: input.activeRegion,
-      acterStepId: input.acterStepId,
-      stepIndex: input.stepIndex,
-      toolName: input.toolName,
-      toolClass: input.toolClass,
-      reason: `tool requires blocked capability '${blockedCapability}'`,
-      interactionMode: input.interactionMode,
-      actSubmode: input.actSubmode,
-      blockedCapability,
-    }),
-  };
+  return { kind: "allowed" };
 }
 
 function highestToolClass(
@@ -529,6 +648,13 @@ async function maybeRequireToolApproval(input: {
   executionPolicy: ExecutionPolicy | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
   approvalDisposition?: ToolApprovalDispositionV1 | undefined;
+  effectiveDecision?: EffectiveToolDecisionV1 | undefined;
+  trustedPolicyDecision?:
+    | "allow"
+    | "deny"
+    | "approval_required"
+    | undefined;
+  trustedPolicyRevision?: string | undefined;
   approvalAuthority?:
     | {
         kind: RunnerExternalApprovalAuthorityKind;
@@ -543,8 +669,15 @@ async function maybeRequireToolApproval(input: {
           | undefined;
       }
     | undefined;
-}): Promise<Transition | undefined> {
+  preparedToolCall?: PreparedToolCallV1 | undefined;
+}): Promise<
+  Transition | { preparedToolCall: PreparedToolCallV1 } | undefined
+> {
+  const currentPendingApproval = asRecord(
+    asRecord(input.reactState.exec)?.pendingApproval,
+  );
   if (
+    currentPendingApproval === undefined &&
     !requiresExplicitToolApproval({
       interactionMode: input.interactionMode,
       actSubmode: input.actSubmode,
@@ -569,8 +702,351 @@ async function maybeRequireToolApproval(input: {
     });
   }
 
+  const currentWaitMetadata = asRecord(
+    asRecord(input.reactState.waitingFor)?.metadata,
+  );
+  const runtimePolicyRevision = buildRuntimePolicyRevision({
+    interactionMode: input.interactionMode,
+    actSubmode: input.actSubmode,
+    executionPolicy: input.executionPolicy,
+  });
+  const effectiveRuntimePolicyRevision =
+    input.trustedPolicyRevision === undefined
+      ? runtimePolicyRevision
+      : digestApprovalPayload({
+          upstreamPolicyRevision: runtimePolicyRevision,
+          browserPolicyRevision: input.trustedPolicyRevision,
+        });
+  const upstreamApprovalAuthorityRevision =
+    input.approvalAuthority?.revision ?? runtimePolicyRevision;
+  let persistedPreparedToolCall: PreparedToolCallV1 | undefined;
+  const hasPersistedPreparedEvidence =
+    currentPendingApproval?.version === "hosted_tool_approval_v2" ||
+    currentPendingApproval?.preparedInvocationId !== undefined ||
+    currentPendingApproval?.preparedToolCall !== undefined ||
+    currentWaitMetadata?.preparedToolCall !== undefined ||
+    asRecord(currentPendingApproval?.externalApprovalBinding)?.version ===
+      RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION;
+  if (hasPersistedPreparedEvidence) {
+    try {
+      persistedPreparedToolCall = parseDurablePreparedToolCallV1(
+        currentWaitMetadata?.preparedToolCall,
+      );
+      const isHostedPreparedApproval =
+        persistedPreparedToolCall.stableAuthority !== undefined;
+      if (
+        currentPendingApproval?.version !==
+          (isHostedPreparedApproval
+            ? "hosted_tool_approval_v2"
+            : "local_tool_approval_v1")
+      ) {
+        throw new Error(
+          `persisted ${isHostedPreparedApproval ? "hosted" : "local"} approval is missing its exact prepared-call discriminator`,
+        );
+      }
+      if (currentPendingApproval.preparedToolCall !== undefined) {
+        throw new Error("persisted approval contains a duplicate prepared invocation");
+      }
+      if (
+        asString(currentPendingApproval.preparedInvocationId) !==
+        persistedPreparedToolCall.callId
+      ) {
+        throw new Error(
+          "persisted approval does not reference its canonical prepared invocation",
+        );
+      }
+      if (
+        input.eventType === "user.approval" &&
+        input.eventPayload?.decision === "decline" &&
+        asString(input.eventPayload.approvalId) ===
+          asString(currentPendingApproval.approvalId)
+      ) {
+        if (input.eventPayload.preparedApprovalCleanup !== undefined) {
+          const cleanup = parseRunnerPreparedApprovalCleanupV1(
+            input.eventPayload.preparedApprovalCleanup,
+          );
+          if (
+            cleanup.organizationId !== cleanupRequestOrganizationId(input.eventPayload) ||
+            cleanup.threadId !== input.sessionId ||
+            cleanup.requestId !== asString(currentPendingApproval.approvalId)
+          ) {
+            throw new Error("prepared approval cleanup does not match its exact runtime authority");
+          }
+          return toPreparedApprovalCleanupTransition({
+            ...input,
+            approvalId: asString(currentPendingApproval.approvalId)!,
+            preparedToolCall: persistedPreparedToolCall,
+            cleanup,
+          });
+        }
+        if (isHostedPreparedApproval) {
+          assertPreparedApprovalMatchesStableHostedAuthority({
+            preparedToolCall: persistedPreparedToolCall,
+            eventPayload: input.eventPayload,
+            requiredCapabilities: input.requiredApprovalCapabilities ?? [],
+            toolClass: input.toolClass,
+          });
+        } else {
+          validatePendingPreparedApprovalV1({
+            currentPendingApproval,
+            currentWaitMetadata,
+            preparedToolCall: persistedPreparedToolCall,
+            toolName: input.toolName,
+            toolClass: input.toolClass,
+          });
+        }
+        return toToolApprovalDeniedTransition({
+          ...input,
+          approvalId: asString(currentPendingApproval.approvalId)!,
+          preparedToolCall: persistedPreparedToolCall,
+        });
+      }
+      if (isHostedPreparedApproval) {
+        assertPreparedApprovalMatchesStableHostedAuthority({
+          preparedToolCall: persistedPreparedToolCall,
+          eventPayload: input.eventPayload,
+          requiredCapabilities:
+            input.trustedPolicyDecision === "approval_required"
+              ? input.requiredApprovalCapabilities ?? []
+              : undefined,
+          toolClass: input.toolClass,
+        });
+      } else {
+        validatePendingPreparedApprovalV1({
+          currentPendingApproval,
+          currentWaitMetadata,
+          preparedToolCall: persistedPreparedToolCall,
+          toolName: input.toolName,
+          toolClass: input.toolClass,
+        });
+      }
+      if (input.trustedPolicyDecision === "deny") {
+        return toToolApprovalPolicyChangedTransition({
+          ...input,
+          approvalId: asString(currentPendingApproval.approvalId)!,
+          preparedToolCall: persistedPreparedToolCall,
+          availabilityReason: "approval_policy",
+          approvalReasonCode:
+            input.effectiveDecision?.approvalDisposition.reasonCode,
+        });
+      }
+      if (input.effectiveDecision?.available === false) {
+        return toToolApprovalPolicyChangedTransition({
+          ...input,
+          approvalId: asString(currentPendingApproval.approvalId)!,
+          preparedToolCall: persistedPreparedToolCall,
+          availabilityReason: input.effectiveDecision.availabilityReason,
+        });
+      }
+      if (input.trustedPolicyDecision === "allow") {
+        if (input.io.releasePreparedToolCall === undefined) {
+          return toToolApprovalPolicyChangedTransition({
+            ...input,
+            approvalId: asString(currentPendingApproval.approvalId)!,
+            preparedToolCall: persistedPreparedToolCall,
+            availabilityReason: "approval_policy",
+            approvalReasonCode:
+              input.effectiveDecision?.approvalDisposition.reasonCode,
+          });
+        }
+        try {
+          await input.io.releasePreparedToolCall(persistedPreparedToolCall);
+        } catch (staleReleaseError) {
+          const approvalId = asString(currentPendingApproval.approvalId)!;
+          return toPreparedApprovalCleanupTransition({
+            ...input,
+            approvalId,
+            preparedToolCall: persistedPreparedToolCall,
+            cleanup: parseRunnerPreparedApprovalCleanupV1({
+              version: "runner_prepared_approval_cleanup_v1",
+              organizationId:
+                persistedPreparedToolCall.stableAuthority?.organizationId ??
+                cleanupRequestOrganizationId(input.eventPayload ?? {}) ??
+                "desktop-local",
+              threadId: input.sessionId,
+              turnId: input.runId,
+              interactionId: approvalId,
+              requestId: approvalId,
+              failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED",
+              failureMessage:
+                "The stale prepared Browser authority must be released before current authority can be prepared.",
+            }),
+          });
+        }
+        const currentPreparation = input.preparedToolCall === undefined
+          ? input.io.prepareToolForApproval === undefined
+            ? undefined
+            : await prepareExactToolCallForPolicyGate({
+                  io: input.io,
+                  toolName: input.toolName,
+                  toolInput: input.toolInput,
+                  policyRevision: runtimePolicyRevision,
+                  authorityRevision: upstreamApprovalAuthorityRevision,
+                  capabilities: input.requiredApprovalCapabilities ?? [],
+                  toolIntent: input.toolIntent,
+                })
+          : {
+              kind: "prepared" as const,
+              preparedToolCall: input.preparedToolCall,
+            };
+        const currentPreparedToolCall =
+          currentPreparation?.kind === "prepared"
+            ? parseDurablePreparedToolCallV1(
+                currentPreparation.preparedToolCall,
+              )
+            : undefined;
+        if (currentPreparedToolCall === undefined) {
+          return toToolApprovalPolicyChangedTransition({
+            ...input,
+            approvalId: asString(currentPendingApproval.approvalId)!,
+            availabilityReason: "approval_policy",
+            approvalReasonCode:
+              input.effectiveDecision?.approvalDisposition.reasonCode,
+          });
+        }
+        if (
+          !preparedBrowserAllowMatchesPendingOperation({
+            pendingPreparedToolCall: persistedPreparedToolCall,
+            currentPreparedToolCall,
+            hosted: isHostedPreparedApproval,
+            toolName: input.toolName,
+            toolInput: input.toolInput,
+            toolClass: input.toolClass,
+            runId: input.runId,
+            sessionId: input.sessionId,
+            policyRevision: effectiveRuntimePolicyRevision,
+            approvalAuthorityRevision: upstreamApprovalAuthorityRevision,
+            requiredCapabilities: input.requiredApprovalCapabilities ?? [],
+            eventPayload: input.eventPayload,
+          })
+        ) {
+          const approvalId = asString(currentPendingApproval.approvalId)!;
+          return toPreparedApprovalCleanupTransition({
+            ...input,
+            approvalId,
+            preparedToolCall: currentPreparedToolCall,
+            cleanup: parseRunnerPreparedApprovalCleanupV1({
+              version: "runner_prepared_approval_cleanup_v1",
+              organizationId:
+                currentPreparedToolCall.stableAuthority?.organizationId ??
+                cleanupRequestOrganizationId(input.eventPayload ?? {}) ??
+                "desktop-local",
+              threadId: input.sessionId,
+              turnId: input.runId,
+              interactionId: approvalId,
+              requestId: approvalId,
+              failureCode: "EXTERNAL_APPROVAL_POLICY_CHANGED",
+              failureMessage:
+                "The current prepared Browser authority did not match the approved operation and must be released.",
+            }),
+          });
+        }
+        return { preparedToolCall: currentPreparedToolCall };
+      }
+      const preparedApprovalStillCurrent = isHostedPreparedApproval
+        ? preparedApprovalMatchesCurrentHostedAuthority({
+            preparedToolCall: persistedPreparedToolCall,
+            policyRevision: effectiveRuntimePolicyRevision,
+            approvalAuthorityRevision: upstreamApprovalAuthorityRevision,
+          })
+        : preparedApprovalMatchesCurrentLocalAuthority({
+            preparedToolCall: persistedPreparedToolCall,
+            policyRevision: effectiveRuntimePolicyRevision,
+            currentPendingApproval,
+            approvalAuthorityRevision: upstreamApprovalAuthorityRevision,
+          });
+      if (!preparedApprovalStillCurrent) {
+        return toToolApprovalPolicyChangedTransition({
+          ...input,
+          approvalId: asString(currentPendingApproval.approvalId)!,
+          preparedToolCall: persistedPreparedToolCall,
+          availabilityReason: "approval_policy",
+          approvalReasonCode:
+            input.effectiveDecision?.approvalDisposition.reasonCode,
+        });
+      }
+    } catch (error) {
+      if (
+        error instanceof RuntimeFailure &&
+        (error.code === "LOCAL_PREPARED_APPROVAL_INVALID" ||
+          error.code === "EXTERNAL_APPROVAL_EXPIRED" ||
+          error.code === "PREPARED_TOOL_AUTHORITY_RELEASE_FAILED")
+      ) {
+        throw error;
+      }
+      const hosted = persistedPreparedToolCall?.stableAuthority !== undefined ||
+        currentPendingApproval?.version === "hosted_tool_approval_v2";
+      throw createRuntimeFailure(
+        hosted
+          ? "HOSTED_PREPARED_APPROVAL_INVALID"
+          : "LOCAL_PREPARED_APPROVAL_INVALID",
+        `The persisted ${hosted ? "hosted" : "local"} approval invocation is invalid.`,
+        {
+          subsystem: "react",
+          classification: "policy",
+          recoverable: false,
+          cause: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+  }
+  const newlyPreparedToolCall =
+    persistedPreparedToolCall === undefined &&
+    input.preparedToolCall !== undefined
+      ? input.preparedToolCall
+      : persistedPreparedToolCall === undefined &&
+        hasHostedPreparedApprovalAuthority(input.eventPayload) &&
+        input.io.prepareToolForApproval !== undefined
+        ? await input.io.prepareToolForApproval(
+          input.toolName,
+          input.toolInput,
+          {
+            policyRevision: runtimePolicyRevision,
+            authorityRevision: upstreamApprovalAuthorityRevision,
+            capabilities: input.requiredApprovalCapabilities ?? [],
+          },
+          input.toolIntent,
+          )
+        : undefined;
+  if (newlyPreparedToolCall?.policy.decision === "allow") {
+    return { preparedToolCall: parseDurablePreparedToolCallV1(newlyPreparedToolCall) };
+  }
+  if (newlyPreparedToolCall?.policy.decision === "deny") {
+    await input.io.releasePreparedToolCall?.(newlyPreparedToolCall);
+    return toPolicyBlockedTransition({
+      reactState: input.reactState,
+      activeRegion: input.activeRegion,
+      acterStepId: input.acterStepId,
+      stepIndex: input.stepIndex,
+      toolName: input.toolName,
+      toolClass: input.toolClass,
+      reason: "trusted tool policy denied the prepared invocation",
+      interactionMode: input.interactionMode,
+      actSubmode: input.actSubmode,
+    });
+  }
+  const preparedToolCall = persistedPreparedToolCall ?? newlyPreparedToolCall;
+  if (
+    preparedToolCall?.stableAuthority?.version ===
+      "prepared_tool_stable_authority_v2" &&
+    preparedToolCall.stableAuthority.executionClass !== input.toolClass
+  ) {
+    throw createRuntimeFailure(
+      "HOSTED_PREPARED_APPROVAL_INVALID",
+      "The prepared tool execution class does not match the current tool contract.",
+      {
+        subsystem: "react",
+        classification: "policy",
+        recoverable: false,
+        preparedExecutionClass:
+          preparedToolCall.stableAuthority.executionClass,
+        currentExecutionClass: input.toolClass,
+      },
+    );
+  }
   const effectiveToolInput =
-    input.io.inspectTool === undefined
+    preparedToolCall?.effectiveInput ??
+    (input.io.inspectTool === undefined
       ? input.toolInput
       : (
           await input.io.inspectTool(
@@ -578,13 +1054,15 @@ async function maybeRequireToolApproval(input: {
             input.toolInput,
             input.toolIntent,
           )
-        ).effectiveInput;
-  const approvalId = buildApprovalId(
-    input.runId,
-    input.stepIndex,
-    input.toolName,
-    effectiveToolInput,
-  );
+        ).effectiveInput);
+  const approvalId =
+    preparedToolCall?.approval?.approvalId ??
+    buildApprovalId(
+      input.runId,
+      input.stepIndex,
+      input.toolName,
+      effectiveToolInput,
+    );
   const requestedAt = new Date().toISOString();
   const expiresAt = new Date(
     Date.parse(requestedAt) + 5 * 60_000,
@@ -593,14 +1071,41 @@ async function maybeRequireToolApproval(input: {
   const approvalPresentation = buildToolApprovalPresentation({
     toolName: input.toolName,
     effectiveInput: effectiveToolInput,
+    ...(preparedToolCall === undefined
+      ? {}
+      : { inputAdapters: preparedToolCall.inputAdapters }),
     disposition: effectiveDisposition,
   });
   const approvalReason = approvalReasonExplanation(
     effectiveDisposition.reasonCode,
   );
-  const binding =
-    input.toolClass === "external_side_effect"
-      ? buildExternalApprovalBinding({
+  const binding:
+    | RunnerExternalApprovalBindingV1
+    | RunnerExternalApprovalBindingV2
+    | undefined =
+    preparedToolCall?.stableAuthority !== undefined &&
+      preparedToolCall.stableToolIdentity !== undefined
+      ? preparedToolCall.approval?.externalApprovalBinding?.version ===
+          RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION
+        ? parseRunnerExternalApprovalBindingV2(
+            preparedToolCall.approval.externalApprovalBinding,
+          )
+        : buildPreparedApprovalBindingV2({
+            preparedToolCall,
+            approvalId,
+            toolClass: input.toolClass,
+            authorityKind:
+              input.approvalAuthority?.kind ?? "runtime_policy",
+            requestedAt,
+            expiresAt,
+          })
+      : preparedToolCall?.approval?.externalApprovalBinding?.version ===
+          RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION
+        ? parseRunnerExternalApprovalBindingV1(
+            preparedToolCall.approval.externalApprovalBinding,
+          )
+      : input.toolClass === "external_side_effect"
+        ? buildExternalApprovalBinding({
           approvalId,
           threadId: readApprovalThreadId(input.eventPayload) ?? input.sessionId,
           runId: input.runId,
@@ -615,14 +1120,26 @@ async function maybeRequireToolApproval(input: {
           requestedAt,
           expiresAt,
         })
-      : undefined;
-  const currentPendingApproval = asRecord(
-    asRecord(input.reactState.exec)?.pendingApproval,
-  );
+        : undefined;
+  const canonicalRequestedAt = binding?.requestedAt ?? requestedAt;
+  const canonicalExpiresAt = binding?.expiresAt ?? expiresAt;
+  const durablePreparedToolCall =
+    preparedToolCall === undefined
+      ? undefined
+      : parseDurablePreparedToolCallV1({
+          ...preparedToolCall,
+          approval: {
+            ...preparedToolCall.approval,
+            ...(binding !== undefined
+              ? { externalApprovalBinding: binding }
+              : {}),
+          },
+        });
   const currentPendingApprovalId = asString(currentPendingApproval?.approvalId);
   const decision = await resolveApprovalDecision({
     eventType: input.eventType,
     eventPayload: input.eventPayload,
+    strictV2: durablePreparedToolCall !== undefined,
     model: input.model,
     io: input.io,
     waitFor: {
@@ -634,13 +1151,103 @@ async function maybeRequireToolApproval(input: {
         reason: approvalReason,
         reasonCode: effectiveDisposition.reasonCode,
         approvalPresentation,
+        approvalAuthorityKind:
+          input.approvalAuthority?.kind ?? "runtime_policy",
       },
     },
   });
 
+  const toExpiredPreparedApproval = (expiredPreparedToolCall: PreparedToolCallV1) => {
+    const lastActionResult = {
+      ok: false,
+      kind: "approval_expiration",
+      status: "expired",
+      approvalId,
+      toolName: input.toolName,
+      toolClass: input.toolClass,
+      ts: new Date().toISOString(),
+    };
+    return createReferenceReactEffectCollectCheckpoint({
+      reactState: input.reactState,
+      currentStepAgent: input.currentStepAgent,
+      nextStepAgent: input.deliberationStepId,
+      stepIndex: input.stepIndex,
+      activeRegion: input.activeRegion,
+      phase: "THINK",
+      effects: [
+        {
+          type: "release_prepared_tool_call",
+          payload: { preparedToolCall: expiredPreparedToolCall },
+          idempotencyKey: `${expiredPreparedToolCall.callId}:release`,
+          failurePolicy: "STOP",
+        },
+      ],
+      reactPatch: {
+        lastActionResult,
+        observations: appendAgentObservation(input.reactState, lastActionResult),
+        decisionTrace: [
+          {
+            eventType: "decision.executed",
+            phase: "acter",
+            decisionCode: "tool_approval_expired",
+            metadata: {
+              approvalId,
+              toolName: input.toolName,
+              toolClass: input.toolClass,
+            },
+          },
+        ],
+      },
+      execPatch: { pendingApproval: undefined },
+      regionExecPatch: { pendingApproval: undefined },
+    });
+  };
+
   if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "approve") {
     let exactApprovalMatches = true;
-    if (binding !== undefined) {
+    if (durablePreparedToolCall !== undefined) {
+      try {
+        const parsedPreparedToolCall = parseDurablePreparedToolCallV1(
+          durablePreparedToolCall,
+        );
+        if (parsedPreparedToolCall.stableAuthority === undefined) {
+          validatePendingPreparedApprovalV1({
+            currentPendingApproval,
+            currentWaitMetadata,
+            preparedToolCall: parsedPreparedToolCall,
+            toolName: input.toolName,
+            toolClass: input.toolClass,
+          });
+        } else {
+          validatePendingPreparedApprovalV2({
+            currentPendingApproval,
+            preparedToolCall: parsedPreparedToolCall,
+            approvalId,
+            toolName: input.toolName,
+            toolClass: input.toolClass,
+          });
+        }
+      } catch (error) {
+        if (
+          error instanceof RuntimeFailure &&
+          error.code === "EXTERNAL_APPROVAL_EXPIRED"
+        ) {
+          return toExpiredPreparedApproval(
+            parseDurablePreparedToolCallV1(durablePreparedToolCall),
+          );
+        }
+        if (
+          error instanceof RuntimeFailure &&
+          (error.code === "HOSTED_PREPARED_APPROVAL_INVALID" ||
+            error.code === "LOCAL_PREPARED_APPROVAL_INVALID")
+        ) {
+          exactApprovalMatches = false;
+        } else {
+          throw error;
+        }
+      }
+    }
+    if (binding?.version === RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION) {
       try {
         validatePendingExternalApproval({
           currentPendingApproval,
@@ -660,53 +1267,72 @@ async function maybeRequireToolApproval(input: {
           throw error;
         }
       }
+    } else if (binding?.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION) {
+      try {
+        validatePendingPreparedApprovalBindingV2({
+          currentPendingApproval,
+          preparedToolCall: parseDurablePreparedToolCallV1(durablePreparedToolCall),
+          expected: binding,
+          toolClass: input.toolClass,
+        });
+      } catch (error) {
+        if (
+          error instanceof RuntimeFailure &&
+          error.code === "EXTERNAL_APPROVAL_EXPIRED"
+        ) {
+          return toExpiredPreparedApproval(
+            parseDurablePreparedToolCallV1(durablePreparedToolCall),
+          );
+        }
+        if (
+          error instanceof RuntimeFailure &&
+          (
+            error.code === "EXTERNAL_APPROVAL_BINDING_INVALID" ||
+            error.code === "EXTERNAL_APPROVAL_BINDING_CHANGED"
+          )
+        ) {
+          exactApprovalMatches = false;
+        } else {
+          throw error;
+        }
+      }
     }
-    if (exactApprovalMatches) return;
+    if (exactApprovalMatches) {
+      return durablePreparedToolCall === undefined
+        ? undefined
+        : {
+            preparedToolCall:
+              parseDurablePreparedToolCallV1(durablePreparedToolCall),
+          };
+    }
+    if (durablePreparedToolCall !== undefined) {
+      return toToolApprovalBindingRejectedTransition({
+        ...input,
+        approvalId,
+        preparedToolCall:
+          parseDurablePreparedToolCallV1(durablePreparedToolCall),
+      });
+    }
   }
 
   if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "deny") {
-    const lastActionResult = {
-      ok: false,
-      kind: "approval_denial",
-      status: "denied",
+    const declinedPreparedToolCall = durablePreparedToolCall === undefined
+      ? undefined
+      : parseDurablePreparedToolCallV1(durablePreparedToolCall);
+    return toToolApprovalDeniedTransition({
+      ...input,
       approvalId,
-      toolName: input.toolName,
-      toolClass: input.toolClass,
-      ts: new Date().toISOString(),
-    };
-    return createReferenceReactEffectCollectCheckpoint({
-      reactState: input.reactState,
-      currentStepAgent: input.currentStepAgent,
-      nextStepAgent: input.deliberationStepId,
-      stepIndex: input.stepIndex,
-      activeRegion: input.activeRegion,
-      phase: "THINK",
-      reactPatch: {
-        lastActionResult,
-        observations: appendAgentObservation(input.reactState, lastActionResult),
-        decisionTrace: [
-          {
-            eventType: "decision.executed",
-            phase: "acter",
-            decisionCode: "tool_approval_denied",
-            metadata: {
-              approvalId,
-              toolName: input.toolName,
-              toolClass: input.toolClass,
-            },
-          },
-        ],
-      },
-      execPatch: {
-        pendingApproval: undefined,
-      },
-      regionExecPatch: {
-        pendingApproval: undefined,
-      },
+      preparedToolCall: declinedPreparedToolCall,
     });
   }
+  if (
+    durablePreparedToolCall === undefined &&
+    hasHostedPreparedApprovalAuthority(input.eventPayload)
+  ) {
+    throw new Error("Hosted approval preparation did not produce a durable invocation.");
+  }
 
-  const prompt = `Approve ${input.toolName}? Reply 'approve' or 'deny'.`;
+  const prompt = "Review this action before it runs.";
   const waitFor: WaitForMatcher = {
     kind: "approval",
     eventType: "user.approval",
@@ -719,8 +1345,18 @@ async function maybeRequireToolApproval(input: {
       reason: approvalReason,
       reasonCode: effectiveDisposition.reasonCode,
       approvalPresentation,
-      expiresAt,
+      approvalAuthorityKind:
+        input.approvalAuthority?.kind ?? "runtime_policy",
+      ...(preparedToolCall !== undefined &&
+      preparedToolCall.stableAuthority === undefined
+        ? { approvalAuthorityRevision: upstreamApprovalAuthorityRevision }
+        : {}),
+      requestedAt: canonicalRequestedAt,
+      expiresAt: canonicalExpiresAt,
       ...(binding !== undefined ? { externalApprovalBinding: binding } : {}),
+      ...(durablePreparedToolCall === undefined
+        ? {}
+        : { preparedToolCall: durablePreparedToolCall }),
       prompt,
     },
   };
@@ -758,22 +1394,317 @@ async function maybeRequireToolApproval(input: {
     },
     execPatch: {
       pendingApproval: {
+        ...(durablePreparedToolCall?.stableAuthority === undefined
+          ? { version: "local_tool_approval_v1" }
+          : {
+              version: "hosted_tool_approval_v2",
+              preparedInvocationId: durablePreparedToolCall.callId,
+            }),
         approvalId,
+        ...(durablePreparedToolCall === undefined
+          ? {}
+          : { preparedInvocationId: durablePreparedToolCall.callId }),
+        ...(durablePreparedToolCall !== undefined &&
+        durablePreparedToolCall.stableAuthority === undefined
+          ? { approvalAuthorityRevision: upstreamApprovalAuthorityRevision }
+          : {}),
         toolName: input.toolName,
         toolClass: input.toolClass,
-        expiresAt,
+        expiresAt: canonicalExpiresAt,
         ...(binding !== undefined ? { externalApprovalBinding: binding } : {}),
       },
     },
     regionExecPatch: {
       pendingApproval: {
+        ...(durablePreparedToolCall?.stableAuthority === undefined
+          ? { version: "local_tool_approval_v1" }
+          : {
+              version: "hosted_tool_approval_v2",
+              preparedInvocationId: durablePreparedToolCall.callId,
+            }),
         approvalId,
+        ...(durablePreparedToolCall === undefined
+          ? {}
+          : { preparedInvocationId: durablePreparedToolCall.callId }),
+        ...(durablePreparedToolCall !== undefined &&
+        durablePreparedToolCall.stableAuthority === undefined
+          ? { approvalAuthorityRevision: upstreamApprovalAuthorityRevision }
+          : {}),
         toolName: input.toolName,
         toolClass: input.toolClass,
-        expiresAt,
+        expiresAt: canonicalExpiresAt,
         ...(binding !== undefined ? { externalApprovalBinding: binding } : {}),
       },
     },
+  });
+}
+
+function cleanupRequestOrganizationId(
+  eventPayload: Record<string, unknown>,
+): string | undefined {
+  return asString(asRecord(eventPayload.decidingActor)?.tenantId) ??
+    asString(asRecord(eventPayload.hostedApprovalAuthority)?.organizationId);
+}
+
+function toPreparedApprovalCleanupTransition(input: {
+  reactState: Record<string, unknown>;
+  currentStepAgent: string;
+  deliberationStepId: string;
+  stepIndex: number;
+  activeRegion: string | undefined;
+  approvalId: string;
+  toolName: string;
+  toolClass: ToolExecutionClass;
+  preparedToolCall: PreparedToolCallV1;
+  cleanup: ReturnType<typeof parseRunnerPreparedApprovalCleanupV1>;
+}): Transition {
+  const releaseEffectIdempotencyKey = `${input.preparedToolCall.callId}:release`;
+  const lastActionResult = {
+    ok: false,
+    kind: "prepared_approval_cleanup",
+    status: "released",
+    approvalId: input.approvalId,
+    toolName: input.toolName,
+    toolClass: input.toolClass,
+    failureCode: input.cleanup.failureCode,
+    ts: new Date().toISOString(),
+  };
+  const checkpoint = createReferenceReactEffectCollectCheckpoint({
+    reactState: input.reactState,
+    currentStepAgent: input.currentStepAgent,
+    nextStepAgent: input.deliberationStepId,
+    stepIndex: input.stepIndex,
+    activeRegion: input.activeRegion,
+    phase: "THINK",
+    effects: [
+      {
+        type: "release_prepared_tool_call",
+        payload: {
+          preparedToolCall: input.preparedToolCall,
+          preparedApprovalCleanup: input.cleanup,
+        },
+        idempotencyKey: releaseEffectIdempotencyKey,
+        failurePolicy: "STOP",
+      },
+    ],
+    reactPatch: {
+      lastActionResult,
+      terminal: {
+        status: "COMPLETED",
+        reasonCode: input.cleanup.failureCode,
+        message: input.cleanup.failureMessage,
+        preparedApprovalCleanup: createPreparedApprovalCleanupTerminalV1({
+          releaseEffectIdempotencyKey,
+          cleanup: input.cleanup,
+        }),
+      },
+      observations: appendAgentObservation(input.reactState, lastActionResult),
+    },
+    execPatch: { pendingApproval: undefined },
+    regionExecPatch: { pendingApproval: undefined },
+  });
+  return {
+    ...checkpoint,
+    status: "COMPLETED",
+    nextStepAgent: undefined,
+    outboxDelivery: "after_terminal",
+  };
+}
+
+function toToolApprovalDeniedTransition(input: {
+  reactState: Record<string, unknown>;
+  currentStepAgent: string;
+  deliberationStepId: string;
+  stepIndex: number;
+  activeRegion: string | undefined;
+  approvalId: string;
+  toolName: string;
+  toolClass: ToolExecutionClass;
+  preparedToolCall?: PreparedToolCallV1 | undefined;
+}): Transition {
+  const declineMessage = "The action was not run.";
+  const lastActionResult = {
+    ok: false,
+    kind: "approval_denial",
+    status: "denied",
+    approvalId: input.approvalId,
+    toolName: input.toolName,
+    toolClass: input.toolClass,
+    ts: new Date().toISOString(),
+  };
+  const checkpoint = createReferenceReactEffectCollectCheckpoint({
+    reactState: input.reactState,
+    currentStepAgent: input.currentStepAgent,
+    nextStepAgent: input.deliberationStepId,
+    stepIndex: input.stepIndex,
+    activeRegion: input.activeRegion,
+    phase: "THINK",
+    effects: input.preparedToolCall === undefined
+      ? undefined
+      : [
+          {
+            type: "release_prepared_tool_call",
+            payload: { preparedToolCall: input.preparedToolCall },
+            idempotencyKey: `${input.preparedToolCall.callId}:release`,
+            failurePolicy: "STOP",
+          },
+        ],
+    reactPatch: {
+      lastActionResult,
+      assistantText: declineMessage,
+      terminal: {
+        status: "COMPLETED",
+        reasonCode: "TOOL_APPROVAL_DECLINED",
+        message: declineMessage,
+      },
+      observations: appendAgentObservation(input.reactState, lastActionResult),
+      decisionTrace: [
+        {
+          eventType: "decision.executed",
+          phase: "acter",
+          decisionCode: "tool_approval_denied",
+          metadata: {
+            approvalId: input.approvalId,
+            toolName: input.toolName,
+            toolClass: input.toolClass,
+          },
+        },
+      ],
+    },
+    execPatch: { pendingApproval: undefined },
+    regionExecPatch: { pendingApproval: undefined },
+  });
+  return {
+    ...checkpoint,
+    status: "COMPLETED",
+    nextStepAgent: undefined,
+    outboxDelivery: "after_terminal",
+  };
+}
+
+function toToolApprovalPolicyChangedTransition(input: {
+  reactState: Record<string, unknown>;
+  currentStepAgent: string;
+  deliberationStepId: string;
+  stepIndex: number;
+  activeRegion: string | undefined;
+  approvalId: string;
+  toolName: string;
+  toolClass: ToolExecutionClass;
+  preparedToolCall?: PreparedToolCallV1 | undefined;
+  availabilityReason: EffectiveToolDecisionV1["availabilityReason"];
+  approvalReasonCode?: ToolApprovalDispositionV1["reasonCode"] | undefined;
+}): Transition {
+  const lastActionResult = {
+    ok: false,
+    kind: "approval_policy_change",
+    status: "denied",
+    reason: "policy_changed",
+    availabilityReason: input.availabilityReason,
+    ...(input.approvalReasonCode === undefined
+      ? {}
+      : { approvalReasonCode: input.approvalReasonCode }),
+    approvalId: input.approvalId,
+    toolName: input.toolName,
+    toolClass: input.toolClass,
+    ts: new Date().toISOString(),
+  };
+  return createReferenceReactEffectCollectCheckpoint({
+    reactState: input.reactState,
+    currentStepAgent: input.currentStepAgent,
+    nextStepAgent: input.deliberationStepId,
+    stepIndex: input.stepIndex,
+    activeRegion: input.activeRegion,
+    phase: "THINK",
+    effects: input.preparedToolCall === undefined
+      ? undefined
+      : [
+          {
+            type: "release_prepared_tool_call",
+            payload: { preparedToolCall: input.preparedToolCall },
+            idempotencyKey: `${input.preparedToolCall.callId}:release`,
+            failurePolicy: "STOP" as const,
+          },
+        ],
+    reactPatch: {
+      lastActionResult,
+      observations: appendAgentObservation(input.reactState, lastActionResult),
+      decisionTrace: [
+        {
+          eventType: "decision.executed",
+          phase: "acter",
+          decisionCode: "tool_approval_policy_changed",
+          metadata: {
+            approvalId: input.approvalId,
+            toolName: input.toolName,
+            toolClass: input.toolClass,
+            availabilityReason: input.availabilityReason,
+            ...(input.approvalReasonCode === undefined
+              ? {}
+              : { approvalReasonCode: input.approvalReasonCode }),
+          },
+        },
+      ],
+    },
+    execPatch: { pendingApproval: undefined },
+    regionExecPatch: { pendingApproval: undefined },
+  });
+}
+
+function toToolApprovalBindingRejectedTransition(input: {
+  reactState: Record<string, unknown>;
+  currentStepAgent: string;
+  deliberationStepId: string;
+  stepIndex: number;
+  activeRegion: string | undefined;
+  approvalId: string;
+  toolName: string;
+  toolClass: ToolExecutionClass;
+  preparedToolCall: PreparedToolCallV1;
+}): Transition {
+  const lastActionResult = {
+    ok: false,
+    kind: "approval_binding_rejected",
+    status: "released",
+    reason: "identity_mismatch",
+    approvalId: input.approvalId,
+    toolName: input.toolName,
+    toolClass: input.toolClass,
+    ts: new Date().toISOString(),
+  };
+  return createReferenceReactEffectCollectCheckpoint({
+    reactState: input.reactState,
+    currentStepAgent: input.currentStepAgent,
+    nextStepAgent: input.deliberationStepId,
+    stepIndex: input.stepIndex,
+    activeRegion: input.activeRegion,
+    phase: "THINK",
+    effects: [
+      {
+        type: "release_prepared_tool_call",
+        payload: { preparedToolCall: input.preparedToolCall },
+        idempotencyKey: `${input.preparedToolCall.callId}:release`,
+        failurePolicy: "STOP",
+      },
+    ],
+    reactPatch: {
+      lastActionResult,
+      observations: appendAgentObservation(input.reactState, lastActionResult),
+      decisionTrace: [
+        {
+          eventType: "decision.executed",
+          phase: "acter",
+          decisionCode: "tool_approval_binding_rejected",
+          metadata: {
+            approvalId: input.approvalId,
+            toolName: input.toolName,
+            toolClass: input.toolClass,
+          },
+        },
+      ],
+    },
+    execPatch: { pendingApproval: undefined },
+    regionExecPatch: { pendingApproval: undefined },
   });
 }
 
@@ -819,6 +1750,25 @@ export function requiresExplicitToolApproval(input: {
   return (
     input.requiredApprovalCapabilities?.includes("external.confirm") === true
   );
+}
+
+function legacyApprovalDisposition(
+  requiredCapabilities: readonly string[] | undefined,
+): ToolApprovalDispositionV1 {
+  return requiredCapabilities?.includes("external.confirm") === true
+    ? {
+        mode: "ask",
+        reasonCode: "tool_minimum",
+        authority: {
+          kind: "runtime_policy",
+          revision: "legacy-external-confirm",
+        },
+      }
+    : {
+        mode: "auto",
+        reasonCode: "environment_policy",
+        authority: { kind: "runtime_policy", revision: "legacy-default:v1" },
+      };
 }
 
 async function maybeRequireManagedWorktreeApproval(input: {
@@ -908,7 +1858,7 @@ async function maybeRequireManagedWorktreeApproval(input: {
     model: input.model,
     io: input.io,
     waitFor: {
-      eventType: "user.approval",
+      eventType: "user.reply",
       metadata: {
         approvalId,
         purpose: "managed_worktree",
@@ -918,7 +1868,7 @@ async function maybeRequireManagedWorktreeApproval(input: {
     },
   });
 
-  if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "approve") {
+  if (input.eventType === "user.reply" && currentPendingApprovalId === approvalId && decision === "approve") {
     if (hasManagedWorktreeContext(input.reactState)) {
       return ;
     }
@@ -935,7 +1885,7 @@ async function maybeRequireManagedWorktreeApproval(input: {
     );
   }
 
-  if (input.eventType === "user.approval" && currentPendingApprovalId === approvalId && decision === "deny") {
+  if (input.eventType === "user.reply" && currentPendingApprovalId === approvalId && decision === "deny") {
     const lastActionResult = {
       ok: false,
       kind: "approval_denial",
@@ -1011,8 +1961,8 @@ async function maybeRequireManagedWorktreeApproval(input: {
   ].join("\n");
   const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
   const waitFor: WaitForMatcher = {
-    kind: "approval",
-    eventType: "user.approval",
+    kind: "user",
+    eventType: "user.reply",
     metadata: {
       approvalId,
       purpose: "managed_worktree",
@@ -1215,6 +2165,42 @@ function buildExternalApprovalBinding(input: {
   });
 }
 
+function buildPreparedApprovalBindingV2(input: {
+  preparedToolCall: PreparedToolCallV1;
+  approvalId: string;
+  toolClass: ToolExecutionClass;
+  authorityKind: RunnerExternalApprovalAuthorityKind;
+  requestedAt: string;
+  expiresAt: string;
+}): RunnerExternalApprovalBindingV2 {
+  const stableAuthority = input.preparedToolCall.stableAuthority;
+  const stableToolIdentity = input.preparedToolCall.stableToolIdentity;
+  if (stableAuthority === undefined || stableToolIdentity === undefined) {
+    throw createRuntimeFailure(
+      "EXTERNAL_APPROVAL_BINDING_INVALID",
+      "A new-version hosted approval requires stable prepared authority.",
+      { classification: "policy", recoverable: false },
+    );
+  }
+  return parseRunnerExternalApprovalBindingV2({
+    version: RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
+    approvalId: input.approvalId,
+    preparedInvocationId: input.preparedToolCall.callId,
+    threadId: stableAuthority.threadId,
+    actionKey: input.preparedToolCall.activation.descriptor.toolId,
+    payloadHash: digestApprovalPayload(input.preparedToolCall.effectiveInput),
+    stableAuthorityFingerprint: stableAuthority.fingerprint,
+    stableToolIdentity,
+    requestingActor: stableAuthority.actor,
+    toolClass: input.toolClass,
+    capabilities: stableAuthority.capabilities,
+    authorityKind: input.authorityKind,
+    authorityRevision: stableToolIdentity.approvalAuthorityRevision,
+    requestedAt: input.requestedAt,
+    expiresAt: input.expiresAt,
+  });
+}
+
 function validatePendingExternalApproval(input: {
   currentPendingApproval: Record<string, unknown> | undefined;
   expected: RunnerExternalApprovalBindingV1;
@@ -1290,13 +2276,313 @@ function validatePendingExternalApproval(input: {
   }
 }
 
+function validatePendingPreparedApprovalV1(input: {
+  currentPendingApproval: Record<string, unknown> | undefined;
+  currentWaitMetadata: Record<string, unknown> | undefined;
+  preparedToolCall: PreparedToolCallV1;
+  toolName: string;
+  toolClass: ToolExecutionClass;
+}): void {
+  const preparedBinding = input.preparedToolCall.approval?.externalApprovalBinding;
+  const pendingBinding = input.currentPendingApproval?.externalApprovalBinding;
+  const waitBinding = input.currentWaitMetadata?.externalApprovalBinding;
+  const approvalId = input.preparedToolCall.approval?.approvalId;
+  const requiresExternalBinding = input.toolClass === "external_side_effect";
+  if (
+    input.preparedToolCall.stableAuthority !== undefined ||
+    input.currentPendingApproval?.version !== "local_tool_approval_v1" ||
+    input.currentPendingApproval.preparedToolCall !== undefined ||
+    asString(input.currentPendingApproval.preparedInvocationId) !==
+      input.preparedToolCall.callId ||
+    asString(input.currentPendingApproval.approvalId) !== approvalId ||
+    asString(input.currentPendingApproval.approvalAuthorityRevision) ===
+      undefined ||
+    asString(input.currentPendingApproval.approvalAuthorityRevision) !==
+      asString(input.currentWaitMetadata?.approvalAuthorityRevision) ||
+    asString(input.currentPendingApproval.toolName) !== input.toolName ||
+    input.currentPendingApproval.toolClass !== input.toolClass ||
+    input.preparedToolCall.activation.descriptor.toolId !== input.toolName ||
+    (requiresExternalBinding &&
+      preparedBinding?.version !== RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION) ||
+    (!requiresExternalBinding && preparedBinding !== undefined) ||
+    !canonicalApprovalValuesEqual(preparedBinding, pendingBinding) ||
+    !canonicalApprovalValuesEqual(preparedBinding, waitBinding)
+  ) {
+    throw createRuntimeFailure(
+      "LOCAL_PREPARED_APPROVAL_INVALID",
+      "The local approval no longer matches its exact prepared invocation.",
+      {
+        subsystem: "react",
+        classification: "policy",
+        recoverable: false,
+        approvalId,
+      },
+    );
+  }
+  if (!requiresExternalBinding) {
+    const expiresAt = asString(input.currentPendingApproval.expiresAt);
+    if (expiresAt === undefined || Date.parse(expiresAt) <= Date.now()) {
+      throw createRuntimeFailure(
+        "EXTERNAL_APPROVAL_EXPIRED",
+        "Tool approval expired before the prepared invocation could resume.",
+        {
+          subsystem: "react",
+          classification: "policy",
+          recoverable: true,
+          approvalId,
+        },
+      );
+    }
+    return;
+  }
+  const binding = parseRunnerExternalApprovalBindingV1(preparedBinding);
+  if (
+    binding.approvalId !== approvalId ||
+    binding.threadId !== input.preparedToolCall.sessionId ||
+    binding.runId !== input.preparedToolCall.runId ||
+    binding.actionKey !== input.toolName ||
+    binding.payloadHash !==
+      digestApprovalPayload(input.preparedToolCall.effectiveInput) ||
+    binding.toolClass !== input.toolClass
+  ) {
+    throw createRuntimeFailure(
+      "LOCAL_PREPARED_APPROVAL_INVALID",
+      "The local approval binding differs from its prepared invocation.",
+      {
+        subsystem: "react",
+        classification: "policy",
+        recoverable: false,
+        approvalId,
+      },
+    );
+  }
+  if (Date.parse(binding.expiresAt) <= Date.now()) {
+    throw createRuntimeFailure(
+      "EXTERNAL_APPROVAL_EXPIRED",
+      "Tool approval expired before the prepared invocation could resume.",
+      {
+        subsystem: "react",
+        classification: "policy",
+        recoverable: true,
+        approvalId,
+      },
+    );
+  }
+}
+
+function canonicalApprovalValuesEqual(left: unknown, right: unknown): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return serializeCanonicalApprovalPayload(left) ===
+    serializeCanonicalApprovalPayload(right);
+}
+
+function preparedBrowserAllowMatchesPendingOperation(input: {
+  pendingPreparedToolCall: PreparedToolCallV1;
+  currentPreparedToolCall: PreparedToolCallV1;
+  hosted: boolean;
+  toolName: string;
+  toolInput: unknown;
+  toolClass: ToolExecutionClass;
+  runId: string;
+  sessionId: string;
+  policyRevision: string;
+  approvalAuthorityRevision: string;
+  requiredCapabilities: readonly string[];
+  eventPayload: Record<string, unknown> | undefined;
+}): boolean {
+  const pending = input.pendingPreparedToolCall;
+  const current = input.currentPreparedToolCall;
+  const currentPreparedAuthorityRevision =
+    derivePreparedToolApprovalAuthorityRevisionV1({
+      activation: current.activation,
+      effectiveInput: current.effectiveInput,
+      inputAdapters: current.inputAdapters,
+      policyRevision: current.policy.policyRevision,
+      upstreamAuthorityRevision: input.approvalAuthorityRevision,
+    });
+  const currentAuthorityMatches = input.hosted
+    ? current.stableAuthority !== undefined &&
+      current.stableToolIdentity !== undefined &&
+      current.approval?.authorityRevision ===
+        currentPreparedAuthorityRevision &&
+      preparedApprovalMatchesCurrentHostedAuthority({
+        preparedToolCall: current,
+        policyRevision: input.policyRevision,
+        approvalAuthorityRevision: input.approvalAuthorityRevision,
+      }) &&
+      (() => {
+        try {
+          assertPreparedApprovalMatchesStableHostedAuthority({
+            preparedToolCall: current,
+            eventPayload: input.eventPayload,
+            requiredCapabilities: input.requiredCapabilities,
+            toolClass: input.toolClass,
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      })()
+    : current.stableAuthority === undefined &&
+      current.stableToolIdentity === undefined &&
+      current.approval?.authorityRevision ===
+        currentPreparedAuthorityRevision;
+  return (
+    pending.policy.decision === "approval_required" &&
+    current.policy.decision === "allow" &&
+    current.policy.policyRevision === input.policyRevision &&
+    currentAuthorityMatches &&
+    pending.activation.descriptor.toolId === input.toolName &&
+    current.activation.descriptor.toolId === input.toolName &&
+    canonicalApprovalValuesEqual(current.activation, pending.activation) &&
+    canonicalApprovalValuesEqual(current.effectiveInput, input.toolInput) &&
+    canonicalApprovalValuesEqual(
+      current.effectiveInput,
+      pending.effectiveInput,
+    ) &&
+    current.runId === input.runId &&
+    pending.sessionId === input.sessionId &&
+    current.sessionId === input.sessionId &&
+    canonicalApprovalValuesEqual(current.origin, pending.origin)
+  );
+}
+
+function validatePendingPreparedApprovalV2(input: {
+  currentPendingApproval: Record<string, unknown> | undefined;
+  preparedToolCall: PreparedToolCallV1;
+  approvalId: string;
+  toolName: string;
+  toolClass: ToolExecutionClass;
+}): void {
+  const authority = input.preparedToolCall.stableAuthority;
+  const pendingExpiresAt = asString(input.currentPendingApproval?.expiresAt);
+  const authorityClassMatches =
+    authority?.version === "prepared_tool_stable_authority_v2"
+      ? authority.executionClass === input.toolClass
+      : authority?.version === "prepared_tool_stable_authority_v1"
+        ? input.toolClass === "external_side_effect"
+        : false;
+  if (
+    authorityClassMatches === false ||
+    input.preparedToolCall.policy.decision !== "approval_required" ||
+    input.currentPendingApproval?.version !== "hosted_tool_approval_v2" ||
+    input.currentPendingApproval.preparedToolCall !== undefined ||
+    asString(input.currentPendingApproval.preparedInvocationId) !==
+      input.preparedToolCall.callId ||
+    asString(input.currentPendingApproval.approvalId) !== input.approvalId ||
+    asString(input.currentPendingApproval.toolName) !== input.toolName ||
+    input.currentPendingApproval.toolClass !== input.toolClass ||
+    input.preparedToolCall.activation.descriptor.toolId !== input.toolName ||
+    pendingExpiresAt === undefined
+  ) {
+    throw createRuntimeFailure(
+      "HOSTED_PREPARED_APPROVAL_INVALID",
+      "The hosted approval no longer matches its exact prepared invocation.",
+      {
+        subsystem: "react",
+        classification: "policy",
+        recoverable: false,
+        approvalId: input.approvalId,
+      },
+    );
+  }
+  if (Date.parse(pendingExpiresAt) <= Date.now()) {
+    throw createRuntimeFailure(
+      "EXTERNAL_APPROVAL_EXPIRED",
+      "Tool approval expired before the prepared invocation could resume.",
+      {
+        subsystem: "react",
+        classification: "policy",
+        recoverable: true,
+        approvalId: input.approvalId,
+      },
+    );
+  }
+}
+
+function validatePendingPreparedApprovalBindingV2(input: {
+  currentPendingApproval: Record<string, unknown> | undefined;
+  preparedToolCall: PreparedToolCallV1;
+  expected: RunnerExternalApprovalBindingV2;
+  toolClass: ToolExecutionClass;
+}): void {
+  let pending: RunnerExternalApprovalBindingV2;
+  let pendingState: RunnerExternalApprovalBindingV2;
+  try {
+    pending = parseRunnerExternalApprovalBindingV2(
+      input.preparedToolCall.approval?.externalApprovalBinding,
+    );
+    pendingState = parseRunnerExternalApprovalBindingV2(
+      input.currentPendingApproval?.externalApprovalBinding,
+    );
+  } catch (error) {
+    throw createRuntimeFailure(
+      "EXTERNAL_APPROVAL_BINDING_INVALID",
+      "Hosted approval is missing its persisted prepared invocation binding.",
+      {
+        subsystem: "react",
+        classification: "policy",
+        recoverable: false,
+        cause: error instanceof Error ? error.message : String(error),
+      },
+    );
+  }
+  if (
+    serializeCanonicalApprovalPayload(pending) !==
+      serializeCanonicalApprovalPayload(input.expected) ||
+    serializeCanonicalApprovalPayload(pendingState) !==
+      serializeCanonicalApprovalPayload(pending) ||
+    input.currentPendingApproval?.version !== "hosted_tool_approval_v2" ||
+    input.currentPendingApproval.preparedToolCall !== undefined ||
+    input.expected.toolClass !== input.toolClass ||
+    input.currentPendingApproval.toolClass !== input.toolClass ||
+    asString(input.currentPendingApproval.preparedInvocationId) !==
+      input.preparedToolCall.callId ||
+    input.preparedToolCall.callId !== pending.preparedInvocationId ||
+    input.preparedToolCall.stableAuthority?.fingerprint !==
+      pending.stableAuthorityFingerprint ||
+    input.preparedToolCall.stableToolIdentity?.approvalAuthorityRevision !==
+      pending.authorityRevision ||
+    (input.preparedToolCall.stableAuthority?.version ===
+      "prepared_tool_stable_authority_v2" &&
+      input.preparedToolCall.stableAuthority.executionClass !==
+        pending.toolClass) ||
+    serializeCanonicalApprovalPayload(input.preparedToolCall.stableToolIdentity) !==
+      serializeCanonicalApprovalPayload(pending.stableToolIdentity) ||
+    digestApprovalPayload(input.preparedToolCall.effectiveInput) !== pending.payloadHash
+  ) {
+    throw createRuntimeFailure(
+      "EXTERNAL_APPROVAL_BINDING_CHANGED",
+      "Hosted approval no longer matches the persisted prepared invocation.",
+      {
+        subsystem: "react",
+        classification: "policy",
+        recoverable: false,
+        approvalId: pending.approvalId,
+      },
+    );
+  }
+  if (Date.parse(pending.expiresAt) <= Date.now()) {
+    throw createRuntimeFailure(
+      "EXTERNAL_APPROVAL_EXPIRED",
+      "Hosted approval expired before the action could resume.",
+      {
+        subsystem: "react",
+        classification: "policy",
+        recoverable: true,
+        approvalId: pending.approvalId,
+      },
+    );
+  }
+}
+
 function digestApprovalPayload(value: unknown): string {
   return `sha256:${createHash("sha256")
     .update(serializeCanonicalApprovalPayload(value))
     .digest("hex")}`;
 }
 
-function buildRuntimePolicyRevision(input: {
+export function buildRuntimePolicyRevision(input: {
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   executionPolicy: ExecutionPolicy | undefined;
@@ -1317,16 +2603,146 @@ function readApprovalThreadId(
   );
 }
 
+function hasHostedPreparedApprovalAuthority(
+  eventPayload: Record<string, unknown> | undefined,
+): boolean {
+  const authority = asRecord(eventPayload?.hostedApprovalAuthority);
+  const actor = asRecord(eventPayload?.actor);
+  return (
+    asString(authority?.organizationId) !== undefined &&
+    asString(authority?.environmentId) !== undefined &&
+    asString(authority?.projectId) !== undefined &&
+    asString(authority?.threadId) !== undefined &&
+    asString(actor?.actorId) !== undefined
+  );
+}
+
+function assertPreparedApprovalMatchesStableHostedAuthority(input: {
+  preparedToolCall: PreparedToolCallV1;
+  eventPayload: Record<string, unknown> | undefined;
+  requiredCapabilities?: readonly string[] | undefined;
+  toolClass: ToolExecutionClass;
+}): void {
+  const authority = asRecord(input.eventPayload?.hostedApprovalAuthority);
+  const actorInput = asRecord(input.eventPayload?.actor);
+  const actorType = asString(actorInput?.actorType);
+  const actorId = asString(actorInput?.actorId);
+  const actorTenantId = asString(actorInput?.tenantId);
+  const organizationId = asString(authority?.organizationId);
+  const environmentId = asString(authority?.environmentId);
+  const projectId = asString(authority?.projectId);
+  const threadId = asString(authority?.threadId);
+  if (
+    authority?.version !== "runner_hosted_approval_authority_v1" ||
+    (actorType !== "end_user" &&
+      actorType !== "operator" &&
+      actorType !== "service") ||
+    actorId === undefined ||
+    organizationId === undefined ||
+    environmentId === undefined ||
+    projectId === undefined ||
+    threadId === undefined
+  ) {
+    throw new Error(
+      "current hosted approval authority is missing or incomplete",
+    );
+  }
+  if (actorTenantId !== undefined && actorTenantId !== organizationId) {
+    throw new Error(
+      "current hosted approval actor tenant does not match organization",
+    );
+  }
+  const stableAuthority = input.preparedToolCall.stableAuthority;
+  if (stableAuthority === undefined) {
+    throw new Error(
+      "persisted hosted approval is missing stable hosted authority",
+    );
+  }
+  if (
+    stableAuthority.actor.actorType !== actorType ||
+    stableAuthority.actor.actorId !== actorId ||
+    stableAuthority.actor.tenantId !== actorTenantId ||
+    stableAuthority.organizationId !== organizationId ||
+    stableAuthority.environmentId !== environmentId ||
+    stableAuthority.projectId !== projectId ||
+    stableAuthority.threadId !== threadId
+  ) {
+    throw new Error(
+      "persisted hosted approval authority does not match the current hosted context",
+    );
+  }
+  if (
+    input.requiredCapabilities !== undefined &&
+    JSON.stringify([...stableAuthority.capabilities].sort()) !==
+    JSON.stringify([...new Set(input.requiredCapabilities)].sort())
+  ) {
+    throw new Error(
+      "persisted hosted approval capability context does not match the current tool",
+    );
+  }
+  if (
+    (stableAuthority.version === "prepared_tool_stable_authority_v2" &&
+      stableAuthority.executionClass !== input.toolClass) ||
+    (stableAuthority.version === "prepared_tool_stable_authority_v1" &&
+      input.toolClass !== "external_side_effect")
+  ) {
+    throw new Error(
+      "persisted hosted approval execution class does not match the current tool",
+    );
+  }
+}
+
+function preparedApprovalMatchesCurrentHostedAuthority(input: {
+  preparedToolCall: PreparedToolCallV1;
+  policyRevision: string;
+  approvalAuthorityRevision: string;
+}): boolean {
+  const stableAuthority = input.preparedToolCall.stableAuthority;
+  if (stableAuthority === undefined) {
+    throw new Error(
+      "persisted hosted approval is missing stable hosted authority",
+    );
+  }
+  return stableAuthority.policyRevision === input.policyRevision &&
+    stableAuthority.approvalAuthorityRevision ===
+      input.approvalAuthorityRevision;
+}
+
+function preparedApprovalMatchesCurrentLocalAuthority(input: {
+  preparedToolCall: PreparedToolCallV1;
+  policyRevision: string;
+  currentPendingApproval: Record<string, unknown>;
+  approvalAuthorityRevision: string;
+}): boolean {
+  return input.preparedToolCall.policy.policyRevision === input.policyRevision &&
+    asString(input.currentPendingApproval.approvalAuthorityRevision) ===
+      input.approvalAuthorityRevision;
+}
+
 async function resolveApprovalDecision(input: {
   eventType: string;
   eventPayload: Record<string, unknown> | undefined;
-  waitFor: { eventType: "user.approval"; metadata: Record<string, unknown> };
+  strictV2?: boolean | undefined;
+  waitFor: {
+    eventType: "user.approval" | "user.reply";
+    metadata: Record<string, unknown>;
+  };
   model?: string | undefined;
   io?: StepIO | undefined;
 }): Promise<"approve" | "deny" | undefined> {
-  if (input.eventType !== "user.approval") {
+  if (input.eventType !== input.waitFor.eventType) {
     return ;
   }
+  if (input.strictV2 === true) {
+    if (
+      input.eventPayload?.decision === "approve_once" ||
+      input.eventPayload?.decision === "remember_approval"
+    ) return "approve";
+    if (input.eventPayload?.decision === "decline") return "deny";
+    return ;
+  }
+  if (input.eventPayload?.decision === "approve_once") return "approve";
+  if (input.eventPayload?.decision === "decline") return "deny";
   const existing = readHighConfidenceApprovalDecision(readUserReplyIntent(input.eventPayload?.userReplyIntent));
   if (existing !== undefined) {
     return existing;
@@ -1619,7 +3035,7 @@ async function maybeRequireAutonomyEscalation(input: {
     model: input.model,
     io: input.io,
     waitFor: {
-      eventType: "user.approval",
+      eventType: "user.reply",
       metadata: {
         approvalId,
         toolName: input.actionLabel,
@@ -1631,14 +3047,14 @@ async function maybeRequireAutonomyEscalation(input: {
   });
 
   if (
-    input.eventType === "user.approval" &&
+    input.eventType === "user.reply" &&
     currentPendingApprovalId === approvalId &&
     decision === "approve"
   ) {
     return ;
   }
   if (
-    input.eventType === "user.approval" &&
+    input.eventType === "user.reply" &&
     currentPendingApprovalId === approvalId &&
     decision === "deny"
   ) {
@@ -1661,8 +3077,8 @@ async function maybeRequireAutonomyEscalation(input: {
       : `Autonomy ${input.policy.level} requires review before ${input.actionLabel}. Risk signals: ${autonomy.escalateReasons.join(", ")}. Reply 'approve' or 'deny'.`;
   const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
   const waitFor: WaitForMatcher = {
-    kind: "approval",
-    eventType: "user.approval",
+    kind: "user",
+    eventType: "user.reply",
     metadata: {
       approvalId,
       toolName: input.actionLabel,

@@ -1,10 +1,17 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { defaultToolCatalog } from "../../../../tools/catalog";
 import { getProjectEnvironmentBinding } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   microsoft365PackAllowsCapability,
+  hasMicrosoft365CapabilityScopes,
   parseMicrosoft365Packs,
 } from "@/lib/integrations/microsoft-365-contract";
+import {
+  hasGoogleCalendarCapabilityScopes,
+  parseSelectedGoogleWorkspacePacks,
+} from "@/lib/integrations/google-calendar-contract";
+import { hasGmailCapabilityScopes } from "@/lib/integrations/gmail-contract";
 import type {
   ToolApprovalMode,
   ToolLoggingMode,
@@ -12,18 +19,34 @@ import type {
 } from "@/lib/tools/types";
 import { getCoreAppDefinition } from "./catalog";
 import {
+  HOSTED_BROWSER_APP_KEY,
+  HOSTED_BROWSER_DOMAIN_POLICY_CAPABILITY_KEY,
+  defaultHostedBrowserProjectSettings,
+  parseHostedBrowserProjectSettings,
+  readHostedBrowserEnvironmentSettings,
+  readHostedBrowserProjectSettings,
+} from "./browser-domain-service";
+import {
   applyMinimumApprovalMode,
   intersectAppApprovalModes,
   isProjectApprovalWithinEnvironment,
 } from "./policy";
 import { ensureCoreAppCatalog, ensureEnvironmentAppPolicies } from "./service";
-import type { AppConnectionSummary } from "./types";
+import type {
+  AppConnectionSummary,
+  BrowserEnvironmentAppSettings,
+  BrowserProjectAppSettings,
+} from "./types";
 import type { AppConnectionModel, AppConnectionRequirement } from "./types";
 import {
   githubCapabilityHasReadyResource,
   listAuthorizedGitHubResources,
 } from "@/lib/integrations/github-resource-access";
 import type { GitHubCapability } from "@/lib/integrations/github-policy-contract";
+import {
+  classifyWorkflowCapability,
+  type WorkflowCapabilityUse,
+} from "@/lib/workflows/capabilities";
 
 export type ProjectAppConnection = AppConnectionSummary & {
   scope: "shared" | "personal";
@@ -46,7 +69,44 @@ export type ProjectAppCapability = {
   rateLimitMode: ToolRateLimitMode;
   inherited: boolean;
   resourceReady: boolean;
+  inputSchema: Record<string, unknown>;
+  accessMode: import("@/lib/tools/types").ToolAccessMode;
+  workflowUse: WorkflowCapabilityUse;
+  descriptorContractRevision: string | null;
+  settings?: Record<string, unknown>;
+  browserSettings?: BrowserProjectAppSettings | null;
+  environmentBrowserSettings?: BrowserEnvironmentAppSettings | null;
 };
+
+function capabilityInputSchema(capability: {
+  runtimeName: string | null;
+  metadata: Record<string, unknown> | null;
+}): Record<string, unknown> {
+  const descriptor = capability.runtimeName
+    ? defaultToolCatalog.getDescriptor(capability.runtimeName)
+    : undefined;
+  if (descriptor) return descriptor.inputSchema;
+  const candidate = capability.metadata?.inputSchema;
+  return candidate && typeof candidate === "object" && !Array.isArray(candidate)
+    ? (candidate as Record<string, unknown>)
+    : { type: "object", properties: {}, additionalProperties: false };
+}
+
+function capabilityDescriptorContractRevision(capability: {
+  runtimeName: string | null;
+  metadata: Record<string, unknown> | null;
+}) {
+  const descriptor = capability.runtimeName
+    ? defaultToolCatalog.getDescriptor(capability.runtimeName)
+    : undefined;
+  if (descriptor) return descriptor.contractRevision;
+  const candidate =
+    capability.metadata?.descriptorContractRevision ??
+    capability.metadata?.definitionDigest;
+  return typeof candidate === "string" && candidate.length > 0
+    ? candidate
+    : null;
+}
 
 export type ProjectAppConfiguration = {
   projectId: string;
@@ -95,7 +155,11 @@ export class ProjectAppError extends Error {
 export function addProjectAppDependencyStatuses(
   configurations: ProjectAppConfiguration[],
 ) {
-  return configurations.map((configuration) => ({ ...configuration, dependencies: [], dependencyReady: true }));
+  return configurations.map((configuration) => ({
+    ...configuration,
+    dependencies: [],
+    dependencyReady: true,
+  }));
 }
 
 function toConnectionSummary(
@@ -303,7 +367,9 @@ export async function listProjectAppConfigurations(input: {
         },
         enabled:
           projectAppByKey.get(definition.key)?.enabled ??
-          definition.installMode === "inherited",
+          (definition.key === HOSTED_BROWSER_APP_KEY
+            ? false
+            : definition.installMode === "inherited"),
         availableConnections: available.map((connection) =>
           toConnectionSummary(connection, input.userId),
         ),
@@ -337,6 +403,19 @@ export async function listProjectAppConfigurations(input: {
                 ? policy.enabled && policy.approvalMode !== "deny"
                 : true),
             );
+            const isBrowserDomainPolicy =
+              definition.key === HOSTED_BROWSER_APP_KEY &&
+              capability.key === HOSTED_BROWSER_DOMAIN_POLICY_CAPABILITY_KEY;
+            const environmentBrowserSettings = isBrowserDomainPolicy
+              ? readHostedBrowserEnvironmentSettings(grant?.settings ?? {})
+              : null;
+            const browserSettings =
+              isBrowserDomainPolicy && environmentBrowserSettings
+                ? readHostedBrowserProjectSettings(
+                    policy?.settings ?? {},
+                    environmentBrowserSettings,
+                  )
+                : null;
             return {
               key: capability.key,
               runtimeName: capability.runtimeName,
@@ -362,6 +441,14 @@ export async function listProjectAppConfigurations(input: {
               rateLimitMode: grant?.rateLimitMode ?? "strict",
               inherited: !policy,
               resourceReady: true,
+              inputSchema: capabilityInputSchema(capability),
+              accessMode: capability.accessMode,
+              workflowUse: classifyWorkflowCapability(capability),
+              descriptorContractRevision:
+                capabilityDescriptorContractRevision(capability),
+              settings: browserSettings ?? {},
+              browserSettings,
+              environmentBrowserSettings,
             };
           }),
         dependencies: [],
@@ -436,7 +523,11 @@ export async function resolveEffectiveProjectAppsAccess(input: {
               minimumApprovalMode: capability.minimumApprovalMode,
               loggingMode: capability.loggingMode,
               rateLimitMode: capability.rateLimitMode,
-              settings: {},
+              settings: capability.settings ?? {},
+              inputSchema: capability.inputSchema,
+              accessMode: capability.accessMode,
+              workflowUse: capability.workflowUse,
+              descriptorContractRevision: capability.descriptorContractRevision,
             },
           ]
         : [],
@@ -496,6 +587,14 @@ export async function setProjectAppEnabled(input: {
             ),
         });
       for (const grant of grants) {
+        const isBrowserDomainPolicy =
+          input.appKey === HOSTED_BROWSER_APP_KEY &&
+          grant.capabilityKey === HOSTED_BROWSER_DOMAIN_POLICY_CAPABILITY_KEY;
+        const settings = isBrowserDomainPolicy
+          ? defaultHostedBrowserProjectSettings(
+              readHostedBrowserEnvironmentSettings(grant.settings ?? {}),
+            )
+          : grant.settings;
         await transaction
           .insert(schema.projectAppCapabilityPolicies)
           .values({
@@ -506,7 +605,7 @@ export async function setProjectAppEnabled(input: {
             approvalMode: grant.approvalMode,
             loggingMode: grant.loggingMode,
             rateLimitMode: grant.rateLimitMode,
-            settings: grant.settings,
+            settings,
             createdAt: now,
             updatedAt: now,
           })
@@ -713,6 +812,7 @@ export async function saveProjectAppCapabilityPolicy(input: {
   actorUserId: string;
   enabled: boolean;
   approvalMode: ToolApprovalMode;
+  browserSettings?: BrowserProjectAppSettings | undefined;
 }) {
   const { binding } = await requireProjectAppContext(input);
   const grant =
@@ -789,6 +889,37 @@ export async function saveProjectAppCapabilityPolicy(input: {
       "Project access cannot broaden the Environment ceiling.",
     );
   }
+  const isBrowserDomainPolicy =
+    input.appKey === HOSTED_BROWSER_APP_KEY &&
+    input.capabilityKey === HOSTED_BROWSER_DOMAIN_POLICY_CAPABILITY_KEY;
+  let settings = grant.settings;
+  if (isBrowserDomainPolicy) {
+    if (!input.browserSettings) {
+      throw new ProjectAppError(
+        "APP_POLICY_WIDENS_ENVIRONMENT",
+        "Browser Project settings are required.",
+      );
+    }
+    const environmentSettings = readHostedBrowserEnvironmentSettings(
+      grant.settings ?? {},
+    );
+    const projectSettings = parseHostedBrowserProjectSettings(
+      input.browserSettings,
+    );
+    if (
+      projectSettings.enabledModes.some(
+        (mode) => !environmentSettings.enabledModes.includes(mode),
+      ) ||
+      (projectSettings.personalGrantsEnabled &&
+        !environmentSettings.personalGrantsEnabled)
+    ) {
+      throw new ProjectAppError(
+        "APP_POLICY_WIDENS_ENVIRONMENT",
+        "Browser Project settings cannot broaden the Environment ceiling.",
+      );
+    }
+    settings = projectSettings;
+  }
   const now = new Date();
   const policy = await knowledgeDb.transaction(async (transaction) => {
     await transaction
@@ -813,7 +944,7 @@ export async function saveProjectAppCapabilityPolicy(input: {
         approvalMode,
         loggingMode: grant.loggingMode,
         rateLimitMode: grant.rateLimitMode,
-        settings: grant.settings,
+        settings,
         createdAt: now,
         updatedAt: now,
       })
@@ -823,7 +954,12 @@ export async function saveProjectAppCapabilityPolicy(input: {
           schema.projectAppCapabilityPolicies.appKey,
           schema.projectAppCapabilityPolicies.capabilityKey,
         ],
-        set: { enabled: input.enabled, approvalMode, updatedAt: now },
+        set: {
+          enabled: input.enabled,
+          approvalMode,
+          ...(isBrowserDomainPolicy ? { settings } : {}),
+          updatedAt: now,
+        },
       })
       .returning();
     return saved;
@@ -832,15 +968,18 @@ export async function saveProjectAppCapabilityPolicy(input: {
   return policy;
 }
 
-export async function resolveEffectiveProjectAppAccess(input: {
-  organizationId: string;
-  projectId: string;
-  appKey: string;
-  userId: string;
-  includePolicyOnly?: boolean | undefined;
-  skipResourceReadiness?: boolean | undefined;
-  skipInitialization?: boolean | undefined;
-}, executor: typeof knowledgeDb = knowledgeDb) {
+export async function resolveEffectiveProjectAppAccess(
+  input: {
+    organizationId: string;
+    projectId: string;
+    appKey: string;
+    userId: string;
+    includePolicyOnly?: boolean | undefined;
+    skipResourceReadiness?: boolean | undefined;
+    skipInitialization?: boolean | undefined;
+  },
+  executor: typeof knowledgeDb = knowledgeDb,
+) {
   const db = executor;
   let context: Awaited<ReturnType<typeof requireProjectAppContext>>;
   try {
@@ -907,7 +1046,10 @@ export async function resolveEffectiveProjectAppAccess(input: {
       ),
   });
   const projectEnabled =
-    projectApp?.enabled ?? definition.installMode === "inherited";
+    projectApp?.enabled ??
+    (input.appKey === HOSTED_BROWSER_APP_KEY
+      ? false
+      : definition.installMode === "inherited");
   if (!projectEnabled) return null;
   const [attachments, grants, policies, capabilities] = await Promise.all([
     db.query.projectAppConnections.findMany({
@@ -991,6 +1133,20 @@ export async function resolveEffectiveProjectAppAccess(input: {
         !microsoft365PackAllowsCapability({
           selectedPacks: [...selectedMicrosoftPacks],
           capabilityMetadata: capability.metadata,
+        })) ||
+      (input.appKey === "microsoft_365" &&
+        !hasMicrosoft365CapabilityScopes({
+          grantedScopes: selectedConnection?.scopes ?? [],
+          capability:
+            capability.key as import("@/lib/integrations/microsoft-365-contract").Microsoft365Capability,
+        })) ||
+      (input.appKey === "google_workspace" &&
+        !googleWorkspaceCapabilityIsEligible({
+          capabilityKey: capability.key,
+          selectedPacks: parseSelectedGoogleWorkspacePacks(
+            selectedConnection?.deliveryConfig,
+          ),
+          grantedScopes: selectedConnection?.scopes ?? [],
         }))
     ) {
       return [];
@@ -1011,13 +1167,27 @@ export async function resolveEffectiveProjectAppAccess(input: {
         }),
         loggingMode: grant.loggingMode,
         rateLimitMode: grant.rateLimitMode,
-        settings: grant.settings ?? {},
+        settings:
+          input.appKey === HOSTED_BROWSER_APP_KEY &&
+          capability.key === HOSTED_BROWSER_DOMAIN_POLICY_CAPABILITY_KEY
+            ? readHostedBrowserProjectSettings(
+                policy?.settings ?? {},
+                readHostedBrowserEnvironmentSettings(grant.settings ?? {}),
+              )
+            : (grant.settings ?? {}),
+        inputSchema: capabilityInputSchema(capability),
+        accessMode: capability.accessMode,
+        workflowUse: classifyWorkflowCapability(capability),
+        descriptorContractRevision:
+          capabilityDescriptorContractRevision(capability),
       },
     ];
   });
   if (!effectiveCapabilities.length) return null;
   const filteredCapabilities =
-    input.appKey === "github" && selectedConnection && !input.skipResourceReadiness
+    input.appKey === "github" &&
+    selectedConnection &&
+    !input.skipResourceReadiness
       ? await filterGitHubCapabilitiesByResource({
           projectId: input.projectId,
           connectionId: selectedConnection.id,
@@ -1034,13 +1204,34 @@ export async function resolveEffectiveProjectAppAccess(input: {
   };
 }
 
-async function filterGitHubCapabilitiesByResource<T extends { key: string }>(
-  input: {
-    projectId: string;
-    connectionId: string;
-    capabilities: T[];
-  },
-) {
+function googleWorkspaceCapabilityIsEligible(input: {
+  capabilityKey: string;
+  selectedPacks: readonly string[];
+  grantedScopes: readonly string[];
+}) {
+  if (input.capabilityKey.startsWith("gmail.")) {
+    return (
+      input.selectedPacks.includes("gmail") &&
+      hasGmailCapabilityScopes({
+        grantedScopes: input.grantedScopes,
+        capability:
+          input.capabilityKey as import("@/lib/integrations/gmail-contract").GmailCapability,
+      })
+    );
+  }
+  return (
+    input.selectedPacks.includes("calendar") &&
+    hasGoogleCalendarCapabilityScopes({
+      grantedScopes: input.grantedScopes,
+      capability:
+        input.capabilityKey as import("@/lib/integrations/google-calendar-contract").GoogleCalendarCapability,
+    })
+  );
+}
+
+async function filterGitHubCapabilitiesByResource<
+  T extends { key: string },
+>(input: { projectId: string; connectionId: string; capabilities: T[] }) {
   const resources = await listAuthorizedGitHubResources({
     projectId: input.projectId,
     connectionId: input.connectionId,

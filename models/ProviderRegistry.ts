@@ -1,8 +1,6 @@
 import {
-  MODEL_CAPABILITY_DESCRIPTOR_VERSION,
   MODEL_REQUEST_VERSION,
-  parseModelCapabilityDescriptorV1,
-  type ModelCapabilityDescriptorV1,
+  PROVIDER_CODEC_ENVELOPE_VERSION,
   type ModelProviderIdentityV1,
   type ModelProviderProtocolV1,
   type ModelRequestV1,
@@ -80,85 +78,45 @@ export interface ProviderAdapterRegistrationV1 {
   protocol: ModelProviderProtocolV1;
   factoryId: string;
   factory: ProviderAdapterFactoryV1;
-  capabilityDeclaration: ModelCapabilityDescriptorV1;
+  codecEnvelope: ProviderCodecEnvelopeV1;
   conformanceFixture: ProviderConformanceFixtureV1;
 }
 
-const openRouterCapabilities = capability({
-  tools: { nativeToolCalling: true, parallelToolCalls: true },
-  structuredOutput: { modes: ["json_object", "json_schema"] },
-  streaming: true,
-  reasoningModes: ["off", "summary", "provider_visible"],
-  inputModalities: ["text", "image"],
-  contextLimit: { kind: "model_specific" },
-  outputLimit: { kind: "model_specific" },
-  cache: { read: true, write: false, scope: "provider" },
+/**
+ * This is a declaration of code Kestrel can encode and decode. It is not a
+ * claim about any particular provider model or routed endpoint.
+ */
+export interface ProviderCodecEnvelopeV1 {
+  version: typeof PROVIDER_CODEC_ENVELOPE_VERSION;
+  requestEndpoints: readonly ("chat" | "responses" | "messages")[];
+  responseEndpoints: readonly ("chat" | "responses" | "messages")[];
+  reasoningRequestField: "reasoning" | "thinking";
+  reasoningModes: readonly ("summary" | "provider_visible")[];
+  streamingTerminalEvents: readonly string[];
+}
+
+const openAiStyleEnvelope = codecEnvelope({
+  requestEndpoints: ["chat", "responses"],
+  responseEndpoints: ["chat", "responses"],
+  reasoningRequestField: "reasoning",
+  reasoningModes: ["summary", "provider_visible"],
+  streamingTerminalEvents: ["[DONE]", "response.completed"],
 });
 
-const openAiCapabilities = capability({
-  tools: { nativeToolCalling: true, parallelToolCalls: true },
-  structuredOutput: { modes: ["json_object", "json_schema"] },
-  streaming: true,
-  reasoningModes: ["off", "summary", "provider_visible"],
-  inputModalities: ["text", "image"],
-  contextLimit: { kind: "model_specific" },
-  outputLimit: { kind: "model_specific" },
-  cache: { read: true, write: false, scope: "provider" },
+const anthropicEnvelope = codecEnvelope({
+  requestEndpoints: ["messages"],
+  responseEndpoints: ["messages"],
+  reasoningRequestField: "thinking",
+  reasoningModes: ["summary", "provider_visible"],
+  streamingTerminalEvents: ["message_stop"],
 });
 
-const anthropicCapabilities = capability({
-  tools: { nativeToolCalling: true, parallelToolCalls: true },
-  structuredOutput: { modes: ["tool_contract"] },
-  streaming: true,
-  reasoningModes: ["off", "summary", "provider_visible"],
-  inputModalities: ["text", "image"],
-  contextLimit: { kind: "model_specific" },
-  outputLimit: { kind: "model_specific" },
-  cache: { read: true, write: true, scope: "provider" },
-});
-
-const ollamaCapabilities = capability({
-  tools: { nativeToolCalling: true, parallelToolCalls: false },
-  structuredOutput: { modes: ["json_object"] },
-  streaming: true,
-  reasoningModes: ["off"],
-  inputModalities: ["text"],
-  contextLimit: { kind: "model_specific" },
-  outputLimit: { kind: "model_specific" },
-  cache: { read: false, write: false, scope: "none" },
-});
-
-const lmStudioCapabilities = capability({
-  tools: { nativeToolCalling: true, parallelToolCalls: false },
-  structuredOutput: { modes: ["json_object"] },
-  streaming: true,
-  reasoningModes: ["off"],
-  inputModalities: ["text"],
-  contextLimit: { kind: "model_specific" },
-  outputLimit: { kind: "model_specific" },
-  cache: { read: false, write: false, scope: "none" },
-});
-
-const lumiCapabilities = capability({
-  tools: { nativeToolCalling: true, parallelToolCalls: true },
-  structuredOutput: { modes: ["json_object", "json_schema"] },
-  streaming: true,
-  reasoningModes: ["off"],
-  inputModalities: ["text", "image"],
-  contextLimit: { kind: "model_specific" },
-  outputLimit: { kind: "model_specific" },
-  cache: { read: false, write: false, scope: "none" },
-});
-
-const runPodCapabilities = capability({
-  tools: { nativeToolCalling: true, parallelToolCalls: true },
-  structuredOutput: { modes: ["json_object", "json_schema"] },
-  streaming: true,
-  reasoningModes: ["off"],
-  inputModalities: ["text", "image"],
-  contextLimit: { kind: "model_specific" },
-  outputLimit: { kind: "model_specific" },
-  cache: { read: false, write: false, scope: "none" },
+const openAiCompatibleEnvelope = codecEnvelope({
+  requestEndpoints: ["chat", "responses"],
+  responseEndpoints: ["chat", "responses"],
+  reasoningRequestField: "reasoning",
+  reasoningModes: [],
+  streamingTerminalEvents: ["[DONE]"],
 });
 
 export const MODEL_PROVIDER_ADAPTERS_V1: readonly ProviderAdapterRegistrationV1[] =
@@ -168,49 +126,49 @@ export const MODEL_PROVIDER_ADAPTERS_V1: readonly ProviderAdapterRegistrationV1[
       "openrouter",
       "openrouter.env.v1",
       createOpenRouterModelGatewayFromEnv,
-      openRouterCapabilities,
+      openAiStyleEnvelope,
     ),
     registration(
       "openai",
       "openai",
       "openai.env.v1",
       createOpenAiModelGatewayFromEnv,
-      openAiCapabilities,
+      openAiStyleEnvelope,
     ),
     registration(
       "anthropic",
       "anthropic",
       "anthropic.env.v1",
       createAnthropicModelGatewayFromEnv,
-      anthropicCapabilities,
+      anthropicEnvelope,
     ),
     registration(
       "ollama",
       "openai",
       "ollama.env.v1",
       createOllamaModelGatewayFromEnv,
-      ollamaCapabilities,
+      openAiCompatibleEnvelope,
     ),
     registration(
       "lmstudio",
       "openai",
       "lmstudio.env.v1",
       createLmStudioModelGatewayFromEnv,
-      lmStudioCapabilities,
+      openAiCompatibleEnvelope,
     ),
     registration(
       "lumi",
       "openai",
       "lumi.managed.v1",
       createLumiModelGateway,
-      lumiCapabilities,
+      openAiCompatibleEnvelope,
     ),
     registration(
       "runpod",
       "openai",
       "runpod.managed.v1",
       createRunPodModelGateway,
-      runPodCapabilities,
+      openAiCompatibleEnvelope,
     ),
   ]);
 
@@ -220,9 +178,13 @@ const REGISTRY_BY_ID = new Map(
 
 if (
   REGISTRY_BY_ID.size !== MODEL_PROVIDER_IDENTITIES_V1.length ||
-  MODEL_PROVIDER_IDENTITIES_V1.some((providerId) => !REGISTRY_BY_ID.has(providerId))
+  MODEL_PROVIDER_IDENTITIES_V1.some(
+    (providerId) => !REGISTRY_BY_ID.has(providerId),
+  )
 ) {
-  throw new Error("model provider adapter registry does not match the exact identity set");
+  throw new Error(
+    "model provider adapter registry does not match the exact identity set",
+  );
 }
 
 export function getModelProviderAdapterV1(
@@ -244,14 +206,14 @@ function registration(
   protocol: ModelProviderProtocolV1,
   factoryId: string,
   factory: ProviderAdapterFactoryV1,
-  capabilityDeclaration: ModelCapabilityDescriptorV1,
+  codecEnvelope: ProviderCodecEnvelopeV1,
 ): ProviderAdapterRegistrationV1 {
   return Object.freeze({
     providerId,
     protocol,
     factoryId,
     factory,
-    capabilityDeclaration,
+    codecEnvelope,
     conformanceFixture: Object.freeze({
       fixtureId: `${providerId}.text.v1`,
       request: Object.freeze({
@@ -263,17 +225,21 @@ function registration(
       expectedProviderId: providerId,
       reasoningProbe: Object.freeze({
         modes: Object.freeze(["summary", "provider_visible"] as const),
-        requestBodyField: protocol === "anthropic" ? "thinking" : "reasoning",
+        requestBodyField: codecEnvelope.reasoningRequestField,
       }),
     }),
   });
 }
 
-function capability(
-  value: Omit<ModelCapabilityDescriptorV1, "version">,
-): ModelCapabilityDescriptorV1 {
-  return parseModelCapabilityDescriptorV1({
-    version: MODEL_CAPABILITY_DESCRIPTOR_VERSION,
-    ...value,
+function codecEnvelope(
+  value: Omit<ProviderCodecEnvelopeV1, "version">,
+): ProviderCodecEnvelopeV1 {
+  return Object.freeze({
+    version: PROVIDER_CODEC_ENVELOPE_VERSION,
+    requestEndpoints: Object.freeze([...value.requestEndpoints]),
+    responseEndpoints: Object.freeze([...value.responseEndpoints]),
+    reasoningRequestField: value.reasoningRequestField,
+    reasoningModes: Object.freeze([...value.reasoningModes]),
+    streamingTerminalEvents: Object.freeze([...value.streamingTerminalEvents]),
   });
 }

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { parseDesktopRendererSettingsUpdate } from "../../../src/desktopShell/contracts.js";
 import { createDefaultModelPolicy } from "../../../src/profile/modelPolicy.js";
+import { BROWSER_TOOL_NAMES } from "../../../src/browser/contracts.js";
 
 import {
   buildDesktopExecutionProfile,
@@ -19,6 +21,51 @@ import {
   preserveDesktopProjectRegistrationIds,
   writeDesktopSettings,
 } from "../src/settingsStore.js";
+
+test("Desktop includes the Browser App installed but disabled", () => {
+  const defaults = createDefaultDesktopSettings();
+  const browser = defaults.plugins.find((plugin) => plugin.pluginId === "built_in.browser");
+  assert.ok(browser);
+  assert.equal(browser.installed, true);
+  assert.equal(browser.configured, true);
+  assert.equal(browser.enabled, false);
+  assert.deepEqual(browser.capabilityPacks, ["operate"]);
+  assert.equal(defaults.defaultEnabledBuiltInAppIds.includes("built_in.browser"), false);
+  const migrated = normalizeDesktopSettings({
+    ...defaults,
+    plugins: defaults.plugins.filter((plugin) => plugin.pluginId !== "built_in.browser"),
+  });
+  assert.equal(migrated.plugins.find((plugin) => plugin.pluginId === "built_in.browser")?.enabled, false);
+  assert.equal(BROWSER_TOOL_NAMES.length, 12);
+});
+
+test("Desktop safe defaults use the isolated-code approval policy", () => {
+  const defaults = createDefaultDesktopSettings();
+
+  assert.equal(defaults.presetId, "desktop_safe_local");
+  assert.equal(defaults.capabilityPacks.includes("sandbox_code"), true);
+  assert.equal(defaults.approvalPolicyPackId, "isolated_code");
+  assert.equal(
+    buildDesktopRunnerProfile(createDefaultModelPolicy(), defaults).approvalPolicyPackId,
+    "isolated_code",
+  );
+});
+
+test("Desktop settings migrate preset-incompatible local approval policies", () => {
+  const safe = normalizeDesktopSettings({
+    presetId: "desktop_safe_local",
+    capabilityPacks: ["balanced", "filesystem", "desktop_host", "sandbox_code"],
+    approvalPolicyPackId: "dev",
+  });
+  const developer = normalizeDesktopSettings({
+    presetId: "desktop_dev_local",
+    capabilityPacks: ["balanced", "filesystem", "desktop_host", "dev_shell"],
+    approvalPolicyPackId: "isolated_code",
+  });
+
+  assert.equal(safe.approvalPolicyPackId, "isolated_code");
+  assert.equal(developer.approvalPolicyPackId, "dev");
+});
 
 test("Desktop settings round-trip versioned non-secret onboarding progress", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "kestrel-onboarding-settings-"));
@@ -141,9 +188,39 @@ test(
     });
 
     assert.equal(settings.projects[0]?.id, projectId);
+    assert.deepEqual(settings.projects[0]?.personalAppIds, []);
     assert.equal(settings.projectTombstones[0]?.path, projectPath);
   },
 );
+
+test("legacy Projects and unknown App IDs fail closed for personal App selection", () => {
+  const settings = normalizeDesktopSettings({
+    projects: [
+      { path: "/workspace/legacy", label: "Legacy" },
+      {
+        path: "/workspace/selected",
+        label: "Selected",
+        personalAppIds: ["google_workspace", "unknown.app", "built_in.weather"],
+      },
+    ],
+  });
+
+  assert.deepEqual(settings.projects[0]?.personalAppIds, []);
+  assert.deepEqual(settings.projects[1]?.personalAppIds, ["google_workspace"]);
+
+  assert.deepEqual(
+    parseDesktopRendererSettingsUpdate({
+      projects: [
+        {
+          path: "/workspace/renderer",
+          label: "Renderer",
+          personalAppIds: ["microsoft_365", "unknown.app", "built_in.weather"],
+        },
+      ],
+    }).projects?.[0]?.personalAppIds,
+    ["microsoft_365"],
+  );
+});
 
 test(
   "persisted Desktop connections cannot spoof a standard App identity",
@@ -291,7 +368,7 @@ test("active Local Core settings normalization discards retired workflow IDs", (
   assert.equal(restored.plugins.some((plugin) => plugin.id.startsWith("workflow.")), false);
 });
 
-test("the first schema-12 write preserves pre-v12 settings exactly once", async () => {
+test("the first schema-13 write preserves pre-v12 settings exactly once", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-backup-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
   const backupPath = desktopPreV12SettingsBackupPath(settingsPath);
@@ -315,14 +392,14 @@ test("the first schema-12 write preserves pre-v12 settings exactly once", async 
 
   assert.equal(await readFile(backupPath, "utf8"), original);
   assert.equal((await stat(backupPath)).mode & 0o777, 0o600);
-  assert.match(await readFile(settingsPath, "utf8"), /"version": 12/u);
+  assert.match(await readFile(settingsPath, "utf8"), /"version": 13/u);
 
   await writeFile(settingsPath, `${JSON.stringify({ version: 10, selectedProvider: "openai" })}\n`, "utf8");
   await writeDesktopSettings(settingsPath, await readDesktopSettings(settingsPath));
   assert.equal(await readFile(backupPath, "utf8"), original);
 });
 
-test("schema-12 migration aborts when the pre-v12 backup path is unusable", async () => {
+test("schema-13 migration aborts when the pre-v12 backup path is unusable", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-backup-failure-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
   const original = `${JSON.stringify({ version: 10, selectedProvider: "openrouter" })}\n`;
@@ -472,8 +549,12 @@ test(
     assert.deepEqual(
       saved.projects.map(({ id: _id, ...project }) => project),
       [
-        { path: path.resolve("../workspace-a"), label: "Workspace A" },
-        { path: "/tmp/workspace-b", label: "workspace-b" },
+        {
+          path: path.resolve("../workspace-a"),
+          label: "Workspace A",
+          personalAppIds: [],
+        },
+        { path: "/tmp/workspace-b", label: "workspace-b", personalAppIds: [] },
       ],
     );
     assert.ok(
@@ -510,7 +591,7 @@ test(
     assert.equal(restored.openaiModel, "gpt-5.4-2026-03-05");
     assert.equal(restored.tavilyApiKey, undefined);
     assert.deepEqual(restored.projects, saved.projects);
-    assert.match(raw, /"version": 12/u);
+    assert.match(raw, /"version": 13/u);
     assert.match(raw, /"selectedProvider": "openai"/u);
     assert.match(raw, /"databaseMode": "default"/u);
     assert.equal(raw.includes("openai-key"), false);
@@ -552,7 +633,7 @@ test(
     assert.equal(saved.databaseUrl, undefined);
     assert.equal(restored.databaseMode, "external");
     assert.equal(restored.databaseUrl, undefined);
-    assert.match(raw, /"version": 12/u);
+    assert.match(raw, /"version": 13/u);
     assert.match(raw, /"databaseMode": "external"/u);
     assert.equal(raw.includes("user:password"), false);
   },
@@ -1272,6 +1353,20 @@ test(
     assert.equal(incomplete.mcpServers[0]?.appId, undefined);
   },
 );
+
+test("Desktop Browser selection projects the shared tools into the runtime profile", () => {
+  const result = buildDesktopExecutionProfile(
+    createDefaultModelPolicy(),
+    createDefaultDesktopSettings(),
+    {
+      modelConfiguration: { id: "desktop-default", revision: 1 },
+      apps: [{ id: "built_in.browser", contractVersion: 1 }],
+    },
+  );
+  assert.equal("profile" in result, true);
+  if (!("profile" in result)) return;
+  for (const toolName of BROWSER_TOOL_NAMES) assert.ok(result.profile.toolAllowlist?.includes(toolName));
+});
 
 test(
   "Desktop execution selection retains the connected App server that owns selected tools",

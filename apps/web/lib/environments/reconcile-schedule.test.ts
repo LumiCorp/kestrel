@@ -65,7 +65,12 @@ test("scheduled Environment reconciliation uses the shared advisory lock", async
     }),
   });
 
-  assert.deepEqual(events, ["acquire", "reconcile", "release", "close"]);
+  assert.deepEqual(events, [
+    "acquire",
+    "reconcile",
+    "release",
+    "close",
+  ]);
   assert.equal(result.acquired, true);
   assert.deepEqual(result.result, {
     operationCount: 1,

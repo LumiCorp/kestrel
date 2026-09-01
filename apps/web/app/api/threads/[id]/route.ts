@@ -72,6 +72,12 @@ export async function GET(
       mode: thread.mode,
       interactionMode: thread.interactionMode,
       origin: thread.origin,
+      emailReceipt: thread.emailReceipt
+        ? {
+            ...thread.emailReceipt,
+            receivedAt: thread.emailReceipt.receivedAt.toISOString(),
+          }
+        : null,
       visibility: thread.isPublic ? "public" : "private",
       shareToken: thread.shareToken,
       archivedAt: thread.archivedAt,
@@ -145,7 +151,7 @@ export async function POST(
         eventType: body.interactionResponse.eventType,
         turnId: body.interactionResponse.turnId,
         message: body.interactionResponse.message,
-        approved: body.interactionResponse.approved,
+        decision: body.interactionResponse.decision,
         reason: body.interactionResponse.reason,
         recoveryOptionId: body.interactionResponse.recoveryOptionId,
         messageId: body.interactionResponse.messageId ?? crypto.randomUUID(),

@@ -8,6 +8,13 @@ import type {
 import { enforceRuntimeAssistantResponseBoundary, finalizeRuntimeAssistantResponse } from "../../src/runtime/assistantResponseContract.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { evaluationReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
+import {
+  createToolActivationRefV1,
+  fingerprintToolScopeV1,
+  hashCanonical,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
 
 test("finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stale assistant text", () => {
   const result = finalizeRuntimeAssistantResponse({
@@ -32,50 +39,344 @@ test("finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stal
   });
 });
 
-test("finalizeRuntimeAssistantResponse canonicalizes an approval wait over stale assistant text", () => {
+test("finalizeRuntimeAssistantResponse rejects an unbound local approval", () => {
+  assert.throws(
+    () => finalizeRuntimeAssistantResponse({
+      output: output("WAITING", {
+        waitFor: {
+          kind: "approval",
+          eventType: "user.approval",
+          metadata: {
+            prompt: "Approve writing package.json?",
+            toolName: "fs.write_text",
+          },
+        },
+      }),
+      assistantText: "Tool confirmation pending.",
+    }),
+    /exact versioned request/u,
+  );
+});
+
+test("finalizeRuntimeAssistantResponse projects an exact local approval", () => {
+  const requestedAt = "2026-08-28T12:00:00.000Z";
+  const expiresAt = "2026-08-28T12:05:00.000Z";
+  const approvalId = "local-approval-1";
+  const toolName = "desktop.host.open";
   const result = finalizeRuntimeAssistantResponse({
     output: output("WAITING", {
       waitFor: {
         kind: "approval",
         eventType: "user.approval",
         metadata: {
-          prompt: "Approve writing package.json?",
-          toolCallId: "call-package-json",
-          toolName: "fs.write_text",
-          toolInput: { path: "package.json" },
+          prompt: "Review this action before it runs.",
+          approvalId,
+          toolName,
+          toolClass: "external_side_effect",
+          requestedAt,
+          expiresAt,
+          approvalPresentation: { title: "Open in Safari" },
+          externalApprovalBinding: {
+            version: "runner_external_approval_binding_v1",
+            approvalId,
+            threadId: "session-contract",
+            runId: "run-contract",
+            actionKey: toolName,
+            payloadHash: hashCanonical({
+              application: "safari",
+              url: "http://localhost:4173",
+            }),
+            toolClass: "external_side_effect",
+            capabilities: ["external.confirm"],
+            authorityKind: "runtime_policy",
+            authorityRevision: "local-policy-1",
+            requestedAt,
+            expiresAt,
+          },
         },
       },
     }),
-    assistantText: "Tool confirmation pending.",
+    assistantText: "stale",
   });
 
-  assert.equal(result.output.status, "WAITING");
-  assert.equal(result.assistantText, "Approve writing package.json?");
   assert.deepEqual(result.output.waitFor?.interaction, {
-    version: "v1",
+    version: "runner_local_tool_approval_interaction_v1",
     requestId: "request-run-contract",
     kind: "approval",
     eventType: "user.approval",
-    prompt: "Approve writing package.json?",
-    approval: {
-      toolCallId: "call-package-json",
-      toolName: "fs.write_text",
-      presentation: {
-        title: "Approve tool operation",
-        summary:
-          "Request details are hidden because this tool does not provide a safe approval preview.",
-        fields: [],
-        warnings: [],
-        policy: {
-          mode: "ask",
-          reasonCode: "tool_minimum",
-          authorityKind: "runtime_policy",
-          authorityRevision: "legacy-external-confirm",
-          explanation: "This invocation requires approval.",
+    prompt: "Review this action before it runs.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["decision"],
+      properties: {
+        decision: {
+          type: "string",
+          enum: ["decline", "approve_once"],
         },
       },
     },
+    approval: {
+      approvalId,
+      toolName,
+      presentation: { title: "Open in Safari" },
+      requestedAt,
+      expiresAt,
+    },
   });
+});
+
+test("finalizeRuntimeAssistantResponse rejects a local external approval without its exact binding", () => {
+  assert.throws(
+    () => finalizeRuntimeAssistantResponse({
+      output: output("WAITING", {
+        waitFor: {
+          kind: "approval",
+          eventType: "user.approval",
+          metadata: {
+            prompt: "Review this action before it runs.",
+            approvalId: "local-approval-unbound",
+            toolName: "desktop.host.open",
+            toolClass: "external_side_effect",
+            requestedAt: "2026-08-28T12:00:00.000Z",
+            expiresAt: "2026-08-28T12:05:00.000Z",
+          },
+        },
+      }),
+      assistantText: "stale",
+    }),
+    /requires its exact action binding/u,
+  );
+});
+
+test("new hosted approval card reloads its action from the persisted prepared call", () => {
+  const descriptor = defaultToolCatalog.getDescriptorRef("internet.search");
+  assert.ok(descriptor);
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-hosted",
+    scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
+  });
+  const effectiveInput = { query: "persisted exact query" };
+  const policyRevision = hashCanonical({ policy: "ask" });
+  const requestingActor = {
+    actorType: "end_user" as const,
+    actorId: "user-1",
+    tenantId: "org-1",
+  };
+  const stableToolIdentity = {
+    version: "stable_tool_approval_identity_v1" as const,
+    toolId: descriptor.toolId,
+    descriptorContractRevision: descriptor.contractRevision,
+    approvalAuthorityRevision: "approval-authority-v1",
+  };
+  const stableAuthorityPayload = {
+    version: "prepared_tool_stable_authority_v2" as const,
+    actor: requestingActor,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    threadId: "thread-1",
+    resourceAuthority: {
+      toolSourceKind: descriptor.sourceKind,
+      toolSourceId: descriptor.sourceId,
+    },
+    policyRevision,
+    capabilities: ["network.call"],
+    descriptorContractRevision: descriptor.contractRevision,
+    approvalAuthorityRevision: stableToolIdentity.approvalAuthorityRevision,
+    normalizedActionHash: hashCanonical({
+      toolId: descriptor.toolId,
+      effectiveInput,
+    }),
+    executionClass: "read_only" as const,
+  };
+  const stableAuthority = {
+    ...stableAuthorityPayload,
+    fingerprint: hashCanonical(stableAuthorityPayload),
+  };
+  const prepared = parsePreparedToolCallV1({
+    version: "v1",
+    runId: "original-run",
+    sessionId: "thread-1",
+    callId: "prepared-search-1",
+    activation,
+    origin: {
+      kind: "model",
+      snapshotId: hashCanonical({ snapshot: 1 }),
+      modelToolCallId: "model-call-1",
+    },
+    effectiveInput,
+    policy: {
+      decision: "approval_required",
+      policyRevision,
+      reasonCode: "environment_policy",
+    },
+    approval: {
+      approvalId: "prepared-search-1",
+      authorityRevision: hashCanonical({ approval: 1 }),
+      externalApprovalBinding: {
+        version: "runner_external_approval_binding_v2",
+        approvalId: "prepared-search-1",
+        preparedInvocationId: "prepared-search-1",
+        threadId: "thread-1",
+        actionKey: descriptor.toolId,
+        payloadHash: hashCanonical(effectiveInput),
+        stableAuthorityFingerprint: stableAuthority.fingerprint,
+        stableToolIdentity,
+        requestingActor,
+        toolClass: "read_only",
+        capabilities: ["network.call"],
+        authorityKind: "runtime_policy",
+        authorityRevision: stableToolIdentity.approvalAuthorityRevision,
+        requestedAt: "2026-08-26T12:00:00.000Z",
+        expiresAt: "2026-08-26T12:05:00.000Z",
+      },
+    },
+    stableAuthority,
+    stableToolIdentity,
+    executionRequirements: {
+      version: "prepared_tool_execution_requirements_v1",
+      credentials: ["continuation_run_segment", "live_handler_capability"],
+    },
+    preparedAt: "2026-08-26T12:00:00.000Z",
+  });
+  const restartedPrepared = JSON.parse(JSON.stringify(prepared)) as unknown;
+  const result = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: restartedPrepared,
+          reasonCode: "environment_policy",
+          toolName: "forged.tool",
+          toolInput: { query: "forged query" },
+        },
+      },
+    }),
+    assistantText: "stale",
+  });
+  const interaction = result.output.waitFor?.interaction;
+  assert.equal(interaction?.version, "runner_hosted_tool_approval_interaction_v4");
+  assert.equal(
+    interaction?.prompt,
+    "Review this action before it runs.",
+  );
+  assert.deepEqual(
+    interaction?.inputSchema?.properties.decision.enum,
+    ["decline", "approve_once", "remember_approval"],
+  );
+  assert.match(
+    `${interaction?.prompt} ${JSON.stringify(interaction?.inputSchema)}`,
+    /remember_approval/u,
+  );
+  assert.equal(interaction?.approval?.toolName, "internet.search");
+  assert.equal(
+    interaction?.approval?.requestedAt,
+    prepared.approval?.externalApprovalBinding?.requestedAt,
+  );
+  assert.equal(
+    interaction?.approval?.expiresAt,
+    prepared.approval?.externalApprovalBinding?.expiresAt,
+  );
+  assert.deepEqual(
+    interaction?.approval?.stableToolIdentity,
+    prepared.stableToolIdentity,
+  );
+  assert.deepEqual(interaction?.approval?.requestingActor, requestingActor);
+  assert.equal(
+    "preparedInvocationId" in (interaction?.approval ?? {})
+      ? interaction?.approval.preparedInvocationId
+      : undefined,
+    "prepared-search-1",
+  );
+  assert.match(
+    JSON.stringify(interaction?.approval?.presentation),
+    /persisted exact query/u,
+  );
+  assert.doesNotMatch(JSON.stringify(interaction), /forged query|forged\.tool/u);
+
+  assert.throws(
+    () => finalizeRuntimeAssistantResponse({
+      output: output("WAITING", {
+        waitFor: {
+          kind: "approval",
+          eventType: "user.approval",
+          metadata: {
+            prompt: "Approve search?",
+            preparedToolCall: restartedPrepared,
+          },
+        },
+      }),
+      assistantText: "stale",
+    }),
+    /resolved approval reason code/u,
+  );
+
+  const projectAskPrepared = structuredClone(prepared);
+  projectAskPrepared.policy.reasonCode = "tool_minimum";
+  const projectAskResult = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: projectAskPrepared,
+          reasonCode: "project_restriction",
+        },
+      },
+    }),
+    assistantText: "stale",
+  });
+  assert.equal(
+    projectAskResult.output.waitFor?.interaction?.version,
+    "runner_hosted_tool_approval_interaction_v4",
+  );
+  assert.equal(
+    (projectAskResult.output.waitFor?.interaction?.approval?.presentation as {
+      policy: { reasonCode: string; rememberApprovalEligible: boolean };
+    }).policy.reasonCode,
+    "project_restriction",
+  );
+  assert.equal(
+    (projectAskResult.output.waitFor?.interaction?.approval?.presentation as {
+      policy: { reasonCode: string; rememberApprovalEligible: boolean };
+    }).policy.rememberApprovalEligible,
+    true,
+  );
+
+  const stricterPrepared = structuredClone(prepared);
+  stricterPrepared.policy.reasonCode = "subject_restriction";
+  const stricterResult = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "approval",
+        eventType: "user.approval",
+        metadata: {
+          prompt: "Approve search?",
+          preparedToolCall: stricterPrepared,
+          reasonCode: "subject_restriction",
+        },
+      },
+    }),
+    assistantText: "stale",
+  });
+  const stricterInteraction = stricterResult.output.waitFor?.interaction;
+  assert.equal(stricterInteraction?.version, "runner_hosted_tool_approval_interaction_v4");
+  assert.deepEqual(
+    stricterInteraction?.inputSchema?.properties.decision.enum,
+    ["decline", "approve_once", "remember_approval"],
+  );
+  assert.match(JSON.stringify(stricterInteraction), /remember_approval/u);
+  assert.equal(
+    (stricterInteraction?.approval?.presentation as {
+      policy: { rememberApprovalEligible: boolean };
+    }).policy.rememberApprovalEligible,
+    false,
+  );
 });
 
 test("finalizeRuntimeAssistantResponse rejects a user-facing wait without a prompt", () => {

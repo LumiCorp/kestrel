@@ -35,8 +35,11 @@ const openRouterBaseUrl = normalizeOpenRouterBaseUrl(
 );
 const rawModelId = "openai/gpt-5.6-luna";
 const suffix = randomUUID().slice(0, 8);
-const workspaceImage = `kestrel-workspace-qualification:${suffix}`;
-const routerImage = `kestrel-router-qualification:${suffix}`;
+const selectedImages = parseSelectedImages(process.argv.slice(2));
+const workspaceImage =
+  selectedImages?.workspaceImage ?? `kestrel-workspace-qualification:${suffix}`;
+const routerImage =
+  selectedImages?.routerImage ?? `kestrel-router-qualification:${suffix}`;
 const workspaceContainer = `kestrel-workspace-qualification-${suffix}`;
 const routerContainer = `kestrel-router-qualification-${suffix}`;
 const workspaceVolume = `kestrel-workspace-qualification-${suffix}`;
@@ -84,10 +87,14 @@ let routerImageId = "";
 let fatalError: unknown;
 
 try {
-  progress("Building the exact Workspace Runtime image");
-  await buildImage("apps/workspace-runtime/Dockerfile", workspaceImage);
-  progress("Building the exact Environment Router image");
-  await buildImage("apps/environment-router/Dockerfile", routerImage);
+  if (!selectedImages) {
+    progress("Building the exact Workspace Runtime image");
+    await buildImage("apps/workspace-runtime/Dockerfile", workspaceImage);
+    progress("Building the exact Environment Router image");
+    await buildImage("apps/environment-router/Dockerfile", routerImage);
+  } else {
+    progress("Using the operator-selected Workspace Runtime and Router images");
+  }
   workspaceImageId = await imageId(workspaceImage);
   routerImageId = await imageId(routerImage);
 
@@ -339,6 +346,7 @@ process.stdout.write(
       workspaceImageId,
       routerImage,
       routerImageId,
+      imageSource: selectedImages ? "prebuilt" : "built_by_canary",
       rawModelId,
       managedWorktree,
       proofs: [
@@ -377,6 +385,32 @@ async function buildImage(dockerfile: string, tag: string) {
     "KESTREL_BUILD_ID=local-qualification",
     ".",
   );
+}
+
+function parseSelectedImages(args: string[]) {
+  if (args[0] === "--") args = args.slice(1);
+  let workspaceImage: string | undefined;
+  let routerImage: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    const value = args[index + 1]?.trim();
+    if (flag !== "--workspace-image" && flag !== "--router-image") {
+      throw new Error(`Unknown local image-pair canary argument: ${flag}`);
+    }
+    if (!value || value.startsWith("--")) {
+      throw new Error(`${flag} requires a Docker image reference.`);
+    }
+    if (flag === "--workspace-image") workspaceImage = value;
+    if (flag === "--router-image") routerImage = value;
+    index += 1;
+  }
+  if (!workspaceImage && !routerImage) return undefined;
+  if (!workspaceImage || !routerImage) {
+    throw new Error(
+      "--workspace-image and --router-image must be provided together.",
+    );
+  }
+  return { workspaceImage, routerImage };
 }
 
 async function seedWorkspaceVolume() {
@@ -630,6 +664,8 @@ async function startRouterContainer() {
     "--volume",
     `${routerFixturePath}:/tmp/router-fixture.mjs:ro`,
     "--env",
+    `FLY_MACHINE_ID=${gatewayId}`,
+    "--env",
     "KESTREL_CONTROL_PLANE_URL=http://127.0.0.1:18081",
     "--env",
     `KESTREL_ENVIRONMENT_APP_NAME=${identities.appName}`,
@@ -668,6 +704,7 @@ async function runHostedProviderProof(baseUrl: URL) {
           modelProvider: "openrouter",
           model: rawModelId,
           agentStageConfig: { modelByStage: { "agent.loop": rawModelId } },
+          modelTimeoutMs: 60_000,
           modelCredential: {
             source: "kestrel-one",
             runId: identities.runId,
@@ -677,6 +714,8 @@ async function runHostedProviderProof(baseUrl: URL) {
             rawModelId,
             provider: "openrouter",
           },
+          additionalToolNames: ["exec_command"],
+          kestrelOneAppApprovalModes: { exec_command: "auto" },
           default: false,
         },
       },
@@ -694,6 +733,8 @@ async function runHostedProviderProof(baseUrl: URL) {
     const stream = client.streamRun(
       {
         profileId: profile.profileId,
+        signal: AbortSignal.timeout(90_000),
+        abortBehavior: "cancel",
         turn: {
           sessionId: identities.threadId,
           runId: identities.runId,
@@ -1100,8 +1141,10 @@ async function cleanup() {
   await docker("rm", "-f", workspaceContainer).catch(() => undefined);
   await docker("network", "rm", network).catch(() => undefined);
   await docker("volume", "rm", workspaceVolume).catch(() => undefined);
-  await docker("image", "rm", routerImage).catch(() => undefined);
-  await docker("image", "rm", workspaceImage).catch(() => undefined);
+  if (!selectedImages) {
+    await docker("image", "rm", routerImage).catch(() => undefined);
+    await docker("image", "rm", workspaceImage).catch(() => undefined);
+  }
   await rm(fixtureRoot, { recursive: true, force: true });
 }
 

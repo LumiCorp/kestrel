@@ -34,18 +34,29 @@ export function projectSafeThreadInteraction(
   const responseEnvelope = interaction.responseEnvelope;
   const approvalOutcome =
     interaction.kind === "approval" &&
-    responseEnvelope &&
-    typeof responseEnvelope.approved === "boolean"
+    ((responseEnvelope &&
+      (responseEnvelope.decision === "decline" ||
+        (responseEnvelope.decision === "approve_once" ||
+          responseEnvelope.decision === "remember_approval"))) ||
+      interaction.responseFailureCode === "EXTERNAL_APPROVAL_EXPIRED")
       ? {
-          decision: responseEnvelope.approved
-            ? "approved" as const
-            : "denied" as const,
+          decision:
+            interaction.responseFailureCode === "EXTERNAL_APPROVAL_EXPIRED"
+              ? "expired" as const
+              : responseEnvelope?.decision === "approve_once" ||
+                  responseEnvelope?.decision === "remember_approval"
+                ? "approved" as const
+                : "denied" as const,
           authorizationState:
-            interaction.status === "resolved"
-              ? "accepted" as const
+            interaction.responseFailureCode === "EXTERNAL_APPROVAL_EXPIRED"
+              ? "expired" as const
               : interaction.status === "failed"
                 ? "failed" as const
-                : "pending" as const,
+                : responseEnvelope?.decision === "decline"
+                  ? "denied" as const
+                  : interaction.status === "resolved"
+                    ? "accepted" as const
+                    : "pending" as const,
           effectState: interaction.effectStatus ?? "not_started" as const,
           ...(interaction.responseFailureCode
             ? { failureCode: interaction.responseFailureCode }
@@ -82,4 +93,38 @@ export function projectSafeThreadInteraction(
     updatedAt: interaction.updatedAt,
     ...(approvalOutcome ? { approvalOutcome } : {}),
   };
+}
+
+export function setInteractionPresentationStatus(
+  value: unknown,
+  requestId: string,
+  status: "processing" | "resolved" | "cancelled" | "failed",
+  approvalOutcome?: Record<string, unknown>,
+) {
+  if (!Array.isArray(value)) return value;
+  return value.map((part) => {
+    if (!(part && typeof part === "object" && !Array.isArray(part)))
+      return part;
+    const record = part as Record<string, unknown>;
+    const data =
+      record.data &&
+      typeof record.data === "object" &&
+      !Array.isArray(record.data)
+        ? (record.data as Record<string, unknown>)
+        : null;
+    if (
+      record.type !== "data-kestrel-interaction" ||
+      data?.requestId !== requestId
+    ) {
+      return part;
+    }
+    return {
+      ...record,
+      data: {
+        ...data,
+        status,
+        ...(approvalOutcome ? { approvalOutcome } : {}),
+      },
+    };
+  });
 }

@@ -135,6 +135,12 @@ export function resolveRuntimeProfileSelection(
     toolAllowlist,
     capabilityPacks,
   });
+  // Hosted command execution is an inherited App capability. Its Environment
+  // and Project policy, rather than the dev-shell pack, owns whether the
+  // model may see it and whether it must ask first.
+  if (presetId === "workspace_hosted") {
+    removeTool(nextToolAllowlist, "exec_command");
+  }
 
   return {
     shellKind,

@@ -11,6 +11,31 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- Kestrel Desktop and Kestrel One can expose the first-party Browser App when
+  an operator enables it. A user can allow a domain once, reuse that personal
+  grant on later Browser actions, view or take over the live session, upload an
+  approved Thread attachment, and promote a quarantined download into a Thread
+  draft.
+- Kestrel One Ask First cards can offer Decline, Approve Once, and Remember
+  Approval. Remember Approval applies only to the authenticated user, stable
+  tool, and current thread; it does not change Environment or Project policy.
+
+### Changed
+
+- The ordinary App relay limit is now 20 MiB. Browser attachment transfers use
+  their separate 100 MiB limit.
+- Kestrel One hosted approvals now carry an explicit V2/V3 producer setting so
+  compatible readers can deploy and be proven before V3 is activated on exact
+  runtime and worker targets.
+
+### Security
+
+- Hosted Browser Sessions use one ephemeral, no-volume worker with Gateway-only
+  network access. Browser credentials and takeover input stay outside model
+  output, persisted events, logs, analytics, and support evidence.
+
 ### Fixed
 
 - Hosted approval failures now preserve the distinction between retryable

@@ -161,7 +161,7 @@ test("createOpenRouterModelGatewayFromEnv preserves required tool choice", async
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.url.endsWith("/api/v1/chat/completions"), true);
   assert.equal(requests[0]?.body.tool_choice, "required");
-  assert.equal(requests[0]?.body.parallel_tool_calls, true);
+  assert.equal(requests[0]?.body.parallel_tool_calls, undefined);
   assert.equal(Array.isArray(requests[0]?.body.tools), true);
 });
 
@@ -548,7 +548,10 @@ test("createOpenAiModelGatewayFromEnv does not claim strict mode for optional to
   assert.equal(tools?.[0]?.function?.strict, undefined);
   assert.equal(tools?.[1]?.function?.strict, undefined);
   assert.equal(tools?.[1]?.function?.parameters?.type, "object");
-  assert.equal(tools?.[1]?.function?.parameters?.oneOf, undefined);
+  assert.deepEqual(tools?.[1]?.function?.parameters?.oneOf, [
+    { required: ["command"] },
+    { required: ["sessionId"] },
+  ]);
 });
 
 test("createAnthropicModelGatewayFromEnv validates required ANTHROPIC_API_KEY", () => {
@@ -609,7 +612,10 @@ test("createAnthropicModelGatewayFromEnv maps required tool choice to any", asyn
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.url.endsWith("/v1/messages"), true);
   assert.deepEqual(requests[0]?.body.tool_choice, { type: "any" });
-  assert.equal(requests[0]?.body.thinking, undefined);
+  assert.deepEqual(requests[0]?.body.thinking, {
+    type: "adaptive",
+    display: "summarized",
+  });
   assert.equal(Array.isArray(requests[0]?.body.tools), true);
 });
 
@@ -631,14 +637,7 @@ test("createAnthropicModelGatewayFromEnv calls messages API with structured outp
         JSON.stringify({
           model: "claude-3-5-haiku-latest",
           content: [
-            {
-              type: "tool_use",
-              id: "toolu_1",
-              name: "kestrel_test_schema",
-              input: {
-                ok: true,
-              },
-            },
+            { type: "text", text: JSON.stringify({ ok: true }) },
           ],
           usage: {
             input_tokens: 9,
@@ -676,7 +675,18 @@ test("createAnthropicModelGatewayFromEnv calls messages API with structured outp
 
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.url.endsWith("/v1/messages"), true);
-  assert.equal(Array.isArray(requests[0]?.body.tools), true);
+  assert.equal(Array.isArray(requests[0]?.body.tools), false);
+  assert.deepEqual(requests[0]?.body.output_config, {
+    format: {
+      type: "json_schema",
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+      },
+    },
+  });
   assert.equal(response.provider.name, "anthropic");
   assert.equal(response.provider.requestId, "req_anthropic_1");
   assert.equal(response.output?.ok, true);

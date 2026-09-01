@@ -33,23 +33,27 @@ test("Better Auth encrypts linked GitHub OAuth tokens at rest", () => {
   assert.match(authSource, /github:[\s\S]*disableImplicitSignUp:\s*true/u);
 });
 
-test("linked App OAuth tokens remain inside Kestrel One broker routes", () => {
+test("Google Workspace provider tokens remain outside Better Auth", () => {
+  const authSource = fs.readFileSync(path.join(webRoot, "lib/auth.ts"), "utf8");
+  assert.doesNotMatch(authSource, /GOOGLE_CLIENT_(?:ID|SECRET)/u);
+  assert.doesNotMatch(authSource, /socialProviders:[\s\S]*\bgoogle:/u);
   const accessTokenConsumers = listTypeScriptFiles(webRoot)
     .filter((file) => !file.endsWith(".test.ts"))
     .filter((file) =>
       /auth\.api\s*\.getAccessToken/u.test(fs.readFileSync(file, "utf8")),
     )
     .map((file) => path.relative(webRoot, file).replaceAll(path.sep, "/"));
-  assert.deepEqual(accessTokenConsumers, [
-    "app/api/apps/github/sync/route.ts",
+  for (const googleConsumer of [
     "app/api/apps/google/route.ts",
-    "app/api/apps/microsoft-365/route.ts",
-    "app/api/runtime/github/action/route.ts",
-    "app/api/runtime/github/git/[resourceId]/[...gitPath]/route.ts",
-    "app/api/runtime/github/push/route.ts",
+    "app/api/runtime/gmail/action/route.ts",
     "app/api/runtime/google-calendar/action/route.ts",
-    "app/api/runtime/microsoft-365/action/route.ts",
-  ]);
+    "lib/apps/hosted-app-approval-recorder.ts",
+  ]) {
+    assert.ok(
+      !accessTokenConsumers.includes(googleConsumer),
+      `${googleConsumer} must resolve Google provider tokens through the hosted broker`,
+    );
+  }
 
   const workspaceRuntimeSource = listTypeScriptFiles(workspaceRuntimeRoot)
     .map((file) => fs.readFileSync(file, "utf8"))

@@ -34,13 +34,23 @@ export const threadTurnBodySchema = z
         requestId: z.string().trim().min(1).max(200),
         eventType: z.string().trim().min(1).max(200),
         turnId: routeIdSchema,
-        message: z.string().trim().min(1).max(20_000),
-        approved: z.boolean().optional(),
+        message: z.string().trim().min(1).max(20_000).optional(),
+        decision: z.enum([
+          "decline",
+          "approve_once",
+          "remember_approval",
+        ]).optional(),
         reason: z.string().trim().max(2000).optional(),
         recoveryOptionId: z.string().trim().min(1).max(200).optional(),
         messageId: routeIdSchema.optional(),
       })
       .strict()
+      .refine(
+        (response) => response.eventType === "user.approval"
+          ? response.decision !== undefined && response.message === undefined
+          : response.message !== undefined && response.decision === undefined,
+        { message: "Approval responses require only a structured decision; other interactions require a message." }
+      )
       .optional(),
   })
   .strict()

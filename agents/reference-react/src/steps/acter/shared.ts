@@ -39,6 +39,7 @@ export interface ActerStepConfig {
       | undefined;
     descriptorRef?: ToolDescriptorRefV1 | undefined;
     executionClass?: ToolExecutionClass | undefined;
+    inputDependentPreparation?: boolean | undefined;
     allowedInteractionModes?: CanonicalInteractionMode[] | undefined;
   }>;
 }
@@ -97,6 +98,7 @@ export interface PendingToolBatchState {
   }>;
   checkpointSize: number;
   executionMode?: "inline" | "durable" | undefined;
+  policyMode?: "per_item" | undefined;
   pendingItem?:
     | PendingToolBatchItem & {
         idempotencyKey: string;

@@ -8,7 +8,7 @@ export async function throwIfExecutionAuthorizationRejected(input: {
   if (input.response.status !== 401) return;
   const body = input.body ?? await input.response.clone().json().catch(() => undefined);
   const error = asRecord(asRecord(body)?.error);
-  if (error?.code !== "EXECUTION_AUTH_EXPIRED") return;
+  if (!isExecutionAuthorizationExpiredCode(error?.code)) return;
   throw createRuntimeFailure(
     "EXECUTION_AUTH_EXPIRED",
     "Execution authorization expired before provider dispatch.",
@@ -19,6 +19,10 @@ export async function throwIfExecutionAuthorizationRejected(input: {
       recoverable: true,
     },
   );
+}
+
+export function isExecutionAuthorizationExpiredCode(value: unknown): boolean {
+  return value === "EXECUTION_AUTH_EXPIRED" || value === "TICKET_EXPIRED";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

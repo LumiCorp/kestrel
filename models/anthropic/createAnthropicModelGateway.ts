@@ -18,7 +18,7 @@ export interface AnthropicGatewayFactoryOptions {
 }
 
 export function createAnthropicModelGatewayFromEnv(
-  options: AnthropicGatewayFactoryOptions = {}
+  options: AnthropicGatewayFactoryOptions = {},
 ): ModelGateway {
   const loaded = loadAnthropicEnv({
     ...(options.env ?? process.env),
@@ -35,16 +35,19 @@ export function createAnthropicModelGatewayFromEnv(
     version: options.envConfig?.version ?? loaded.version,
   };
 
-  const invoker = createVersionedProviderInvokerV1(createAnthropicInvoker({
+  const nativeInvoker = createAnthropicInvoker({
     env: config,
     ...(options.fetchImpl !== undefined
       ? { fetchImpl: options.fetchImpl }
       : {}),
-  }));
+  });
+  const invoker = createVersionedProviderInvokerV1(nativeInvoker);
 
   return new RetryingModelGateway(
     async <T>(request: ModelRequest, callOptions?: ModelGatewayCallOptions) =>
-      (await invoker(request, callOptions)) as unknown as T,
+      (await (request.version === "model_request_v2"
+        ? nativeInvoker(request, callOptions)
+        : invoker(request, callOptions))) as unknown as T,
     {
       ...(options.timeoutMs !== undefined
         ? { timeoutMs: options.timeoutMs }
@@ -52,6 +55,7 @@ export function createAnthropicModelGatewayFromEnv(
       ...(options.retryCount !== undefined
         ? { retryCount: options.retryCount }
         : {}),
-    }
+      providerId: "anthropic",
+    },
   );
 }

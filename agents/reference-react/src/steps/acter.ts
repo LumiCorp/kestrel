@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { ArtifactIntent, StepAgent, StepIO, Transition, } from "../../../../src/kestrel/contracts/execution.js";
 import type { AgentToolResult } from "../../../../src/kestrel/contracts/model-io.js";
+import type { PreparedToolCallV1 } from "../../../../src/kestrel/contracts/tool-invocation.js";
 import {
   hashCanonical,
   parseToolActivationRefV1,
@@ -66,7 +67,12 @@ import {
   validateCompiledNextAction,
   type CompiledActionValidationFailure,
 } from "../actionValidation.js";
-import { checkToolBatchChunkPolicyGate, checkToolPolicyGate } from "./acter/policyGates.js";
+import {
+  buildRuntimePolicyRevision,
+  checkToolBatchChunkPolicyGate,
+  checkToolPolicyGate,
+  prepareExactToolCallForPolicyGate,
+} from "./acter/policyGates.js";
 import {
   annotateVerificationBatchItems,
   appendToolObservation,
@@ -102,6 +108,7 @@ import {
   handleFinalizeAction,
   handleSwitchModeAction,
 } from "./acter/finalizeHandler.js";
+import { readActiveModeSwitch } from "../modeSwitch.js";
 import { handlePendingEffect } from "./acter/pendingEffectHandler.js";
 import {
   handlePendingToolBatch,
@@ -145,12 +152,25 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
     const toolExecutionClassByName = Object.fromEntries(
       capabilityManifest.map((tool) => [tool.name, tool.executionClass ?? "read_only"]),
     );
+    const toolInputDependentPreparationByName = Object.fromEntries(
+      capabilityManifest.map((tool) => [
+        tool.name,
+        tool.inputDependentPreparation === true,
+      ]),
+    );
     const toolAllowedInteractionModesByName = Object.fromEntries(
       capabilityManifest.map((tool) => [tool.name, tool.allowedInteractionModes]),
     );
     const reactState = getAgentStateFromRuntimeState(ctx.session.state);
+    const activeModeSwitch = readActiveModeSwitch({
+      value: reactState.modeSwitch,
+      sourceEventId: ctx.event.id,
+    });
     const modeResolution = normalizeInteractionMode({
-      interactionMode: ctx.event.payload.interactionMode ?? reactState.interactionMode,
+      interactionMode:
+        activeModeSwitch ??
+        ctx.event.payload.interactionMode ??
+        reactState.interactionMode,
       actSubmode: ctx.event.payload.actSubmode ?? reactState.actSubmode,
       defaultInteractionMode: DEFAULT_INTERACTION_MODE,
       defaultActSubmode: DEFAULT_ACT_SUBMODE,
@@ -252,7 +272,10 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       return handlePendingToolBatch({
         runId: ctx.runId,
         sessionId: ctx.session.sessionId,
+        currentStepAgent: asString(ctx.session.currentStepAgent) ?? config.acterStepId,
         stepIndex: ctx.stepIndex,
+        eventType: ctx.event.type,
+        eventPayload,
         pendingBatch,
         checkpointSize,
         reactState,
@@ -263,12 +286,25 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
           actionContext.toolApprovalCapabilitiesByName,
         toolApprovalDispositionByName:
           actionContext.toolApprovalDispositionByName,
+        toolApprovalAuthorityByName,
         toolExecutionClassByName: actionContext.toolExecutionClassByName,
+        toolInputDependentPreparationByName,
         toolAllowedInteractionModesByName: actionContext.toolAllowedInteractionModesByName,
         interactionMode: actionContext.interactionMode,
         actSubmode: actionContext.actSubmode,
         modeSystemV2Enabled: actionContext.modeSystemV2Enabled,
         executionPolicy: actionContext.executionPolicy,
+        autonomyPolicy,
+        autonomyEvidence: collectAutonomyEvidence(reactState),
+        autonomyRiskSignals: collectAutonomyRiskSignals({
+          toolClass: "external_side_effect",
+          decisionConfidence: readDecisionConfidence(reactState),
+          missingCapabilities: readMissingCapabilities(reactState),
+        }),
+        deliberationStepId: resolveDeliberationStep(
+          actionContext.interactionMode,
+          config,
+        ),
         duplicateLedger: readReadOnlyResultDuplicateLedger(ctx.memory),
         io,
         continueDurableToolBatch,
@@ -328,9 +364,106 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       if (settledDevShellPollingRedirect !== undefined) {
         return settledDevShellPollingRedirect;
       }
-      const actionInputHash = hashToolInput(actionForDispatch.name, actionForDispatch.input);
+      const toolIntent = {
+        ...("toolCallId" in actionForDispatch &&
+        actionForDispatch.toolCallId !== undefined
+          ? { modelToolCallId: actionForDispatch.toolCallId }
+          : {}),
+        ...("toolSurfaceSnapshot" in actionForDispatch &&
+        actionForDispatch.toolSurfaceSnapshot !== undefined
+          ? { toolSurfaceSnapshot: actionForDispatch.toolSurfaceSnapshot }
+          : {}),
+      };
+      const trustedInspection =
+        toolInputDependentPreparationByName[actionForDispatch.name] === true
+          ? await io.inspectTool?.(
+              actionForDispatch.name,
+              actionForDispatch.input,
+              toolIntent,
+            )
+          : undefined;
+      const policyInput = trustedInspection?.effectiveInput ?? actionForDispatch.input;
+      const actionInputHash = hashToolInput(actionForDispatch.name, policyInput);
       const workspaceRootForReducer = readActiveWorkspaceRootFromExecState(execState);
-      const toolClass = toolExecutionClassByName[actionForDispatch.name] ?? "read_only";
+      const toolClass =
+        trustedInspection?.executionClass ??
+        toolExecutionClassByName[actionForDispatch.name] ??
+        "read_only";
+      const configuredApprovalDisposition =
+        toolApprovalDispositionByName[actionForDispatch.name];
+      const trustedPolicy = trustedInspection?.policy;
+      const configuredApprovalCapabilities =
+        toolApprovalCapabilitiesByName[actionForDispatch.name] ?? [];
+      const boundApprovalAuthority = bindApprovalAuthorityToActivation(
+        toolApprovalAuthorityByName[actionForDispatch.name],
+        "activation" in actionForDispatch
+          ? actionForDispatch.activation
+          : undefined,
+      );
+      const runtimePolicyRevision = buildRuntimePolicyRevision({
+        interactionMode: toCanonicalInteractionMode(
+          modeResolution.interactionMode,
+        ),
+        actSubmode: modeResolution.actSubmode,
+        executionPolicy,
+      });
+      const inspectedApprovalCapabilities =
+        trustedPolicy !== undefined &&
+        trustedPolicy.decision !== "approval_required"
+          ? configuredApprovalCapabilities.filter(
+              (capability) => capability !== "external.confirm",
+            )
+          : configuredApprovalCapabilities;
+      const preparation =
+        trustedInspection !== undefined &&
+        trustedPolicy?.decision !== "deny" &&
+        asRecord(execState?.pendingApproval) === undefined
+          ? await prepareExactToolCallForPolicyGate({
+              io,
+              toolName: actionForDispatch.name,
+              toolInput: policyInput,
+              policyRevision: runtimePolicyRevision,
+              authorityRevision:
+                boundApprovalAuthority?.revision ?? runtimePolicyRevision,
+              capabilities: inspectedApprovalCapabilities,
+              toolIntent,
+            })
+          : undefined;
+      const trustedPolicyDecision =
+        preparation?.kind === "denied"
+          ? "deny" as const
+          : preparation?.preparedToolCall.policy.decision ??
+            trustedPolicy?.decision;
+      const effectiveApprovalCapabilities =
+        trustedPolicy !== undefined &&
+        trustedPolicyDecision !== "approval_required"
+          ? configuredApprovalCapabilities.filter(
+              (capability) => capability !== "external.confirm",
+            )
+          : configuredApprovalCapabilities;
+      const approvalDisposition =
+        trustedPolicy === undefined
+          ? configuredApprovalDisposition
+          : {
+              mode:
+                trustedPolicyDecision === "approval_required"
+                  ? "ask" as const
+                  : trustedPolicyDecision === "deny"
+                    ? "deny" as const
+                    : "auto" as const,
+              reasonCode:
+                configuredApprovalDisposition?.reasonCode ??
+                "environment_policy" as const,
+              authority:
+                configuredApprovalDisposition?.authority ?? {
+                  kind: "runtime_policy" as const,
+                  revision: trustedPolicy.policyRevision,
+                },
+            };
+      const preparedToolCall =
+        preparation?.kind === "prepared"
+          ? preparation.preparedToolCall
+          : undefined;
       const policyGate = await checkToolPolicyGate({
         reactState,
         activeRegion,
@@ -344,30 +477,18 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         eventType: ctx.event.type,
         eventPayload,
         toolName: actionForDispatch.name,
-        toolInput: actionForDispatch.input,
+        toolInput: policyInput,
         toolClass,
         allowedInteractionModes:
           toolAllowedInteractionModesByName[actionForDispatch.name],
         requiredApprovalCapabilities:
-          toolApprovalCapabilitiesByName[actionForDispatch.name],
-        approvalDisposition:
-          toolApprovalDispositionByName[actionForDispatch.name],
-        approvalAuthority: bindApprovalAuthorityToActivation(
-          toolApprovalAuthorityByName[actionForDispatch.name],
-          "activation" in actionForDispatch
-            ? actionForDispatch.activation
-            : undefined,
-        ),
-        toolIntent: {
-          ...("toolCallId" in actionForDispatch &&
-          actionForDispatch.toolCallId !== undefined
-            ? { modelToolCallId: actionForDispatch.toolCallId }
-            : {}),
-          ...("toolSurfaceSnapshot" in actionForDispatch &&
-          actionForDispatch.toolSurfaceSnapshot !== undefined
-            ? { toolSurfaceSnapshot: actionForDispatch.toolSurfaceSnapshot }
-            : {}),
-        },
+          effectiveApprovalCapabilities,
+        approvalDisposition,
+        trustedPolicyDecision,
+        trustedPolicyRevision: trustedPolicy?.policyRevision,
+        approvalAuthority: boundApprovalAuthority,
+        toolIntent,
+        preparedToolCall,
         interactionMode: toCanonicalInteractionMode(
           modeResolution.interactionMode,
         ),
@@ -387,6 +508,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       if (policyGate.kind === "blocked") {
         return policyGate.transition;
       }
+      const approvedPreparedToolCall = policyGate.preparedToolCall;
 
       const reusableFilesystemInspection = toolClass === "read_only" &&
           isFilesystemInspectionToolName(actionForDispatch.name)
@@ -714,7 +836,10 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         });
       }
 
-      if (toolClass !== "read_only" && toolClass !== "planning_write") {
+      if (
+        approvedPreparedToolCall !== undefined ||
+        (toolClass !== "read_only" && toolClass !== "planning_write")
+      ) {
         return dispatchDurableToolCall({
           runId: ctx.runId,
           sessionId: ctx.session.sessionId,
@@ -732,6 +857,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
             : undefined,
           toolExecutionClass: toolClass,
           executionRole: "executionRole" in actionForDispatch ? actionForDispatch.executionRole : undefined,
+          preparedToolCall: approvedPreparedToolCall,
         });
       }
 
@@ -946,7 +1072,9 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
           actionContext.toolApprovalCapabilitiesByName,
         toolApprovalDispositionByName:
           actionContext.toolApprovalDispositionByName,
+        toolApprovalAuthorityByName,
         toolExecutionClassByName: actionContext.toolExecutionClassByName,
+        toolInputDependentPreparationByName,
         toolAllowedInteractionModesByName: actionContext.toolAllowedInteractionModesByName,
         interactionMode: actionContext.interactionMode,
         actSubmode: actionContext.actSubmode,
@@ -1027,7 +1155,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         reactState,
         activeRegion,
         stepIndex: ctx.stepIndex,
-        io,
+        sourceEventId: ctx.event.id,
       });
     }
     if (action.kind === "request_mode_switch") {
@@ -1074,14 +1202,20 @@ function dispatchDurableToolCall(input: {
   toolSurfaceSnapshot?: import("../../../../src/kestrel/contracts/tool-contract.js").ToolSurfaceSnapshotV1 | undefined;
   toolExecutionClass?: "read_only" | "planning_write" | "sandboxed_only" | "external_side_effect" | undefined;
   executionRole?: unknown;
+  preparedToolCall?: PreparedToolCallV1 | undefined;
 }) {
-  const idempotencyKey = buildDurableToolIdempotencyKey(
-    input.sessionId,
-    input.runId,
-    input.stepIndex,
-    input.toolName,
-    input.toolInput,
-  );
+  const idempotencyKey = input.preparedToolCall?.callId ??
+    buildDurableToolIdempotencyKey(
+      input.sessionId,
+      input.runId,
+      input.stepIndex,
+      input.toolName,
+      input.toolInput,
+    );
+  const effectiveToolName =
+    input.preparedToolCall?.activation.descriptor.toolId ?? input.toolName;
+  const effectiveToolInput =
+    input.preparedToolCall?.effectiveInput ?? input.toolInput;
 
   const pendingEffectPatch = {
     pendingApproval: undefined,
@@ -1092,8 +1226,8 @@ function dispatchDurableToolCall(input: {
     pendingEffectKey: idempotencyKey,
     pendingEffectType: "execute_tool_call",
     pendingToolCall: {
-      name: input.toolName,
-      input: input.toolInput,
+      name: effectiveToolName,
+      input: effectiveToolInput,
       ...(input.executionRole !== undefined ? { executionRole: input.executionRole } : {}),
       idempotencyKey,
     },
@@ -1107,7 +1241,7 @@ function dispatchDurableToolCall(input: {
     activeRegion: input.activeRegion,
     phase: "ACT",
     reactPatch: {
-      ...(isFilesystemInspectionCacheInvalidatingTool(input.toolName, input.toolExecutionClass)
+      ...(isFilesystemInspectionCacheInvalidatingTool(effectiveToolName, input.toolExecutionClass)
         ? { filesystemInspectionCache: [] }
         : {}),
       decisionTrace: [
@@ -1116,14 +1250,14 @@ function dispatchDurableToolCall(input: {
           phase: "acter",
           decisionCode: "tool.dispatch_durable",
           metadata: {
-            toolName: input.toolName,
+            toolName: effectiveToolName,
           },
         },
       ],
     },
     execPatch: pendingEffectPatch,
     regionReactPatch: {
-      ...(isFilesystemInspectionCacheInvalidatingTool(input.toolName, input.toolExecutionClass)
+      ...(isFilesystemInspectionCacheInvalidatingTool(effectiveToolName, input.toolExecutionClass)
         ? { filesystemInspectionCache: [] }
         : {}),
     },
@@ -1131,18 +1265,24 @@ function dispatchDurableToolCall(input: {
     effects: [
       {
         type: "execute_tool_call",
-        payload: {
-          toolName: input.toolName,
-          toolInput: input.toolInput,
-          ...(input.toolCallId === undefined
-            ? {}
-            : { modelToolCallId: input.toolCallId }),
-          ...(input.toolSurfaceSnapshot === undefined
-            ? {}
-            : { toolSurfaceSnapshot: input.toolSurfaceSnapshot }),
-        },
+        payload: input.preparedToolCall === undefined
+          ? {
+              toolName: input.toolName,
+              toolInput: input.toolInput,
+              ...(input.toolCallId === undefined
+                ? {}
+                : { modelToolCallId: input.toolCallId }),
+              ...(input.toolSurfaceSnapshot === undefined
+                ? {}
+                : { toolSurfaceSnapshot: input.toolSurfaceSnapshot }),
+            }
+          : { preparedToolCall: input.preparedToolCall },
         idempotencyKey,
-        failurePolicy: shouldContinueToolFailure(input) ? "CONTINUE" as const : "STOP" as const,
+        failurePolicy: shouldContinueToolFailure({
+          ...input,
+          toolName: effectiveToolName,
+          toolInput: effectiveToolInput,
+        }) ? "CONTINUE" as const : "STOP" as const,
       },
     ],
   });
@@ -1212,6 +1352,7 @@ function continueDurableToolBatch(input: {
   acterStepId: string;
   toolCapabilityClassesByName: Record<string, string[]>;
   duplicateLedger: ReadonlyArray<ReadOnlyResultDuplicateLedgerEntry>;
+  preparedToolCall?: PreparedToolCallV1 | undefined;
 }) {
   const totalItems = input.pendingBatch.items.length;
   const nextIndex = clampIndex(input.pendingBatch.nextIndex, totalItems);
@@ -1243,13 +1384,15 @@ function continueDurableToolBatch(input: {
       },
     );
   }
-  const idempotencyKey = buildDurableToolIdempotencyKey(
-    input.sessionId,
-    input.runId,
-    input.stepIndex,
-    nextItem.name,
-    nextItem.input,
-  );
+  const idempotencyKey =
+    input.preparedToolCall?.callId ??
+    buildDurableToolIdempotencyKey(
+      input.sessionId,
+      input.runId,
+      input.stepIndex,
+      nextItem.name,
+      nextItem.input,
+    );
 
   const pendingEffectPatch = {
     pendingApproval: undefined,
@@ -1287,16 +1430,18 @@ function continueDurableToolBatch(input: {
     effects: [
       {
         type: "execute_tool_call",
-        payload: {
-          toolName: nextItem.name,
-          toolInput: nextItem.input,
-          ...(nextItem.toolCallId === undefined
-            ? {}
-            : { modelToolCallId: nextItem.toolCallId }),
-          ...(nextItem.toolSurfaceSnapshot === undefined
-            ? {}
-            : { toolSurfaceSnapshot: nextItem.toolSurfaceSnapshot }),
-        },
+        payload: input.preparedToolCall === undefined
+          ? {
+              toolName: nextItem.name,
+              toolInput: nextItem.input,
+              ...(nextItem.toolCallId === undefined
+                ? {}
+                : { modelToolCallId: nextItem.toolCallId }),
+              ...(nextItem.toolSurfaceSnapshot === undefined
+                ? {}
+                : { toolSurfaceSnapshot: nextItem.toolSurfaceSnapshot }),
+            }
+          : { preparedToolCall: input.preparedToolCall },
         idempotencyKey,
         failurePolicy: shouldContinueToolFailure({
           reactState: input.reactState,
@@ -1401,6 +1546,7 @@ function resumePendingEffect(input: {
     pendingToolInput,
     pendingToolCall?.executionRole,
   );
+  const collectedCandidate = collectedOutput;
   collectedOutput = normalizeEffectResultForTool({
     toolName,
     toolInput: pendingToolInput,
@@ -1411,7 +1557,7 @@ function resumePendingEffect(input: {
     toolName,
     toolInput: pendingToolInput,
     output: collectedOutput,
-    candidate: input.effectResult,
+    candidate: collectedCandidate,
   });
   const rawOutput = unwrapAgentToolOutput(toolResult);
   const shaped = shapeAgentToolResultForRuntime({
@@ -2686,6 +2832,7 @@ function readPendingToolBatch(value: unknown): PendingToolBatchState | undefined
       record?.executionMode === "durable" || record?.executionMode === "inline"
         ? record.executionMode
         : undefined,
+    policyMode: record?.policyMode === "per_item" ? "per_item" : undefined,
     pendingItem: (() => {
       const pending = asRecord(record?.pendingItem);
       const name = asString(pending?.name);
@@ -2747,6 +2894,7 @@ function bindApprovalAuthorityToActivation(
   activation: ToolActivationRefV1 | undefined,
 ) {
   if (authority === undefined || activation === undefined) return authority;
+  if (authority.kind === "hosted_app_policy") return authority;
   return {
     kind: authority.kind,
     revision: hashCanonical({

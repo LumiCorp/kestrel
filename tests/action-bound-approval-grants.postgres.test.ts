@@ -161,6 +161,66 @@ test("Local Core PostgreSQL preserves the waiting run identity across create, up
   }
 });
 
+test("PostgreSQL reserves local dialog names for the parent lifetime and fences stale completion", async () => {
+  assert.ok(databaseUrl, "KESTREL_PRODUCT_RUNNER_DATABASE_URL is required");
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const suffix = randomUUID();
+  const sessionId = `dialog-session-${suffix}`;
+  const parentThreadId = `dialog-parent-${suffix}`;
+  const firstChildThreadId = `dialog-child-first-${suffix}`;
+  const secondChildThreadId = `dialog-child-second-${suffix}`;
+  const store = new PostgresOrchestrationStore(pool as unknown as SqlExecutor);
+  try {
+    await pool.query("INSERT INTO sessions (session_id) VALUES ($1)", [sessionId]);
+    await pool.query(
+      `INSERT INTO orchestration_threads (thread_id, session_id, title, status)
+       VALUES ($1, $2, 'Dialog parent', 'IDLE')`,
+      [parentThreadId, sessionId],
+    );
+    const first = dialogRecord({
+      delegationId: `dialog-first-${suffix}`,
+      parentThreadId,
+      childThreadId: firstChildThreadId,
+      name: "Scout",
+      revision: 0,
+    });
+    assert.equal(await store.createDialog(first), true);
+    assert.equal((await store.getThread(firstChildThreadId))?.parentThreadId, parentThreadId);
+    assert.equal(await store.createDialog(dialogRecord({
+      delegationId: `dialog-second-${suffix}`,
+      parentThreadId,
+      childThreadId: secondChildThreadId,
+      name: "scout",
+      revision: 0,
+    })), false);
+    assert.equal(await store.getThread(secondChildThreadId), null);
+
+    const closed = {
+      ...first,
+      status: "CANCELLED" as const,
+      policy: {
+        ...first.policy,
+        dialog: {
+          ...(first.policy?.dialog as Record<string, unknown>),
+          status: "closed",
+          activity: "idle",
+          revision: 1,
+        },
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    assert.equal(await store.compareAndSetDialog(closed, 0), true);
+    assert.equal(await store.compareAndSetDialog(first, 0), false);
+    assert.equal(
+      ((await store.getDelegation(first.delegationId))?.policy?.dialog as { revision?: number } | undefined)?.revision,
+      1,
+    );
+  } finally {
+    await pool.query("DELETE FROM sessions WHERE session_id = $1", [sessionId]);
+    await pool.end();
+  }
+});
+
 test("interaction run identity migration backfills a referenced metadata run", async () => {
   assert.ok(databaseUrl, "KESTREL_PRODUCT_RUNNER_DATABASE_URL is required");
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
@@ -200,3 +260,37 @@ test("interaction run identity migration backfills a referenced metadata run", a
     await pool.end();
   }
 });
+
+function dialogRecord(input: {
+  delegationId: string;
+  parentThreadId: string;
+  childThreadId: string;
+  name: string;
+  revision: number;
+}) {
+  const now = new Date().toISOString();
+  return {
+    delegationId: input.delegationId,
+    parentThreadId: input.parentThreadId,
+    childThreadId: input.childThreadId,
+    title: input.name,
+    prompt: "investigate",
+    status: "RUNNING" as const,
+    provider: "openrouter" as const,
+    model: "test-model",
+    resultContract: "persistent_dialog_v1",
+    policy: {
+      dialog: {
+        version: "v1",
+        name: input.name,
+        normalizedName: input.name.toLocaleLowerCase(),
+        status: "open",
+        activity: "working",
+        revision: input.revision,
+        messages: [],
+      },
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
+}

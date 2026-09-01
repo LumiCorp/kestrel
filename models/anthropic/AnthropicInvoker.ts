@@ -1,4 +1,9 @@
-import type { ModelGatewayCallOptions, ModelRequest, ModelResponse } from "../../src/kestrel/contracts/model-io.js";
+import type {
+  ModelGatewayCallOptions,
+  ModelRequest,
+  ModelResponse,
+} from "../../src/kestrel/contracts/model-io.js";
+import { parseModelRequestV2 } from "../../src/kestrel/contracts/model-registration.js";
 
 import type { AnthropicEnvConfig, AnthropicInvoker } from "../contracts.js";
 import {
@@ -6,7 +11,12 @@ import {
   createAnthropicHttpError,
   mapAnthropicTransportError,
 } from "./AnthropicErrors.js";
-import { buildAnthropicHttpRequest, mapAnthropicResponse } from "./AnthropicMapper.js";
+import {
+  buildAnthropicHttpRequest,
+  buildAnthropicHttpRequestV2,
+  mapAnthropicResponse,
+  mapAnthropicResponseV2,
+} from "./AnthropicMapper.js";
 import { readServerSentEvents } from "../SseStream.js";
 import { parseRetryAfterMs } from "../../src/io/RetryAfter.js";
 
@@ -15,11 +25,23 @@ interface CreateAnthropicInvokerOptions {
   fetchImpl?: typeof fetch;
 }
 
-export function createAnthropicInvoker(options: CreateAnthropicInvokerOptions): AnthropicInvoker {
+export function createAnthropicInvoker(
+  options: CreateAnthropicInvokerOptions,
+): AnthropicInvoker {
   const fetchImpl = options.fetchImpl ?? fetch;
 
-  return async <TOutput>(request: ModelRequest, callOptions: ModelGatewayCallOptions = {}): Promise<ModelResponse<TOutput>> => {
-    const mappedRequest = buildAnthropicHttpRequest(request, options.env);
+  return async <TOutput>(
+    request: ModelRequest,
+    callOptions: ModelGatewayCallOptions = {},
+  ): Promise<ModelResponse<TOutput>> => {
+    const requestV2 =
+      request.version === "model_request_v2"
+        ? parseModelRequestV2(request)
+        : undefined;
+    const mappedRequest =
+      requestV2 === undefined
+        ? buildAnthropicHttpRequest(request, options.env)
+        : buildAnthropicHttpRequestV2(requestV2, options.env);
     const url = `${trimTrailingSlash(options.env.baseUrl)}${mappedRequest.path}`;
 
     try {
@@ -34,7 +56,9 @@ export function createAnthropicInvoker(options: CreateAnthropicInvokerOptions): 
           ...mappedRequest.body,
           ...(callOptions.onEvent !== undefined ? { stream: true } : {}),
         }),
-        ...(callOptions.signal !== undefined ? { signal: callOptions.signal } : {}),
+        ...(callOptions.signal !== undefined
+          ? { signal: callOptions.signal }
+          : {}),
       });
       const requestId = response.headers.get("request-id") ?? undefined;
       if (response.ok === false) {
@@ -45,21 +69,37 @@ export function createAnthropicInvoker(options: CreateAnthropicInvokerOptions): 
         );
       }
 
-      const payload = callOptions.onEvent === undefined
-        ? await safeReadJson(response)
-        : await readAnthropicStream(response, callOptions);
-      const mapped = mapAnthropicResponse<TOutput>(payload, {
+      const streamed =
+        callOptions.onEvent === undefined
+          ? undefined
+          : await readAnthropicStream(response, callOptions);
+      const payload = streamed?.payload ?? (await safeReadJson(response));
+      const context = {
         requestedModel: mappedRequest.model,
         requestId,
         structuredOutput: mappedRequest.structuredOutput,
-      });
+        ...(streamed?.terminalEvent !== undefined
+          ? { streamTerminalEvent: streamed.terminalEvent }
+          : {}),
+        ...(streamed?.visibleOutputStarted !== undefined
+          ? { visibleOutputStarted: streamed.visibleOutputStarted }
+          : {}),
+      };
+      const mapped =
+        requestV2 === undefined
+          ? mapAnthropicResponse<TOutput>(payload, context)
+          : mapAnthropicResponseV2<TOutput>(payload, context);
       if (
         callOptions.onEvent !== undefined &&
         request.reasoning !== undefined &&
         request.reasoning.mode !== "off" &&
         (mapped.reasoning?.visible.length ?? 0) === 0
       ) {
-        await callOptions.onEvent({ type: "reasoning.unavailable", attempt: 1, format: "provider_thinking" });
+        await callOptions.onEvent({
+          type: "reasoning.unavailable",
+          attempt: 1,
+          format: "provider_thinking",
+        });
       }
       return mapped;
     } catch (error) {
@@ -71,16 +111,23 @@ export function createAnthropicInvoker(options: CreateAnthropicInvokerOptions): 
 async function readAnthropicStream(
   response: Response,
   options: ModelGatewayCallOptions,
-): Promise<unknown> {
+): Promise<{
+  payload: unknown;
+  terminalEvent: "message_stop";
+  visibleOutputStarted: boolean;
+}> {
   let message: Record<string, unknown> = { content: [] };
   const blocks = new Map<number, Record<string, unknown>>();
   let reasoningStarted = false;
   let stopped = false;
+  let visibleOutputStarted = false;
   await readServerSentEvents(response, async ({ data }) => {
     const event = parseJsonRecord(data);
     const type = typeof event?.type === "string" ? event.type : undefined;
     if (type === "error" && event !== undefined) {
-      throw createAnthropicBadResponseError(readErrorMessage(event) ?? "Anthropic stream failed.");
+      throw createAnthropicBadResponseError(
+        readErrorMessage(event) ?? "Anthropic stream failed.",
+      );
     }
     if (type === "message_start") {
       message = { ...(asRecord(event?.message) ?? {}), content: [] };
@@ -93,21 +140,48 @@ async function readAnthropicStream(
     }
     if (type === "content_block_delta" && index !== undefined) {
       const delta = asRecord(event?.delta);
-      const deltaType = typeof delta?.type === "string" ? delta.type : undefined;
+      const deltaType =
+        typeof delta?.type === "string" ? delta.type : undefined;
       const current = blocks.get(index) ?? {};
-      if (deltaType === "thinking_delta" && typeof delta?.thinking === "string") {
+      if (
+        deltaType === "thinking_delta" &&
+        typeof delta?.thinking === "string"
+      ) {
         if (!reasoningStarted) {
           reasoningStarted = true;
-          await options.onEvent?.({ type: "reasoning.started", attempt: 1, format: "provider_thinking" });
+          await options.onEvent?.({
+            type: "reasoning.started",
+            attempt: 1,
+            format: "provider_thinking",
+          });
         }
         current.thinking = `${typeof current.thinking === "string" ? current.thinking : ""}${delta.thinking}`;
-        await options.onEvent?.({ type: "reasoning.delta", attempt: 1, format: "provider_thinking", delta: delta.thinking });
-      } else if (deltaType === "signature_delta" && typeof delta?.signature === "string") {
+        await options.onEvent?.({
+          type: "reasoning.delta",
+          attempt: 1,
+          format: "provider_thinking",
+          delta: delta.thinking,
+        });
+      } else if (
+        deltaType === "signature_delta" &&
+        typeof delta?.signature === "string"
+      ) {
         current.signature = `${typeof current.signature === "string" ? current.signature : ""}${delta.signature}`;
-      } else if (deltaType === "text_delta" && typeof delta?.text === "string") {
+      } else if (
+        deltaType === "text_delta" &&
+        typeof delta?.text === "string"
+      ) {
         current.text = `${typeof current.text === "string" ? current.text : ""}${delta.text}`;
-        await options.onEvent?.({ type: "output.delta", attempt: 1, delta: delta.text });
-      } else if (deltaType === "input_json_delta" && typeof delta?.partial_json === "string") {
+        visibleOutputStarted = true;
+        await options.onEvent?.({
+          type: "output.delta",
+          attempt: 1,
+          delta: delta.text,
+        });
+      } else if (
+        deltaType === "input_json_delta" &&
+        typeof delta?.partial_json === "string"
+      ) {
         current.__partialInput = `${typeof current.__partialInput === "string" ? current.__partialInput : ""}${delta.partial_json}`;
       }
       blocks.set(index, current);
@@ -116,11 +190,21 @@ async function readAnthropicStream(
     if (type === "content_block_stop" && index !== undefined) {
       const block = blocks.get(index);
       if (block?.__partialInput !== undefined) {
-        block.input = parseJsonValue(String(block.__partialInput)) ?? {};
+        const input = parseJsonValue(String(block.__partialInput));
+        if (asRecord(input) === undefined) {
+          throw createAnthropicBadResponseError(
+            "Anthropic stream returned malformed tool input JSON.",
+          );
+        }
+        block.input = input;
         delete block.__partialInput;
       }
       if (block?.type === "thinking" && reasoningStarted) {
-        await options.onEvent?.({ type: "reasoning.completed", attempt: 1, format: "provider_thinking" });
+        await options.onEvent?.({
+          type: "reasoning.completed",
+          attempt: 1,
+          format: "provider_thinking",
+        });
         reasoningStarted = false;
       }
       return;
@@ -129,17 +213,28 @@ async function readAnthropicStream(
       message = {
         ...message,
         ...(asRecord(event?.delta) ?? {}),
-        usage: { ...(asRecord(message.usage) ?? {}), ...(asRecord(event?.usage) ?? {}) },
+        usage: {
+          ...(asRecord(message.usage) ?? {}),
+          ...(asRecord(event?.usage) ?? {}),
+        },
       };
       return;
     }
     if (type === "message_stop") stopped = true;
   });
   if (!stopped) {
-    throw createAnthropicBadResponseError("Anthropic stream ended without message_stop.");
+    throw createAnthropicBadResponseError(
+      "Anthropic stream ended without message_stop.",
+    );
   }
-  message.content = [...blocks.entries()].sort(([a], [b]) => a - b).map(([, block]) => block);
-  return message;
+  message.content = [...blocks.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, block]) => block);
+  return {
+    payload: message,
+    terminalEvent: "message_stop",
+    visibleOutputStarted,
+  };
 }
 
 function parseJsonRecord(value: string): Record<string, unknown> | undefined {
@@ -147,12 +242,16 @@ function parseJsonRecord(value: string): Record<string, unknown> | undefined {
 }
 
 function parseJsonValue(value: string): unknown {
-  try { return JSON.parse(value); } catch { return ; }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return;
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : undefined;
 }
 

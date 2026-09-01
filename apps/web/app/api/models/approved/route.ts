@@ -6,6 +6,11 @@ import {
   getSpeechModelForLanguageSelection,
   listApprovedModels,
 } from "@/lib/ai/gateways";
+import { isHostedRuntimeRole } from "@/lib/ai/hosted-model-readiness";
+import {
+  isDesktopModelRoleReady,
+  readDesktopModelIdentity,
+} from "@/lib/environments/desktop-model-readiness";
 import {
   getDefaultOrganizationEnvironment,
   getOrganizationEnvironment,
@@ -22,13 +27,20 @@ const querySchema = z.object({
   pairedWith: z.string().optional(),
   threadId: z.string().min(1).optional(),
   projectId: z.string().min(1).optional(),
+  runtimeRole: z
+    .string()
+    .optional()
+    .default("agent.loop")
+    .refine(isHostedRuntimeRole, {
+      message: "runtimeRole must have a product-owned capability contract",
+    }),
 });
 
 export async function GET(request: NextRequest) {
   try {
     const { organizationId, session } = await requireActiveOrganization();
     const query = querySchema.parse(
-      Object.fromEntries(request.nextUrl.searchParams.entries())
+      Object.fromEntries(request.nextUrl.searchParams.entries()),
     );
 
     let environment = await getDefaultOrganizationEnvironment(organizationId);
@@ -36,7 +48,7 @@ export async function GET(request: NextRequest) {
       const thread = await getThreadForUser(
         query.threadId,
         session.user.id,
-        organizationId
+        organizationId,
       );
       if (thread) {
         environment =
@@ -54,7 +66,7 @@ export async function GET(request: NextRequest) {
       if (!project) {
         return NextResponse.json(
           { error: "Project not found" },
-          { status: 404 }
+          { status: 404 },
         );
       }
       environment =
@@ -66,14 +78,15 @@ export async function GET(request: NextRequest) {
     if (!environment) {
       return NextResponse.json(
         { error: "No Environment is available for this request." },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
     if (query.modality === "language" || !query.modality) {
       const languageModels = await getApprovedLanguageModels(
         organizationId,
-        environment.id
+        environment.id,
+        query.runtimeRole,
       );
       const desktopConnection =
         environment.provider === "desktop"
@@ -87,32 +100,44 @@ export async function GET(request: NextRequest) {
               columns: { advertisedModels: true },
             })
           : null;
-      const desktopModels = (desktopConnection?.advertisedModels ?? [])
-        .filter((model) => model.health === "ready")
-        .map((model) => {
-          const id = `desktop-local:${model.provider}:${encodeURIComponent(model.model)}`;
+      const desktopModels = (desktopConnection?.advertisedModels ?? []).flatMap(
+        (advertisedModel) => {
+          const identity = readDesktopModelIdentity(advertisedModel);
+          if (
+            identity === undefined ||
+            !isDesktopModelRoleReady({
+              model: advertisedModel,
+              provider: identity.provider,
+              modelId: identity.model,
+              role: query.runtimeRole,
+            })
+          ) {
+            return [];
+          }
+          const id = `desktop-local:${identity.provider}:${encodeURIComponent(identity.model)}`;
           return {
             gatewayModelId: id,
             id,
-            name: `${model.provider}/${model.model} on this Desktop`,
-            provider: model.provider,
+            name: `${identity.provider}/${identity.model} on this Desktop`,
+            provider: identity.provider,
             description:
               "Uses this Desktop Environment's local credential and model provider.",
             alias: null,
-            rawModelId: model.model,
+            rawModelId: identity.model,
             modality: "language",
             gatewayId: null,
-            gatewayProvider: model.provider,
+            gatewayProvider: identity.provider,
             isDefault: false,
             environmentId: environment.id,
             scope: "environment",
             metadata: { desktopLocal: true },
           };
-        });
+        },
+      );
       const pairedSpeech = await getSpeechModelForLanguageSelection(
         query.pairedWith,
         organizationId,
-        environment.id
+        environment.id,
       );
       return NextResponse.json({
         models: [...languageModels, ...desktopModels],
@@ -126,7 +151,7 @@ export async function GET(request: NextRequest) {
         models: await listApprovedModels(
           query.modality,
           organizationId,
-          environment.id
+          environment.id,
         ),
         environment,
       });
@@ -136,7 +161,7 @@ export async function GET(request: NextRequest) {
       models: await listApprovedModels(
         query.modality,
         organizationId,
-        environment.id
+        environment.id,
       ),
       environment,
     });

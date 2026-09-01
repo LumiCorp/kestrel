@@ -1,9 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import appManifest from "../../package.json";
 
-const appManifestUrl = new URL("../../package.json", import.meta.url);
-const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 const gitCommitPattern = /^[0-9a-f]{40}$/iu;
 
 export type KestrelBuildIdentity = {
@@ -32,7 +29,7 @@ function parseGitRevision(value: string, source: string) {
 }
 
 export function resolveKestrelBuildIdentity(
-  input: ResolveKestrelBuildIdentityInput
+  input: ResolveKestrelBuildIdentityInput,
 ): KestrelBuildIdentity {
   const version = input.manifestVersion.trim();
   if (!version) {
@@ -42,7 +39,7 @@ export function resolveKestrelBuildIdentity(
   const legacyVersion = optionalValue(input.env.KESTREL_APP_VERSION);
   if (legacyVersion && legacyVersion !== version) {
     throw new Error(
-      `KESTREL_APP_VERSION must match apps/web/package.json (${version}); received ${legacyVersion}.`
+      `KESTREL_APP_VERSION must match apps/web/package.json (${version}); received ${legacyVersion}.`,
     );
   }
 
@@ -71,10 +68,7 @@ export function resolveKestrelBuildIdentity(
   const legacyRevision = optionalValue(input.env.KESTREL_BUILD_REVISION);
   if (legacyRevision) {
     return {
-      revision: parseGitRevision(
-        legacyRevision,
-        "KESTREL_BUILD_REVISION"
-      ),
+      revision: parseGitRevision(legacyRevision, "KESTREL_BUILD_REVISION"),
       source: "legacy",
       version,
     };
@@ -82,7 +76,7 @@ export function resolveKestrelBuildIdentity(
 
   if (input.env.VERCEL_ENV?.trim() === "production") {
     throw new Error(
-      "Kestrel One production builds require a full Git revision from VERCEL_GIT_COMMIT_SHA, git rev-parse HEAD, or KESTREL_BUILD_REVISION."
+      "Kestrel One production builds require a full Git revision from VERCEL_GIT_COMMIT_SHA, git rev-parse HEAD, or KESTREL_BUILD_REVISION.",
     );
   }
 
@@ -90,33 +84,25 @@ export function resolveKestrelBuildIdentity(
 }
 
 function readAppManifestVersion() {
-  const manifest = JSON.parse(readFileSync(appManifestUrl, "utf8")) as {
-    version?: unknown;
-  };
-  if (typeof manifest.version !== "string") {
+  if (typeof appManifest.version !== "string") {
     throw new Error("apps/web/package.json must declare a string version.");
   }
-  return manifest.version;
+  return appManifest.version;
 }
 
 function readRepositoryRevision() {
   try {
-    return execFileSync(
-      "git",
-      ["rev-parse", "--verify", "HEAD^{commit}"],
-      {
-        cwd: repositoryRoot,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }
-    );
+    return execFileSync("git", ["rev-parse", "--verify", "HEAD^{commit}"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
   } catch {
     return;
   }
 }
 
 export function loadKestrelBuildIdentity(
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
 ) {
   return resolveKestrelBuildIdentity({
     env,

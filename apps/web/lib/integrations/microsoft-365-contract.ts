@@ -1,7 +1,12 @@
 import { z } from "zod";
+import {
+  MICROSOFT_365_OPERATION_DESCRIPTORS,
+  microsoft365OperationHasRequiredScopes,
+  microsoft365MinimumApprovalMode,
+  microsoft365OperationDescriptor,
+} from "../../../../src/apps/microsoft365.js";
 
 export const MICROSOFT_365_PROVIDER_KEY = "microsoft_365";
-export const MICROSOFT_365_AUTH_PROVIDER_ID = "microsoft-entra-id";
 
 export const MICROSOFT_365_PACKS = {
   outlook: {
@@ -12,7 +17,15 @@ export const MICROSOFT_365_PACKS = {
   teams: {
     name: "Teams",
     description: "Read the user's chats and send chat messages.",
-    scopes: ["Chat.Read", "ChatMessage.Send"],
+    scopes: [
+      ...new Set(
+        MICROSOFT_365_OPERATION_DESCRIPTORS.filter(
+          (operation) => operation.pack === "teams",
+        ).flatMap(
+          (operation) => operation.requiredScopes,
+        ),
+      ),
+    ],
   },
   sharepoint: {
     name: "SharePoint",
@@ -28,6 +41,7 @@ export const MICROSOFT_365_CAPABILITIES = [
   "outlook.mail.send",
   "outlook.calendar.read",
   "teams.chat.read",
+  "teams.chat.messages.read",
   "teams.chat.send",
   "sharepoint.sites.search",
 ] as const;
@@ -55,9 +69,15 @@ export const microsoft365RuntimeInputSchema = z.discriminatedUnion("operation", 
   }),
   z.object({
     operation: z.literal("chats.list"),
-    chatId: z.string().trim().min(1).max(512).optional(),
+    cursor: z.string().trim().min(1).max(4096).optional(),
     maxResults: z.number().int().min(1).max(50).default(20),
-  }),
+  }).strict(),
+  z.object({
+    operation: z.literal("chat.messages.list"),
+    chatId: z.string().trim().min(1).max(512),
+    cursor: z.string().trim().min(1).max(4096).optional(),
+    maxResults: z.number().int().min(1).max(50).default(20),
+  }).strict(),
   z.object({
     operation: z.literal("chat.send"),
     chatId: z.string().trim().min(1).max(512),
@@ -80,15 +100,23 @@ export function capabilityForMicrosoft365Operation(
   if (operation === "mail.list") return "outlook.mail.read" as const;
   if (operation === "mail.send") return "outlook.mail.send" as const;
   if (operation === "calendar.list") return "outlook.calendar.read" as const;
-  if (operation === "chats.list") return "teams.chat.read" as const;
-  if (operation === "chat.send") return "teams.chat.send" as const;
+  if (
+    operation === "chats.list" ||
+    operation === "chat.messages.list" ||
+    operation === "chat.send"
+  ) {
+    return microsoft365OperationDescriptor(operation).id as Microsoft365Capability;
+  }
   return "sharepoint.sites.search" as const;
 }
 
 export function requiresMicrosoft365Approval(
   capability: Microsoft365Capability
 ) {
-  return capability === "outlook.mail.send" || capability === "teams.chat.send";
+  if (capability === "teams.chat.send") {
+    return microsoft365MinimumApprovalMode("chat.send") === "ask";
+  }
+  return capability === "outlook.mail.send";
 }
 
 export const microsoft365ConnectionInputSchema = z.object({
@@ -135,6 +163,64 @@ export function hasMicrosoft365PackScopes(input: {
   return resourceScopesForMicrosoft365Packs(input.packs).every((scope) =>
     granted.has(scope.toLowerCase())
   );
+}
+
+export function hasMicrosoft365CapabilityScopes(input: {
+  grantedScopes: readonly string[];
+  capability: Microsoft365Capability;
+}) {
+  const operationByCapability: Partial<Record<Microsoft365Capability, Microsoft365RuntimeInput["operation"]>> = {
+    "outlook.mail.read": "mail.list",
+    "outlook.mail.send": "mail.send",
+    "outlook.calendar.read": "calendar.list",
+    "teams.chat.read": "chats.list",
+    "teams.chat.messages.read": "chat.messages.list",
+    "teams.chat.send": "chat.send",
+  };
+  const operation = operationByCapability[input.capability];
+  return operation
+    ? microsoft365OperationHasRequiredScopes({
+        operation,
+        grantedScopes: input.grantedScopes,
+      })
+    : true;
+}
+
+/**
+ * The hosted personal-connection surface releases Outlook and Teams. SharePoint
+ * remains outside the hosted broker's Platform registration envelope.
+ */
+export function requireMicrosoft365HostedConnectionPacks(
+  packs: readonly Microsoft365Pack[],
+) {
+  const hostedPacks = packs.filter(
+    (pack): pack is "outlook" | "teams" =>
+      pack === "outlook" || pack === "teams",
+  );
+  if (!hostedPacks.length || hostedPacks.length !== packs.length) {
+    throw new Error(
+      "Only Outlook and Teams capability packs are available through this connection.",
+    );
+  }
+  return (["outlook", "teams"] as const).filter((pack) =>
+    hostedPacks.includes(pack),
+  );
+}
+
+/**
+ * ChatMessage.Send is an administrator-consented Microsoft permission. Its
+ * absence is a send-specific recovery state; Chat.Read stays independently
+ * usable for the same connection.
+ */
+export function microsoft365TeamsSendEligibility(
+  grantedScopes: readonly string[],
+) {
+  return hasMicrosoft365CapabilityScopes({
+    grantedScopes,
+    capability: "teams.chat.send",
+  })
+    ? "granted"
+    : "tenant_admin_consent_required";
 }
 
 export function parseMicrosoft365Packs(value: unknown): Microsoft365Pack[] {

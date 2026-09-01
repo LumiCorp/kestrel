@@ -79,6 +79,9 @@ importers:
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
+      tldts:
+        specifier: 6.1.86
+        version: 6.1.86
       tsx:
         specifier: ^4.19.3
         version: 4.21.0
@@ -383,6 +386,15 @@ importers:
 
   apps/environment-router:
     dependencies:
+      '@kestrel-agents/conversation':
+        specifier: workspace:^
+        version: link:../../packages/conversation
+      '@kestrel-agents/protocol':
+        specifier: workspace:^
+        version: link:../../packages/protocol
+      '@kestrel/mcp-security':
+        specifier: workspace:*
+        version: link:../../packages/mcp-security
       '@lumi/kestrel-environment-auth':
         specifier: workspace:*
         version: link:../../packages/environment-auth
@@ -672,8 +684,8 @@ importers:
         specifier: ^0.24.1
         version: 0.24.1
       '@vercel/functions':
-        specifier: ^2.0.0
-        version: 2.2.13(@aws-sdk/credential-provider-web-identity@3.972.34)
+        specifier: ^3.9.5
+        version: 3.9.5(@aws-sdk/credential-provider-web-identity@3.972.34)(ws@8.21.1)
       '@vercel/otel':
         specifier: ^1.12.0
         version: 1.14.1(@opentelemetry/api-logs@0.200.0)(@opentelemetry/api@1.9.0)(@opentelemetry/instrumentation@0.57.2(@opentelemetry/api@1.9.0))(@opentelemetry/resources@2.6.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-logs@0.205.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-metrics@2.1.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.6.0(@opentelemetry/api@1.9.0))
@@ -725,6 +737,9 @@ importers:
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@electric-sql/pglite@0.4.6)(@opentelemetry/api@1.9.0)(@prisma/client@7.8.0(prisma@7.8.0(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))(typescript@5.9.3))(@types/pg@8.20.0)(bun-types@1.3.14)(gel@2.2.0)(kysely@0.28.17)(mysql2@3.15.3)(pg@8.20.0)(postgres@3.4.9)(prisma@7.8.0(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))
+      email-addresses:
+        specifier: 5.0.0
+        version: 5.0.0
       embla-carousel-react:
         specifier: ^8.6.0
         version: 8.6.0(react@19.2.4)
@@ -5396,6 +5411,13 @@ packages:
     peerDependencies:
       typescript: ^4.0.0 || ^5.0.0
 
+  '@vercel/cli-config@0.2.4':
+    resolution: {integrity: sha512-kZ5SojbrV06GHoU6QIWGwDXLov+s9rWZ7QqdqKfJfBGCNUieGfgaCjeeenNy8Y+QC0bwC0dZ2B4l5Hvdmrgpdw==}
+
+  '@vercel/cli-exec@1.0.1':
+    resolution: {integrity: sha512-g9XerViJ/paZujufXYcu5XYI2vU2rtB4sgdpjUHde5RnOkdmpu0ngH46LCFGHoPXO/C+qDPSczIHIRN+8Q2YKQ==}
+    engines: {node: '>= 18'}
+
   '@vercel/detect-agent@1.1.0':
     resolution: {integrity: sha512-Zfq6FbIcYl9gaAmVu6ROsqUiCNwpEj3Ljz/tMX5fl12Z95OFOxzf7vlO03WE5JBU/ri1tBDFHnW41dihMINOPQ==}
     engines: {node: '>=14'}
@@ -5416,13 +5438,16 @@ packages:
     resolution: {integrity: sha512-8erw9uPe0dFg45THkNxmjtvMX143SkZebmjgSVbcM3XCkXu3RIiBaJMcMNG8aaS+rnTuw8+d4De9HVT0M/r3wg==}
     engines: {node: '>= 18'}
 
-  '@vercel/functions@2.2.13':
-    resolution: {integrity: sha512-14ArBSIIcOBx9nrEgaJb4Bw+en1gl6eSoJWh8qjifLl5G3E4dRXCFOT8HP+w66vb9Wqyd1lAQBrmRhRwOj9X9A==}
-    engines: {node: '>= 18'}
+  '@vercel/functions@3.9.5':
+    resolution: {integrity: sha512-EUfqlb7AzoEh7URlMNAO4jbJiLWz9grDBHvfjKTDvEP9c8y3DqX3SWPvfaQkUjtkm3b83flhaUUMuewdHa+qmw==}
+    engines: {node: '>= 20'}
     peerDependencies:
       '@aws-sdk/credential-provider-web-identity': '*'
+      ws: '>=8'
     peerDependenciesMeta:
       '@aws-sdk/credential-provider-web-identity':
+        optional: true
+      ws:
         optional: true
 
   '@vercel/gatsby-plugin-vercel-analytics@1.0.11':
@@ -5465,16 +5490,16 @@ packages:
   '@vercel/node@5.6.7':
     resolution: {integrity: sha512-a6T/59XUX2uQ5e5Z9aw8svTmaqxR54omUS88Ixfi50N40artnU1Olk9uQExf/9c5STNf8ewriQih1ep0PXx74g==}
 
-  '@vercel/oidc@2.0.2':
-    resolution: {integrity: sha512-59PBFx3T+k5hLTEWa3ggiMpGRz1OVvl9eN8SUai+A43IsqiOuAe7qPBf+cray/Fj6mkgnxm/D7IAtjc8zSHi7g==}
-    engines: {node: '>= 18'}
-
   '@vercel/oidc@3.1.0':
     resolution: {integrity: sha512-Fw28YZpRnA3cAHHDlkt7xQHiJ0fcL+NRcIqsocZQUSmbzeIKRpwttJjik5ZGanXP+vlA4SbTg+AbA3bP363l+w==}
     engines: {node: '>= 20'}
 
   '@vercel/oidc@3.2.0':
     resolution: {integrity: sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug==}
+    engines: {node: '>= 20'}
+
+  '@vercel/oidc@3.8.5':
+    resolution: {integrity: sha512-RwXYtnt6za+5UO4IaLywN/6B95AlLqynPRUWRJxeJ/qufwkcLUbZNUxYtzT0uMpuraWhlNcGqPNGkTnZr4BGBw==}
     engines: {node: '>= 20'}
 
   '@vercel/otel@1.14.1':
@@ -6946,6 +6971,9 @@ packages:
     resolution: {integrity: sha512-Ns6xyxE+hIK5UlujtRlw7w4e2Ju/ImCWXf1Q/PoOhc0N3/6SN6YW7+ujCarsHbxWnolbW+1RlkHtdklUJpjbPA==}
     engines: {node: '>= 12.20.55'}
     hasBin: true
+
+  email-addresses@5.0.0:
+    resolution: {integrity: sha512-4OIPYlA6JXqtVn8zpHpGiI7vE6EQOAg16aGnDMIAlZVinnoZ8208tW1hAbjWydgN/4PLTT9q+O1K6AH/vALJGw==}
 
   embla-carousel-react@8.6.0:
     resolution: {integrity: sha512-0/PjqU7geVmo6F734pmPqpyHqiM99olvyecY7zdweCw+6tKEXnrE90pBiBbMMU8s5tICemzpQ3hi5EpxzGW+JA==}
@@ -11072,6 +11100,9 @@ packages:
 
   zod@3.22.4:
     resolution: {integrity: sha512-iC+8Io04lddc+mVqQ9AZ7OQ2MrUKGN+oIQyq1vemgt46jwCwLfhq7/pwnBnNXXXZb8VTVLKwp9EDkx+ryxIWmg==}
+
+  zod@4.1.11:
+    resolution: {integrity: sha512-WPsqwxITS2tzx1bzhIKsEs19ABD5vmCVa4xBo2tq/SrV4RNZtfws1EnCWQXM6yh8bD08a1idvkB5MZSBiZsjwg==}
 
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
@@ -15757,6 +15788,15 @@ snapshots:
       - rollup
       - supports-color
 
+  '@vercel/cli-config@0.2.4':
+    dependencies:
+      xdg-app-paths: 5.1.0
+      zod: 4.1.11
+
+  '@vercel/cli-exec@1.0.1':
+    dependencies:
+      execa: 5.1.1
+
   '@vercel/detect-agent@1.1.0': {}
 
   '@vercel/elysia@0.1.40(encoding@0.1.13)(rollup@4.60.2)':
@@ -15821,11 +15861,12 @@ snapshots:
       - encoding
       - supports-color
 
-  '@vercel/functions@2.2.13(@aws-sdk/credential-provider-web-identity@3.972.34)':
+  '@vercel/functions@3.9.5(@aws-sdk/credential-provider-web-identity@3.972.34)(ws@8.21.1)':
     dependencies:
-      '@vercel/oidc': 2.0.2
+      '@vercel/oidc': 3.8.5
     optionalDependencies:
       '@aws-sdk/credential-provider-web-identity': 3.972.34
+      ws: 8.21.1
 
   '@vercel/gatsby-plugin-vercel-analytics@1.0.11':
     dependencies:
@@ -15962,14 +16003,15 @@ snapshots:
       - rollup
       - supports-color
 
-  '@vercel/oidc@2.0.2':
-    dependencies:
-      '@types/ms': 2.1.0
-      ms: 2.1.3
-
   '@vercel/oidc@3.1.0': {}
 
   '@vercel/oidc@3.2.0': {}
+
+  '@vercel/oidc@3.8.5':
+    dependencies:
+      '@vercel/cli-config': 0.2.4
+      '@vercel/cli-exec': 1.0.1
+      jose: 5.9.6
 
   '@vercel/otel@1.14.1(@opentelemetry/api-logs@0.200.0)(@opentelemetry/api@1.9.0)(@opentelemetry/instrumentation@0.57.2(@opentelemetry/api@1.9.0))(@opentelemetry/resources@2.6.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-logs@0.205.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-metrics@2.1.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.6.0(@opentelemetry/api@1.9.0))':
     dependencies:
@@ -17509,6 +17551,8 @@ snapshots:
       extract-zip: 2.0.1
     transitivePeerDependencies:
       - supports-color
+
+  email-addresses@5.0.0: {}
 
   embla-carousel-react@8.6.0(react@19.2.4):
     dependencies:
@@ -22503,6 +22547,8 @@ snapshots:
       zod: 4.3.6
 
   zod@3.22.4: {}
+
+  zod@4.1.11: {}
 
   zod@4.3.6: {}
 

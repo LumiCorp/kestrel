@@ -117,6 +117,20 @@ test("deliberator prompt preserves application instructions at system priority",
   assert.match(prompt, /2\. Return a JSON object matching the requested schema\./u);
 });
 
+test("base Kestrel and Reference React prompts leave collaborator guidance to the parent runtime", () => {
+  const kestrel = buildDeliberatorSystemPrompt({
+    interactionMode: "build",
+    promptVariant: "kestrel:build",
+  });
+  const referenceReact = buildDeliberatorSystemPrompt({
+    interactionMode: "build",
+    promptVariant: "reference-react:build",
+  });
+
+  assert.doesNotMatch(kestrel, /named collaborators/iu);
+  assert.doesNotMatch(referenceReact, /Named collaborators:/u);
+});
+
 test("deliberator prompt exposes typed host actions only for Desktop Chat and Build", () => {
   const desktopChat = buildDeliberatorSystemPrompt({
     interactionMode: "chat",
@@ -135,6 +149,8 @@ test("deliberator prompt exposes typed host actions only for Desktop Chat and Bu
 
   assert.match(desktopChat, /use desktop\.host\.open/u);
   assert.match(desktopBuild, /use desktop\.host\.open/u);
+  assert.match(desktopChat, /only after the start tool reports that the process is running/u);
+  assert.match(desktopBuild, /If startup fails, repair it or report the blocker/u);
   assert.doesNotMatch(desktopPlan, /desktop\.host\.open/u);
   assert.doesNotMatch(cliBuild, /desktop\.host\.open/u);
   assert.doesNotMatch(webChat, /desktop\.host\.open/u);
@@ -211,7 +227,7 @@ test("build-mode deliberator prompt stays compact and generic", () => {
   assert.match(act, /visible plan agent-owned/u);
   assert.match(act, /Never create a todo whose work is closing todos, finalizing, or reporting itself/u);
   assert.match(act, /do not finalize by itself while an item remains open/u);
-  assert.ok(act.length < 6200, `Expected compact build prompt, received ${act.length} characters.`);
+  assert.ok(act.length < 6600, `Expected compact build prompt, received ${act.length} characters.`);
 });
 
 test("shared deliberator prompt keeps authoritative evidence and structured response guidance across modes", () => {

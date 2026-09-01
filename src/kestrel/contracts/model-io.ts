@@ -36,7 +36,7 @@ export type ModelContentPart =
 
 export interface ModelRequest {
   /** Present after the explicit legacy-to-V1 provider boundary adapter. */
-  version?: "model_request_v1" | undefined;
+  version?: "model_request_v1" | "model_request_v2" | undefined;
   model?: string | undefined;
   input: unknown;
   messages?: ModelMessage[] | undefined;
@@ -70,6 +70,8 @@ export interface ModelVisibleReasoning {
 export interface ModelReasoningContinuation {
   provider: "openai" | "anthropic" | "openrouter";
   kind: "encrypted_content" | "signature" | "reasoning_details";
+  /** Provider-output position relative to the preceding tool call. */
+  replayAfterToolCallId?: string | undefined;
   /** Opaque provider-returned value. This must never be rendered or logged. */
   value: unknown;
 }
@@ -299,7 +301,7 @@ export interface AnthropicProviderOptions {
 
 export interface ModelResponse<TOutput = unknown> {
   /** Present on responses returned through a shipped provider gateway. */
-  version?: "model_response_v1" | undefined;
+  version?: "model_response_v1" | "model_response_v2" | undefined;
   output?: TOutput | undefined;
   text?: string | undefined;
   toolIntents: ModelToolIntent[];
@@ -321,7 +323,7 @@ export interface ModelResponse<TOutput = unknown> {
       | "lumi"
       | "runpod";
     model: string;
-    endpoint: "chat" | "responses";
+    endpoint: "chat" | "responses" | "messages";
     requestId?: string | undefined;
     structuredOutput?:
       | {
@@ -355,7 +357,11 @@ export interface ToolGateway {
       rawInput: Record<string, unknown>;
     },
     options?: ToolGatewayCallOptions,
-  ): Promise<{ effectiveInput: Record<string, unknown> }>;
+  ): Promise<{
+    effectiveInput: Record<string, unknown>;
+    executionClass?: import("../../mode/contracts.js").ToolExecutionClass | undefined;
+    policy?: PreparedToolPolicyDispositionV1 | undefined;
+  }>;
   prepareToolCall(
     input: {
       runId: string;
@@ -366,6 +372,7 @@ export interface ToolGateway {
       rawInput: Record<string, unknown>;
       policy: PreparedToolPolicyDispositionV1;
       approval?: PreparedToolApprovalAuthorityV1 | undefined;
+      approvalCapabilities?: readonly string[] | undefined;
     },
     options?: ToolGatewayCallOptions,
   ): Promise<PreparedToolCallV1>;
@@ -373,6 +380,17 @@ export interface ToolGateway {
     prepared: PreparedToolCallV1,
     options?: ToolGatewayCallOptions,
   ): Promise<AgentToolResultV2>;
+  /** Resolve crash-recovery semantics from the trusted runtime registration for this exact tool identity. */
+  resolvePreparedExternalEffectDispatch?(
+    prepared: PreparedToolCallV1,
+    options?: Pick<ToolGatewayCallOptions, "runContext">,
+  ): Promise<
+    | import("../../io/ToolInvocationSupport.js").DurableExternalEffectDispatchV1
+    | undefined
+  >;
+  releasePreparedToolCall?(
+    prepared: PreparedToolCallV1,
+  ): Promise<void> | void;
   releaseToolSurfaceSnapshot?(snapshotId: string): Promise<void> | void;
   releaseToolRun?(runId: string, sessionId: string): Promise<void> | void;
   preRun?(context: ToolGatewayPreRunContext): Promise<void>;
@@ -388,9 +406,15 @@ export interface ToolGatewayCallOptions {
   toolNames?: readonly string[] | undefined;
   runtimeBudgetRemainingMs?: number | undefined;
   /** Durable exact-result sink used by capability-bearing tools before host teardown. */
-  persistCompletedCapabilityResult?: ((result: AgentToolResultV2) => Promise<void>) | undefined;
+  persistCompletedCapabilityResult?:
+    | ((result: AgentToolResultV2) => Promise<void>)
+    | undefined;
   /** @internal Gateway bridge from a raw tool handler to its exact result envelope. */
-  persistCompletedCapabilityRawOutput?: ((rawOutput: unknown) => Promise<void>) | undefined;
+  persistCompletedCapabilityRawOutput?:
+    | ((rawOutput: unknown) => Promise<void>)
+    | undefined;
+  /** @internal Gateway bridge for acknowledged external-effect dispatch. */
+  acknowledgeExternalEffect?: (() => Promise<void>) | undefined;
 }
 
 export type ToolConsoleSink = (event: ToolConsoleEvent) => void | Promise<void>;

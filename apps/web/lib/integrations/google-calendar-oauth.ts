@@ -1,32 +1,19 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import * as schema from "@/drizzle/schema";
 import {
   disconnectPersonalAppConnection,
-  ensureCoreAppCatalog,
 } from "@/lib/apps/service";
+import { resolvePlatformOAuthRegistration } from "@/lib/apps/platform-oauth-registrations";
 import { knowledgeDb } from "@/lib/knowledge/db";
-import { getGoogleUserInfo } from "./google-calendar-api";
 import {
   GOOGLE_CALENDAR_CAPABILITIES,
   GOOGLE_WORKSPACE_PROVIDER_KEY,
+  googleWorkspacePackHealth,
+  hasGoogleWorkspacePackScopes,
+  parseSelectedGoogleWorkspacePacks,
 } from "./google-calendar-contract";
-
-export async function findGoogleAuthAccount(userId: string) {
-  return knowledgeDb.query.accounts.findFirst({
-    where: (table, operators) =>
-      operators.and(
-        operators.eq(table.userId, userId),
-        operators.eq(table.providerId, "google")
-      ),
-    columns: {
-      id: true,
-      accountId: true,
-      scope: true,
-    },
-  });
-}
 
 export async function findGoogleCalendarUserConnection(input: {
   organizationId: string;
@@ -38,114 +25,8 @@ export async function findGoogleCalendarUserConnection(input: {
         eq(table.organizationId, input.organizationId),
         eq(table.appKey, GOOGLE_WORKSPACE_PROVIDER_KEY),
         eq(table.ownerType, "personal"),
-        eq(table.userId, input.userId)
+        eq(table.userId, input.userId),
       ),
-  });
-}
-
-export async function syncGoogleCalendarUserConnection(input: {
-  organizationId: string;
-  userId: string;
-  authAccountId: string;
-  providerAccountId: string;
-  accessToken: string;
-  scopes: string[];
-}) {
-  await ensureCoreAppCatalog();
-  const installation = await knowledgeDb.query.appInstallations.findFirst({
-    where: (table, { and: all, eq: equals }) =>
-      all(
-        equals(table.organizationId, input.organizationId),
-        equals(table.appKey, GOOGLE_WORKSPACE_PROVIDER_KEY),
-        equals(table.status, "installed"),
-      ),
-    columns: { appKey: true },
-  });
-  if (!installation) {
-    throw new Error(
-      "Google Workspace must be installed for this Organization first.",
-    );
-  }
-  const viewer = await getGoogleUserInfo({ accessToken: input.accessToken });
-  if (viewer.sub !== input.providerAccountId) {
-    throw new Error("Google account identity did not match the linked account.");
-  }
-  const now = new Date();
-  return knowledgeDb.transaction(async (transaction) => {
-    const existingConnection = await transaction.query.appConnections.findFirst(
-      {
-        where: (table, operators) =>
-          operators.and(
-            operators.eq(table.organizationId, input.organizationId),
-            operators.eq(table.appKey, GOOGLE_WORKSPACE_PROVIDER_KEY),
-            operators.eq(table.ownerType, "personal"),
-          operators.eq(table.userId, input.userId),
-        ),
-      },
-    );
-    const connectionId = existingConnection?.id ?? crypto.randomUUID();
-    const [appConnection] = await transaction
-      .insert(schema.appConnections)
-      .values({
-        id: connectionId,
-        organizationId: input.organizationId,
-        appKey: GOOGLE_WORKSPACE_PROVIDER_KEY,
-        ownerType: "personal",
-        userId: input.userId,
-        authAccountId: input.authAccountId,
-        name: viewer.email ?? input.providerAccountId,
-        status: "connected",
-        externalAccountId: input.providerAccountId,
-        externalAccountLabel: viewer.email ?? input.providerAccountId,
-        scopes: input.scopes,
-        deliveryConfig: {},
-        lastHealthAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: schema.appConnections.id,
-        set: {
-          authAccountId: input.authAccountId,
-          name: viewer.email ?? input.providerAccountId,
-          status: "connected",
-          externalAccountId: input.providerAccountId,
-          externalAccountLabel: viewer.email ?? input.providerAccountId,
-          scopes: input.scopes,
-          failureCode: null,
-          failureMessage: null,
-          disconnectedAt: null,
-          lastHealthAt: now,
-          updatedAt: now,
-        },
-      })
-      .returning();
-    if (!appConnection) {
-      throw new Error("Google Calendar App connection could not be recorded.");
-    }
-    await transaction
-      .insert(schema.appConnectionResources)
-      .values({
-        id: `${appConnection.id}:primary-calendar`,
-        connectionId: appConnection.id,
-        externalId: "primary",
-        resourceType: "calendar",
-        label: "Primary calendar",
-        enabled: true,
-        permissions: {},
-        metadata: { logical: true },
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [
-          schema.appConnectionResources.connectionId,
-          schema.appConnectionResources.resourceType,
-          schema.appConnectionResources.externalId,
-        ],
-        set: { enabled: true, updatedAt: now },
-      });
-    return appConnection;
   });
 }
 
@@ -175,7 +56,14 @@ export async function attachGoogleCalendarConnectionToProject(input: {
     }),
   ]);
   if (!project) throw new Error("Project not found.");
-  if (connection?.status !== "connected") {
+  if (
+    !connection ||
+    connection.status === "disconnected" ||
+    !hasGoogleWorkspacePackScopes({
+      pack: "calendar",
+      grantedScopes: connection.scopes,
+    })
+  ) {
     throw new PersonalConnectionRequiredError(
       "Connect Google Workspace in Settings before adding it to a Project.",
     );
@@ -187,18 +75,17 @@ export async function attachGoogleCalendarConnectionToProject(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${connectionLockKey}, 0))`,
     );
-    const lockedConnection =
-      await transaction.query.appConnections.findFirst({
-        where: (table, { and: all, eq: equals }) =>
-          all(
-            equals(table.id, connection.id),
-            equals(table.organizationId, input.organizationId),
-            equals(table.appKey, GOOGLE_WORKSPACE_PROVIDER_KEY),
-            equals(table.ownerType, "personal"),
-            equals(table.userId, input.userId),
-            equals(table.status, "connected"),
-          ),
-      });
+    const lockedConnection = await transaction.query.appConnections.findFirst({
+      where: (table, { and: all, eq: equals }) =>
+        all(
+          equals(table.id, connection.id),
+          equals(table.organizationId, input.organizationId),
+          equals(table.appKey, GOOGLE_WORKSPACE_PROVIDER_KEY),
+          equals(table.ownerType, "personal"),
+          equals(table.userId, input.userId),
+          inArray(table.status, ["connected", "degraded"]),
+        ),
+    });
     if (!lockedConnection) {
       throw new PersonalConnectionRequiredError(
         "Connect Google Workspace in Settings before adding it to a Project.",
@@ -227,12 +114,12 @@ export async function attachGoogleCalendarConnectionToProject(input: {
           eq(schema.projectAppConnections.projectId, input.projectId),
           eq(
             schema.projectAppConnections.appKey,
-            GOOGLE_WORKSPACE_PROVIDER_KEY
+            GOOGLE_WORKSPACE_PROVIDER_KEY,
           ),
           eq(schema.projectAppConnections.scope, "personal"),
           eq(schema.projectAppConnections.userId, input.userId),
-          eq(schema.projectAppConnections.isDefault, true)
-        )
+          eq(schema.projectAppConnections.isDefault, true),
+        ),
       );
     await transaction
       .insert(schema.projectAppConnections)
@@ -267,7 +154,7 @@ export async function attachGoogleCalendarConnectionToProject(input: {
         where: (table, { and: all, eq: equals }) =>
           all(
             equals(table.environmentId, project.environmentId),
-            equals(table.appKey, GOOGLE_WORKSPACE_PROVIDER_KEY)
+            equals(table.appKey, GOOGLE_WORKSPACE_PROVIDER_KEY),
           ),
       });
     for (const grant of environmentGrants) {
@@ -351,7 +238,7 @@ export async function getGoogleCalendarProjectStatus(input: {
           and(
             eq(table.projectId, input.projectId),
             eq(table.connectionId, connection.id),
-            eq(table.appKey, GOOGLE_WORKSPACE_PROVIDER_KEY)
+            eq(table.appKey, GOOGLE_WORKSPACE_PROVIDER_KEY),
           ),
       })
     : [];
@@ -359,18 +246,18 @@ export async function getGoogleCalendarProjectStatus(input: {
     where: (table, { and, eq }) =>
       and(
         eq(table.id, input.projectId),
-        eq(table.organizationId, input.organizationId)
+        eq(table.organizationId, input.organizationId),
       ),
     columns: { environmentId: true },
   });
-  const [environmentGrants, attachment] = await Promise.all([
+  const [environmentGrants, attachment, registration] = await Promise.all([
     project
       ? knowledgeDb.query.environmentAppCapabilityGrants.findMany({
           where: (table, { and, eq, inArray }) =>
             and(
               eq(table.environmentId, project.environmentId),
               eq(table.appKey, GOOGLE_WORKSPACE_PROVIDER_KEY),
-              inArray(table.capabilityKey, [...GOOGLE_CALENDAR_CAPABILITIES])
+              inArray(table.capabilityKey, [...GOOGLE_CALENDAR_CAPABILITIES]),
             ),
         })
       : Promise.resolve([]),
@@ -383,23 +270,29 @@ export async function getGoogleCalendarProjectStatus(input: {
               equals(table.connectionId, connection.id),
               equals(table.scope, "personal"),
               equals(table.userId, input.userId),
-              equals(table.isDefault, true)
+              equals(table.isDefault, true),
             ),
           columns: { connectionId: true },
         })
       : Promise.resolve(undefined),
+    resolvePlatformOAuthRegistration("google_workspace"),
   ]);
   return {
-    configured: Boolean(
-      process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+    configured: registration.status === "ready",
+    linked: Boolean(
+      connection &&
+      connection.status !== "disconnected" &&
+      hasGoogleWorkspacePackScopes({
+        pack: "calendar",
+        grantedScopes: connection.scopes,
+      }),
     ),
-    linked: connection?.status === "connected",
     projectConnected: Boolean(attachment),
     shareAvailability: rows.some(
       (row) =>
         row.audience === "project" &&
         row.capabilityKey === "calendar.availability.read" &&
-        row.enabled
+        row.enabled,
     ),
     needsReconnect: connection?.status === "degraded",
     providerLogin: connection?.externalAccountLabel ?? null,
@@ -411,9 +304,9 @@ export async function getGoogleCalendarProjectStatus(input: {
           (grant) =>
             grant.capabilityKey === capabilityKey &&
             grant.enabled &&
-            grant.approvalMode !== "deny"
+            grant.approvalMode !== "deny",
         ),
-      })
+      }),
     ),
   };
 }
@@ -440,7 +333,7 @@ export async function setGoogleCalendarAvailabilitySharing(input: {
             equals(table.appKey, GOOGLE_WORKSPACE_PROVIDER_KEY),
             equals(table.ownerType, "personal"),
             equals(table.userId, input.userId),
-            equals(table.status, "connected"),
+            inArray(table.status, ["connected", "degraded"]),
           ),
         columns: { id: true },
       }),
@@ -499,11 +392,11 @@ export async function disconnectGoogleCalendarFromProject(input: {
           eq(schema.projectAppConnections.projectId, input.projectId),
           eq(
             schema.projectAppConnections.appKey,
-            GOOGLE_WORKSPACE_PROVIDER_KEY
+            GOOGLE_WORKSPACE_PROVIDER_KEY,
           ),
           eq(schema.projectAppConnections.connectionId, connection.id),
-          eq(schema.projectAppConnections.userId, input.userId)
-        )
+          eq(schema.projectAppConnections.userId, input.userId),
+        ),
       );
     await transaction
       .delete(schema.projectAppUserCapabilities)
@@ -513,9 +406,9 @@ export async function disconnectGoogleCalendarFromProject(input: {
           eq(schema.projectAppUserCapabilities.connectionId, connection.id),
           eq(
             schema.projectAppUserCapabilities.appKey,
-            GOOGLE_WORKSPACE_PROVIDER_KEY
-          )
-        )
+            GOOGLE_WORKSPACE_PROVIDER_KEY,
+          ),
+        ),
       );
   });
 }

@@ -132,6 +132,11 @@ export function resolveDesktopBuilderConfiguration(
         filter: ["**/*"],
       },
       {
+        from: path.join(desktopRoot, ".desktop-browser-runtime"),
+        to: "browser-runtime",
+        filter: ["**/*"],
+      },
+      {
         from: path.join(desktopRoot, "static"),
         to: "static",
       },

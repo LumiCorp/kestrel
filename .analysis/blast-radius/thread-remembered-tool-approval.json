@@ -1,0 +1,161 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2026-08-26T10:35:33Z",
+  "change": {
+    "intent": "Add a user-scoped, thread-scoped remembered approval for Ask First tools. The approval card offers Decline, Approve Once, and Remember Approval without changing Environment or Project policy.",
+    "inScope": [
+      "Approval-card decision contract and labels",
+      "Atomic persistence of the current decision and remembered tool approval",
+      "Thread, actor, tool, and authority binding",
+      "Runtime policy resolution for later invocations in the same thread",
+      "Thread-lifetime cleanup, invalidation, projection, audit, and full hosted verification",
+      "Removal of the Environment Apps Always Approve detour"
+    ],
+    "protected": [
+      "Environment Automatic, Ask First, and Blocked policy meanings",
+      "Project and subject restrictions",
+      "Per-invocation prepared-call identity and effect audit",
+      "Tool-minimum and runtime-strict approvals that cannot be remembered",
+      "Exact payload binding for the current approval",
+      "Consume-before-provider behavior",
+      "Other threads, users, projects, and environments"
+    ]
+  },
+  "workspaceRevision": "b36756002321b7a7e942d9a08799e7b01fa387f3",
+  "readiness": "ready",
+  "readinessReason": "The product behavior, affected services, versioned stable tool identity, persisted remembered-approval record, and typed Web-to-runtime evidence boundary are settled. Implementation must start from evidence revision b367560 or a verified descendant because the design-artifact worktree was at eaf690d when the analysis was captured.",
+  "directImpacts": [
+    {
+      "surface": "Approval domain and policy resolution",
+      "effect": "Add remembered approval as a separate layer after Environment and Project Ask First resolution. It can satisfy an eligible ask but cannot override deny, subject restriction, tool minimum, or explicit runtime strictness.",
+      "evidenceIds": ["E1", "E2", "E3"]
+    },
+    {
+      "surface": "Approval interaction contract",
+      "effect": "Replace the optional boolean decision with an explicit decline, approve_once, or remember_approval decision for runtime approvals while preserving compatibility for old interactions.",
+      "evidenceIds": ["E4", "E5"]
+    },
+    {
+      "surface": "Web persistence",
+      "effect": "Persist a remembered approval keyed by organization, thread, authenticated user, stable tool identity, and authority revision in the same transaction as the current exact decision.",
+      "evidenceIds": ["E6", "E7"]
+    },
+    {
+      "surface": "Hosted worker and shared runtime",
+      "effect": "Load active remembered approvals for the current actor and thread, carry typed evidence into the runtime, and apply it when preparing later calls.",
+      "evidenceIds": ["E3", "E8", "E9"]
+    },
+    {
+      "surface": "Approval card",
+      "effect": "Render Decline, Approve Once, and Remember Approval whenever an eligible Ask First decision is required. Do not add a separate remembered-approval management surface.",
+      "evidenceIds": ["E4"]
+    }
+  ],
+  "indirectImpacts": [
+    {
+      "surface": "Environment Apps approval-return flow",
+      "effect": "Remove approval-card deep links and return-context code whose only purpose is the misleading Always Approve flow. Independent Environment policy management remains.",
+      "evidenceIds": ["E10"]
+    },
+    {
+      "surface": "Mobile approval API",
+      "effect": "Carry the same three-way decision and remembered state. Mobile cannot remain a boolean-only approval surface.",
+      "evidenceIds": ["E11"]
+    },
+    {
+      "surface": "Dynamic and revised tools",
+      "effect": "A remembered approval must fail closed when descriptor or approval-authority identity changes. Dynamic tools require a stable provider identity before they are eligible.",
+      "evidenceIds": ["E3", "E12"]
+    },
+    {
+      "surface": "Deployment",
+      "effect": "Requires a PostgreSQL migration, Web deployment, shared protocol/runtime package update, and hosted turn-worker image. CLI, Desktop, and TUI receive compatible shared types but need not persist hosted remembered approvals.",
+      "evidenceIds": ["E5", "E7", "E8"]
+    },
+    {
+      "surface": "Existing hosted approval redesign",
+      "effect": "Remember Approval must bind to the prepare-before-wait design. It cannot authorize reconstructed continuation calls or become another resume snapshot.",
+      "evidenceIds": ["E13"]
+    }
+  ],
+  "unknowns": [],
+  "requiredValidation": [
+    "Policy matrix proving Environment Automatic, Ask First, and Blocked behavior with and without remembered approval",
+    "PostgreSQL transaction test proving remember_approval records the exact current decision and one actor-thread-tool grant atomically",
+    "Cross-user, cross-thread, cross-tool, and stale-authority rejection tests",
+    "Full hosted path proving first ask, Remember Approval, and automatic later invocations for the life of the thread",
+    "New-thread path proving the same tool asks again",
+    "Worker-restart and credential-rotation proof using the same remembered approval",
+    "Mobile and Web contract parity",
+    "Migration and old-interaction compatibility proof",
+    "Production telemetry proving no new use of the Environment Apps approval-return flow before deletion"
+  ],
+  "contextPack": {
+    "objective": "Implement remembered approval as a user-thread-tool authorization layer beneath Environment Ask First and above exact per-invocation approval.",
+    "evidenceIds": ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "E13"],
+    "relevantPaths": [
+      "src/mode/contracts.ts",
+      "src/kestrel/contracts/tool-contract.ts",
+      "src/kestrel/contracts/tool-invocation.ts",
+      "tools/runtime/UnifiedToolRegistry.ts",
+      "tools/contracts.ts",
+      "agents/reference-react/src/steps/acter/policyGates.ts",
+      "packages/protocol/src/execution.ts",
+      "apps/web/drizzle/schema.ts",
+      "apps/web/lib/turns/store.ts",
+      "apps/web/lib/turns/process-runtime.ts",
+      "apps/web/lib/agent/kestrel-runtime-core.ts",
+      "apps/web/lib/apps/runtime-approval-policy.ts",
+      "apps/web/lib/chat/thread-turn-request-contract.ts",
+      "apps/web/app/api/threads/[id]/route.ts",
+      "apps/web/app/api/mobile/v1/threads/[id]/interactions/[checkpointId]/route.ts",
+      "apps/web/components/chatbot/interaction-panel.tsx"
+    ],
+    "interfaces": [
+      "Thread approval decision: decline | approve_once | remember_approval",
+      "StableToolApprovalIdentityV1: tool ID, descriptor contract revision, approval-authority revision",
+      "RememberedToolApprovalV1: version, record ID, organization ID, thread ID, actor user ID, stable tool identity, source interaction ID, creation time",
+      "PreparedToolCallV1 current exact invocation",
+      "ToolApprovalDispositionV1 baseline and remembered result",
+      "Thread interaction response envelope and runtime turn payload"
+    ],
+    "runtimeConstraints": [
+      "Remembered approval never changes Environment or Project policy",
+      "Deny, disabled capability, subject restriction, tool minimum, and explicit runtime strictness override remembered approval",
+      "Future calls are newly prepared and audited; the original payload binding is never reused",
+      "Only the authenticated user who selected Remember Approval can consume it",
+      "Tool or approval-authority revision changes invalidate the remembered approval",
+      "Remembered approval follows the thread and is deleted with it"
+    ],
+    "allowedActions": [
+      "Add versioned contracts and additive persistence",
+      "Add Web and worker resolution of remembered approval",
+      "Replace approval-card options",
+      "Add thread-lifetime cleanup and lifecycle projection",
+      "Remove old Always Approve detour after compatibility gates pass"
+    ],
+    "prohibitedActions": [
+      "Do not mutate Environment or Project policy from Remember Approval",
+      "Do not key remembered approval by payload or run credentials",
+      "Do not let one collaborator's remembered approval authorize another collaborator",
+      "Do not bypass tool minimum, subject restriction, runtime strictness, or deny",
+      "Do not reconstruct a tool call after approval",
+      "Do not retain temporary compatibility paths without removal gates"
+    ]
+  },
+  "evidence": [
+    {"id": "E1", "level": "declared", "source": "User clarification in current thread", "claim": "Ask First tools offer Decline, Approve Once, and Remember Approval; remembered approval acts as automatic for that tool in that thread."},
+    {"id": "E2", "level": "observed current", "source": "src/mode/contracts.ts:13-75", "claim": "Current policy resolves Environment, Project, subject, tool minimum, and runtime strictness but has no thread remembered layer."},
+    {"id": "E3", "level": "observed current", "source": "tools/runtime/UnifiedToolRegistry.ts:1022-1084", "claim": "The registry derives tool approval disposition from hosted app policy and descriptor-bound authority."},
+    {"id": "E4", "level": "observed current", "source": "apps/web/components/chatbot/interaction-panel.tsx:17-85,450-499", "claim": "The Web response is boolean and the approval card renders Deny, Approve Once, and an Environment Apps Always Approve link or disabled button."},
+    {"id": "E5", "level": "observed current", "source": "apps/web/lib/chat/thread-turn-request-contract.ts:8-58; apps/web/app/api/threads/[id]/route.ts:139-157", "claim": "The Web API accepts an optional approved boolean and forwards it to the durable interaction resolver."},
+    {"id": "E6", "level": "observed current", "source": "apps/web/lib/turns/store.ts:1643-1900", "claim": "The durable resolver already owns an atomic transaction for response message, app decision, interaction status, queue state, and turn event."},
+    {"id": "E7", "level": "observed current", "source": "apps/web/drizzle/schema.ts:4599-4681", "claim": "Thread interactions persist request, response, actor, runtime identity, and lifecycle but no remembered tool approval."},
+    {"id": "E8", "level": "observed current", "source": "tools/contracts.ts:258-276; packages/protocol/src/execution.ts:334-360; cli/runtime/KestrelChatRuntime.ts:3440-3460", "claim": "Hosted policy evidence already crosses profile and runtime contracts, establishing a typed host-to-runtime seam."},
+    {"id": "E9", "level": "observed current", "source": "apps/web/lib/turns/process-runtime.ts:240-280,547-591", "claim": "The worker loads and executes turns under a user identity, which must be corrected to preserve the actual deciding actor."},
+    {"id": "E10", "level": "observed current", "source": "apps/web/lib/apps/runtime-approval-policy.ts:81-116,235-248; apps/web/components/apps/environment-apps-panel.tsx:400-560", "claim": "Current Always Approve navigates to Environment Apps, can change broad policy, and then approves the pending request once."},
+    {"id": "E11", "level": "observed current", "source": "apps/web/app/api/mobile/v1/threads/[id]/interactions/[checkpointId]/route.ts:16-124", "claim": "Mobile also models approval as a binary approve or deny decision."},
+    {"id": "E12", "level": "observed current", "source": "src/kestrel/contracts/tool-contract.ts; tools/runtime/UnifiedToolRegistry.ts:1320-1435", "claim": "Descriptor and activation identity already provide the basis for stable tool revision and fail-closed handler behavior."},
+    {"id": "E13", "level": "declared", "source": ".design/hosted-approval-simplification/notebook.md", "claim": "The selected hosted redesign persists one PreparedToolCallV1 before waiting and removes reconstruction bridges."}
+  ]
+}

@@ -459,8 +459,8 @@ export function ProjectApps({
               )}
               {!(data?.configured || isLoading) && (
                 <p className="mb-4 rounded-md bg-amber-50 px-3 py-2 text-amber-900 text-sm dark:bg-amber-950 dark:text-amber-200">
-                  Google OAuth credentials must be configured before Calendar
-                  can be connected.
+                  A Platform Admin must configure Google Workspace before
+                  Calendar can be connected.
                 </p>
               )}
               <div className="mb-6 flex items-center gap-4">

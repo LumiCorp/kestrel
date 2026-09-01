@@ -22,6 +22,7 @@ import {
 import { useSWRConfig } from "swr";
 import { unstable_serialize } from "swr/infinite";
 import { ChatHeader } from "@/components/chatbot/chat-header";
+import { HostedBrowserViewer } from "@/components/browser/hosted-browser-viewer";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -99,11 +100,16 @@ import {
   type LiveRuntimePresentation,
 } from "./live-runtime-presentation";
 import { Messages } from "./messages";
+import { CollaboratorInspector } from "./collaborator-inspector";
 import { MultimodalInput } from "./multimodal-input";
 import { getThreadHistoryPaginationKey } from "./sidebar-history";
 import { ThreadRouteLoading } from "./thread-route-loading";
 import { toast } from "./toast";
 import type { VisibilityType } from "./visibility-selector";
+import {
+  groupWebCollaboratorMessages,
+  withoutWebCollaboratorMessages,
+} from "@/lib/turns/collaborators";
 
 type ChatController = {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
@@ -590,6 +596,26 @@ function ChatShell({
   composerWorkspaceMode?: "primary" | "isolated";
 }) {
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
+  const [collaboratorInspectorOpen, setCollaboratorInspectorOpen] = useState(false);
+  const [focusComposerRequest, setFocusComposerRequest] = useState(0);
+  const collaborators = useMemo(
+    () => groupWebCollaboratorMessages(messages),
+    [messages],
+  );
+  const conversationMessages = useMemo(
+    () => withoutWebCollaboratorMessages(messages),
+    [messages],
+  );
+
+  useEffect(() => {
+    if (collaborators.length === 0) {
+      setCollaboratorInspectorOpen(false);
+    }
+  }, [collaborators.length]);
+
+  useEffect(() => {
+    setCollaboratorInspectorOpen(false);
+  }, [threadId]);
   const modeSwitchCallbacksRef = useRef({ onInteractionModeChange, onRuntimeInteractionResponse });
   modeSwitchCallbacksRef.current = { onInteractionModeChange, onRuntimeInteractionResponse };
   const modeSwitchCommandAdapterRef = useRef<ReturnType<typeof createKestrelOneConversationCommandAdapter> | undefined>(undefined);
@@ -658,6 +684,8 @@ function ChatShell({
           selectedVisibilityType={selectedVisibilityType}
           threadId={threadId}
           threadTitle={threadTitle}
+          collaborators={collaborators}
+          onOpenCollaborators={() => setCollaboratorInspectorOpen(true)}
         />
 
         <Messages
@@ -667,7 +695,7 @@ function ChatShell({
           isArtifactVisible={isArtifactVisible}
           isReadonly={isReadonly}
           liveRuntimePresentation={liveRuntimePresentation}
-          messages={messages}
+          messages={conversationMessages}
           onFeedbackChange={onFeedbackChange}
           onRefreshConversationState={onRefreshConversationState}
           onRuntimeInteractionResponse={onRuntimeInteractionResponse}
@@ -689,6 +717,10 @@ function ChatShell({
             onRuntimeResponse={onRuntimeInteractionResponse}
             threadId={threadId}
           />
+        )}
+
+        {isReadonly || !threadExists ? null : (
+          <HostedBrowserViewer threadId={threadId} />
         )}
 
         <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl flex-col gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
@@ -725,7 +757,8 @@ function ChatShell({
               conversationState={conversationState}
               input={input}
               interactionMode={interactionMode}
-              messages={messages}
+              messages={conversationMessages}
+              focusRequest={focusComposerRequest}
               modelScopeQuery={modelScopeQuery}
               newTurnDisabledReason={newTurnDisabledReason}
               onInterrupt={onInterrupt}
@@ -753,7 +786,7 @@ function ChatShell({
         addToolApprovalResponse={addToolApprovalResponse}
         feedbackByMessageId={feedbackByMessageId}
         isReadonly={isReadonly}
-        messages={messages}
+        messages={conversationMessages}
         onFeedbackChange={onFeedbackChange}
         regenerate={regenerate}
         selectedVisibilityType={selectedVisibilityType}
@@ -761,6 +794,19 @@ function ChatShell({
         setMessages={setMessages}
         status={status}
         threadId={threadId}
+      />
+      <CollaboratorInspector
+        canAsk={!isReadonly}
+        groups={collaborators}
+        onAsk={(group) => {
+          setCollaboratorInspectorOpen(false);
+          if (input.trim().length === 0) {
+            setInput(`What did ${group.name} find?`);
+          }
+          setFocusComposerRequest((current) => current + 1);
+        }}
+        onOpenChange={setCollaboratorInspectorOpen}
+        open={collaboratorInspectorOpen}
       />
     </>
   );
@@ -1314,7 +1360,7 @@ export function Chat({
             {
               id: messageId,
               role: "user",
-              parts: [{ type: "text", text: interaction.message }],
+              parts: [{ type: "text", text: interaction.message ?? "Approval response" }],
               metadata: turnId ? { kestrelTurnId: turnId } : undefined,
             },
             {

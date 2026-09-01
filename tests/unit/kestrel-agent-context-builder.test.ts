@@ -264,6 +264,47 @@ test("Kestrel agent context builder seeds original task before bootstrapped repl
   assert.equal(nextContext.modelInput.taskInstruction, "keep going");
 });
 
+test("Kestrel agent context builder keeps approval decisions out of the model transcript", () => {
+  const originalTask = "Run exactly: printf 'approval-e2e\\n' > approval-e2e.txt.";
+  const context = buildKestrelAgentContext({
+    reactState: {
+      modelTranscript: {
+        version: 1,
+        windowId: 1,
+        items: [
+          {
+            id: "mt_1_0001_user",
+            createdAt: "2026-08-27T12:00:00.000Z",
+            kind: "user",
+            content: originalTask,
+          },
+        ],
+      },
+      activeTurnIntent: {
+        objective: originalTask,
+      },
+    },
+    eventPayload: {
+      message: "Approve once",
+      decision: "approve_once",
+      submissionKind: "resume",
+      resumeBlockedRun: true,
+    },
+    eventType: "user.approval",
+    goal: originalTask,
+    interactionMode: "build",
+  });
+
+  assert.equal(context.modelInput.taskInstruction, originalTask);
+  const transcript = context.modelInput.transcript as Record<string, unknown>;
+  const items = transcript.items as Array<Record<string, unknown>>;
+  assert.deepEqual(
+    items.filter((item) => item.kind === "user").map((item) => item.content),
+    [originalTask],
+  );
+  assert.doesNotMatch(JSON.stringify(context.messages), /Approve once/u);
+});
+
 test("Kestrel agent context builder promotes active exec_command process evidence", () => {
   const context = buildKestrelAgentContext({
     reactState: {
@@ -550,6 +591,7 @@ test("Kestrel deliberator system prompt keeps context and build-loop contracts e
   assert.match(systemPrompt, /Never call an unrelated tool to test or verify tool operation/u);
   assert.match(systemPrompt, /merely satisfy the structured tool-call requirement/u);
   assert.match(systemPrompt, /truthfully describes that exact selected action/u);
+  assert.doesNotMatch(systemPrompt, /Named collaborators:/u);
 });
 
 test("V2 compaction prompt and schema contain semantic text only", () => {
@@ -1216,6 +1258,76 @@ test("Kestrel agent context builder owns tool-result summaries and model context
     status: "OK",
   });
   assert.equal(genericContext.text.match(/- status:/gu)?.length, 1);
+});
+
+test("Browser open results keep continuation authority model-visible", () => {
+  const context = buildKestrelAgentToolModelContext({
+    toolName: "browser.open",
+    toolInput: {
+      mode: "qa",
+      target: {
+        kind: "desktop_project_run",
+        projectId: "project-1",
+        runId: "run-1",
+        urlId: "preview-1",
+      },
+    },
+    toolOutput: {
+      version: "browser_tool_result_v1",
+      operation: "browser.open",
+      outcome: "opened",
+      session: {
+        sessionId: "browser-session-1",
+        generation: 7,
+        state: "ready",
+        mode: "qa",
+        expiresAt: "2026-09-01T14:00:00.000Z",
+      },
+    },
+    rawOutputRef: "tool-output:browser-open",
+    status: "OK",
+  });
+
+  assert.match(context.text, /Tool result: browser\.open/u);
+  assert.match(context.text, /- sessionId: browser-session-1/u);
+  assert.match(context.text, /- generation: 7/u);
+  assert.match(context.text, /- state: ready/u);
+  assert.match(context.text, /- mode: qa/u);
+});
+
+test("Browser capture results keep screenshot evidence model-visible", () => {
+  const context = buildKestrelAgentToolModelContext({
+    toolName: "browser.capture",
+    toolInput: {
+      sessionId: "browser-session-1",
+      generation: 7,
+      kind: "screenshot",
+    },
+    toolOutput: {
+      version: "browser_tool_result_v1",
+      operation: "browser.capture",
+      sessionId: "browser-session-1",
+      generation: 7,
+      artifact: {
+        id: "file-browser-screenshot",
+        kind: "browser-screenshot",
+        mediaType: "image/png",
+        bytes: 128,
+        sha256: "a".repeat(64),
+      },
+      normalizedOrigin: "http://127.0.0.1:4317",
+      capturedAt: "2026-09-01T14:00:00.000Z",
+      boundary: "untrusted_browser_content",
+    },
+    rawOutputRef: "tool-output:browser-capture",
+    status: "OK",
+  });
+
+  assert.match(context.text, /- sessionId: browser-session-1/u);
+  assert.match(context.text, /- generation: 7/u);
+  assert.match(context.text, /- artifactId: file-browser-screenshot/u);
+  assert.match(context.text, /- artifactKind: browser-screenshot/u);
+  assert.match(context.text, /- artifactMediaType: image\/png/u);
 });
 
 test("shared filesystem evidence contract requires exact-path inspection", () => {

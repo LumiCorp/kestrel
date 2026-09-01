@@ -5,6 +5,8 @@ import { pathToFileURL } from "node:url";
 export interface FakeOpenRouterServer {
   url: string;
   requests: Array<{ schemaName: string; userMessage: string }>;
+  waitForBrowserQaCapture(timeoutMs?: number): Promise<void>;
+  releaseBrowserQa(): void;
   close(): Promise<void>;
 }
 
@@ -15,20 +17,34 @@ interface FakeOpenRouterScenarioState {
   delayResolvers: Set<() => void>;
   failedAttempts: number;
   waitingCallId?: string | undefined;
+  commitStep: number;
+  browserQaStep: number;
+  browserQaSession?: { sessionId: string; generation: number } | undefined;
+  browserQaCaptureReady: boolean;
+  browserQaReleased: boolean;
+  browserQaCaptureWaiters: Set<() => void>;
+  browserQaReleaseWaiters: Set<() => void>;
 }
 
 export async function startFakeOpenRouterServer(
-  input: { port?: number | undefined } = {}
+  input: { port?: number | undefined; model?: string | undefined } = {},
 ): Promise<FakeOpenRouterServer> {
+  const model = input.model ?? PRODUCT_CONTRACT_MODEL;
   const requests: Array<{ schemaName: string; userMessage: string }> = [];
   const scenarios: FakeOpenRouterScenarioState = {
     delayReleased: false,
     delayResolvers: new Set(),
     failedAttempts: 0,
+    commitStep: 0,
+    browserQaStep: 0,
+    browserQaCaptureReady: false,
+    browserQaReleased: false,
+    browserQaCaptureWaiters: new Set(),
+    browserQaReleaseWaiters: new Set(),
   };
   const sockets = new Set<Socket>();
   const server = http.createServer((request, response) => {
-    void handleFakeOpenRouterRequest(request, response, requests, scenarios);
+    void handleFakeOpenRouterRequest(request, response, requests, scenarios, model);
   });
   server.on("connection", (socket) => {
     sockets.add(socket);
@@ -53,7 +69,29 @@ export async function startFakeOpenRouterServer(
   return {
     url: `http://127.0.0.1:${address.port}`,
     requests,
+    async waitForBrowserQaCapture(timeoutMs = 30_000) {
+      if (scenarios.browserQaCaptureReady) return;
+      await new Promise<void>((resolve, reject) => {
+        const done = () => {
+          clearTimeout(timer);
+          scenarios.browserQaCaptureWaiters.delete(done);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          scenarios.browserQaCaptureWaiters.delete(done);
+          reject(new Error("Timed out waiting for Browser QA capture."));
+        }, timeoutMs);
+        scenarios.browserQaCaptureWaiters.add(done);
+      });
+    },
+    releaseBrowserQa() {
+      scenarios.browserQaReleased = true;
+      for (const resolve of scenarios.browserQaReleaseWaiters) resolve();
+      scenarios.browserQaReleaseWaiters.clear();
+    },
     async close() {
+      for (const resolve of scenarios.browserQaReleaseWaiters) resolve();
+      scenarios.browserQaReleaseWaiters.clear();
       for (const socket of sockets) {
         socket.destroy();
       }
@@ -74,7 +112,8 @@ async function handleFakeOpenRouterRequest(
   request: IncomingMessage,
   response: ServerResponse,
   requests: Array<{ schemaName: string; userMessage: string }>,
-  scenarios: FakeOpenRouterScenarioState
+  scenarios: FakeOpenRouterScenarioState,
+  model: string,
 ): Promise<void> {
   if (request.url === "/health") {
     response.writeHead(200, { "content-type": "application/json" });
@@ -87,20 +126,48 @@ async function handleFakeOpenRouterRequest(
       "content-type": "application/json",
       connection: "close",
     });
-    response.end(JSON.stringify({
-      data: [{
-        id: PRODUCT_CONTRACT_MODEL,
-        context_length: 131_072,
-        top_provider: {
-          context_length: 131_072,
-          max_completion_tokens: 16_384,
-        },
-      }],
-    }));
+    response.end(
+      JSON.stringify({
+        data: [
+          {
+            id: model,
+            context_length: 131_072,
+            top_provider: {
+              context_length: 131_072,
+              max_completion_tokens: 16_384,
+            },
+            supported_parameters: [
+              "response_format",
+              "structured_outputs",
+              "tools",
+              "tool_choice",
+              "parallel_tool_calls",
+              "strict_tool_inputs",
+            ],
+            endpoints: [
+              {
+                id: "product-contract-provider",
+                supported_parameters: [
+                  "response_format",
+                  "structured_outputs",
+                  "tools",
+                  "tool_choice",
+                  "parallel_tool_calls",
+                  "strict_tool_inputs",
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
     return;
   }
 
-  if (request.url === "/api/v1/model/z-ai/glm-5.2" && request.method === "GET") {
+  if (
+    request.url === `/api/v1/model/${model}` &&
+    request.method === "GET"
+  ) {
     const authorization = request.headers.authorization;
     if (authorization !== "Bearer product-contract-key") {
       response.writeHead(401, {
@@ -114,17 +181,40 @@ async function handleFakeOpenRouterRequest(
       "content-type": "application/json",
       connection: "close",
     });
-    response.end(JSON.stringify({
-      data: {
-        id: PRODUCT_CONTRACT_MODEL,
-        canonical_slug: PRODUCT_CONTRACT_MODEL,
-        context_length: 131_072,
-        top_provider: {
+    response.end(
+      JSON.stringify({
+        data: {
+          id: model,
+          canonical_slug: model,
           context_length: 131_072,
-          max_completion_tokens: 16_384,
+          top_provider: {
+            context_length: 131_072,
+            max_completion_tokens: 16_384,
+          },
+          supported_parameters: [
+            "response_format",
+            "structured_outputs",
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "strict_tool_inputs",
+          ],
+          endpoints: [
+            {
+              id: "product-contract-provider",
+              supported_parameters: [
+                "response_format",
+                "structured_outputs",
+                "tools",
+                "tool_choice",
+                "parallel_tool_calls",
+                "strict_tool_inputs",
+              ],
+            },
+          ],
         },
-      },
-    }));
+      }),
+    );
     return;
   }
 
@@ -155,6 +245,14 @@ async function handleFakeOpenRouterRequest(
     scenarios.delayResolvers.clear();
     scenarios.delayReleased = false;
     scenarios.failedAttempts = 0;
+    scenarios.commitStep = 0;
+    scenarios.browserQaStep = 0;
+    scenarios.browserQaCaptureReady = false;
+    scenarios.browserQaReleased = false;
+    scenarios.browserQaCaptureWaiters.clear();
+    for (const resolve of scenarios.browserQaReleaseWaiters) resolve();
+    scenarios.browserQaReleaseWaiters.clear();
+    delete scenarios.browserQaSession;
     delete scenarios.waitingCallId;
     response.writeHead(204, { connection: "close" });
     response.end();
@@ -195,29 +293,34 @@ async function handleFakeOpenRouterRequest(
     typeof lastMessage === "string" ? parseFakeModelMessage(lastMessage) : {};
   const userMessage = trimForUnderstanding(
     parsedMessage.userMessage ??
-      (typeof lastMessage === "string" ? lastMessage : "")
+      (typeof lastMessage === "string" ? lastMessage : ""),
   );
   const modeSource = `${body}\n${rawMessage}\n${userMessage}`;
   const toolNames = new Set(
     parsed.tools?.flatMap((tool) =>
-      tool.function?.name ? [tool.function.name] : []
-    ) ?? []
+      tool.function?.name ? [tool.function.name] : [],
+    ) ?? [],
   );
   const finalizeToolName = toolNames.has("kestrel.finalize")
     ? "kestrel.finalize"
     : toolNames.has("kestrel_finalize")
       ? "kestrel_finalize"
       : null;
+  const qualificationToolName = toolNames.has("probe_tool")
+    ? "probe_tool"
+    : null;
   const askUserToolName = toolNames.has("kestrel.ask_user")
     ? "kestrel.ask_user"
     : toolNames.has("kestrel_ask_user")
       ? "kestrel_ask_user"
       : null;
-  const toolMode = finalizeToolName !== null;
+  const toolMode = finalizeToolName !== null || qualificationToolName !== null;
   const callId = parsed.metadata?.callId ?? `request-${requests.length}`;
-  process.stderr.write(
-    `[fake-openrouter] url=${request.url ?? "none"} schema=${schemaName ?? "none"} tools=${[...toolNames].join(",") || "none"}\n`
-  );
+  if (modeSource.includes("fake-openrouter-commit-journey") === false) {
+    process.stderr.write(
+      `[fake-openrouter] url=${request.url ?? "none"} schema=${schemaName ?? "none"} tools=${[...toolNames].join(",") || "none"}\n`,
+    );
+  }
 
   if (
     request.url?.endsWith("/v1/responses") &&
@@ -234,7 +337,7 @@ async function handleFakeOpenRouterRequest(
         object: "response",
         created_at: Math.floor(Date.now() / 1000),
         status: "completed",
-        model: PRODUCT_CONTRACT_MODEL,
+        model,
         output: [
           {
             id: `fake-message-${requests.length}`,
@@ -251,7 +354,7 @@ async function handleFakeOpenRouterRequest(
           },
         ],
         usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
-      })
+      }),
     );
     return;
   }
@@ -264,10 +367,51 @@ async function handleFakeOpenRouterRequest(
 
   requests.push({ schemaName: schemaName ?? "tool_call", userMessage });
 
+  if (schemaName === "kestrel_user_reply_intent") {
+    response.writeHead(200, {
+      "content-type": "application/json",
+      connection: "close",
+    });
+    response.end(JSON.stringify({
+      model,
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            kind: "mode_switch",
+            proceed: true,
+            interactionMode: "build",
+            confidence: "high",
+            reason: "operator_approved_mode_switch",
+          }),
+        },
+      }],
+    }));
+    return;
+  }
+
+  if (schemaName === "qualification_probe") {
+    response.writeHead(200, {
+      "content-type": "application/json",
+      connection: "close",
+    });
+    response.end(
+      JSON.stringify({
+        model,
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { content: JSON.stringify({ ok: true }) },
+          },
+        ],
+      }),
+    );
+    return;
+  }
+
   if (schemaName !== undefined && schemaName !== "kestrel_agent_action") {
     response.writeHead(400, { "content-type": "application/json" });
     response.end(
-      JSON.stringify({ error: `unsupported schema '${schemaName}'` })
+      JSON.stringify({ error: `unsupported schema '${schemaName}'` }),
     );
     return;
   }
@@ -301,11 +445,11 @@ async function handleFakeOpenRouterRequest(
     });
     response.end(
       JSON.stringify({
-        model: PRODUCT_CONTRACT_MODEL,
+        model,
         choices: [
           { message: { content: JSON.stringify({ notNextAction: true }) } },
         ],
-      })
+      }),
     );
     return;
   }
@@ -318,17 +462,177 @@ async function handleFakeOpenRouterRequest(
     }
   }
 
+  if (modeSource.includes("fake-openrouter-commit-journey")) {
+    const modeToolName = toolNames.has("kestrel_request_mode_switch")
+      ? "kestrel_request_mode_switch"
+      : toolNames.has("kestrel.request_mode_switch")
+        ? "kestrel.request_mode_switch"
+        : undefined;
+    if (modeToolName !== undefined && toolNames.has("exec_command") === false) {
+      scenarios.commitStep = 0;
+      writeToolCallResponse(response, parsed.stream === true, model, {
+        callId: `fake-mode-call-${requests.length}`,
+        name: modeToolName,
+        input: {
+          requiredToolClass: "external_side_effect",
+          requiredCapabilities: ["dev.shell"],
+          reason: "A local Git commit requires the Build shell.",
+        },
+      });
+      return;
+    }
+    if (toolNames.has("exec_command")) {
+      const commands = [
+        "git status --short",
+        "git add -- intended.txt",
+        "git diff --cached --name-status",
+        "git commit -m 'Commit intended change'",
+        "git rev-parse HEAD",
+        "git status --short",
+      ];
+      const command = commands[scenarios.commitStep];
+      if (command !== undefined) {
+        scenarios.commitStep += 1;
+        writeToolCallResponse(response, parsed.stream === true, model, {
+          callId: `fake-commit-call-${requests.length}`,
+          name: "exec_command",
+          input: {
+            command,
+            assistantProgress: `Running commit verification step ${scenarios.commitStep}.`,
+          },
+        });
+        return;
+      }
+      const commitFinalizeToolName = toolNames.has("kestrel_finalize")
+        ? "kestrel_finalize"
+        : toolNames.has("kestrel.finalize")
+          ? "kestrel.finalize"
+          : undefined;
+      if (commitFinalizeToolName !== undefined) {
+        writeToolCallResponse(response, parsed.stream === true, model, {
+          callId: `fake-commit-finalize-${requests.length}`,
+          name: commitFinalizeToolName,
+          input: {
+            status: "goal_satisfied",
+            message: "Committed intended.txt and left unrelated files untracked.",
+          },
+        });
+        return;
+      }
+    }
+  }
+
+  const browserQaInput = [
+    userMessage,
+    ...(parsed.messages?.flatMap((message) =>
+      typeof message.content === "string" ? [message.content] : []
+    ) ?? []),
+  ].map(parseBrowserQaInput).find((candidate) => candidate !== undefined);
+  if (browserQaInput !== undefined) {
+    if (scenarios.browserQaStep === 0) {
+      scenarios.browserQaStep = 1;
+      writeToolCallResponse(response, parsed.stream === true, model, {
+        callId: `fake-browser-open-${requests.length}`,
+        name: "browser_open",
+        input: {
+          mode: "qa",
+          target: {
+            kind: "desktop_project_run",
+            projectId: browserQaInput.projectId,
+            runId: browserQaInput.runId,
+            urlId: browserQaInput.urlId,
+          },
+        },
+      });
+      return;
+    }
+    scenarios.browserQaSession ??= findBrowserQaSession(parsed.messages);
+    if (scenarios.browserQaSession === undefined) {
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "missing Browser QA session result" }));
+      return;
+    }
+    if (scenarios.browserQaStep === 1) {
+      if (!hasSuccessfulBrowserQaResult(parsed.messages, "browser.open")) {
+        writeBrowserQaError(response, "Browser QA open did not return OK evidence");
+        return;
+      }
+      scenarios.browserQaStep = 2;
+      writeToolCallResponse(response, parsed.stream === true, model, {
+        callId: `fake-browser-capture-${requests.length}`,
+        name: "browser_capture",
+        input: {
+          ...scenarios.browserQaSession,
+          kind: "screenshot",
+        },
+      });
+      return;
+    }
+    if (scenarios.browserQaStep === 2) {
+      if (
+        !hasSuccessfulBrowserQaResult(
+          parsed.messages,
+          "browser.capture",
+          "- artifactKind: browser-screenshot",
+        )
+      ) {
+        writeBrowserQaError(
+          response,
+          `Browser QA capture did not return screenshot evidence: ${browserQaResultDiagnostic(parsed.messages, "browser.capture")}`,
+        );
+        return;
+      }
+      scenarios.browserQaCaptureReady = true;
+      for (const resolve of scenarios.browserQaCaptureWaiters) resolve();
+      scenarios.browserQaCaptureWaiters.clear();
+      if (!scenarios.browserQaReleased) {
+        await new Promise<void>((resolve) => {
+          scenarios.browserQaReleaseWaiters.add(resolve);
+        });
+      }
+      scenarios.browserQaStep = 3;
+      writeToolCallResponse(response, parsed.stream === true, model, {
+        callId: `fake-browser-close-${requests.length}`,
+        name: "browser_close",
+        input: scenarios.browserQaSession,
+      });
+      return;
+    }
+    if (finalizeToolName !== null) {
+      if (
+        !hasSuccessfulBrowserQaResult(
+          parsed.messages,
+          "browser.close",
+          "- state: closed",
+        )
+      ) {
+        writeBrowserQaError(response, "Browser QA close did not return terminal evidence");
+        return;
+      }
+      writeToolCallResponse(response, parsed.stream === true, model, {
+        callId: `fake-browser-finalize-${requests.length}`,
+        name: finalizeToolName,
+        input: {
+          status: "goal_satisfied",
+          message: "BROWSER_QA_CANARY_OK",
+        },
+      });
+      return;
+    }
+  }
+
   if (toolMode) {
     const waiting =
       modeSource.includes("fake-openrouter-wait") &&
       (scenarios.waitingCallId === undefined ||
         scenarios.waitingCallId === callId);
     if (waiting) scenarios.waitingCallId ??= callId;
-    const providerToolName = waiting ? askUserToolName : finalizeToolName;
+    const providerToolName =
+      qualificationToolName ?? (waiting ? askUserToolName : finalizeToolName);
     if (!providerToolName) {
       response.writeHead(400, { "content-type": "application/json" });
       response.end(
-        JSON.stringify({ error: `missing tool '${providerToolName}'` })
+        JSON.stringify({ error: `missing tool '${providerToolName}'` }),
       );
       return;
     }
@@ -338,12 +642,14 @@ async function handleFakeOpenRouterRequest(
       type: "function_call",
       name,
       arguments: JSON.stringify(
-        waiting
-          ? { prompt: "Which workspace should I inspect?" }
-          : {
-              status: "goal_satisfied",
-              message: "Hello from the fake cross-surface model.",
-            }
+        qualificationToolName !== null
+          ? {}
+          : waiting
+            ? { prompt: "Which workspace should I inspect?" }
+            : {
+                status: "goal_satisfied",
+                message: "Hello from the fake cross-surface model.",
+              },
       ),
     };
     if (parsed.stream === true) {
@@ -353,7 +659,7 @@ async function handleFakeOpenRouterRequest(
       });
       response.write(
         `data: ${JSON.stringify({
-          model: PRODUCT_CONTRACT_MODEL,
+          model,
           choices: [
             {
               delta: {
@@ -372,7 +678,7 @@ async function handleFakeOpenRouterRequest(
               },
             },
           ],
-        })}\n\n`
+        })}\n\n`,
       );
       response.end("data: [DONE]\n\n");
       return;
@@ -383,7 +689,7 @@ async function handleFakeOpenRouterRequest(
     });
     response.end(
       JSON.stringify({
-        model: PRODUCT_CONTRACT_MODEL,
+        model,
         output: [{ content: [functionCall] }],
         choices: [
           {
@@ -404,7 +710,7 @@ async function handleFakeOpenRouterRequest(
             },
           },
         ],
-      })
+      }),
     );
     return;
   }
@@ -415,7 +721,7 @@ async function handleFakeOpenRouterRequest(
   });
   response.end(
     JSON.stringify({
-      model: PRODUCT_CONTRACT_MODEL,
+      model,
       choices: [
         {
           message: {
@@ -454,13 +760,166 @@ async function handleFakeOpenRouterRequest(
                     },
                     reason:
                       "This deterministic test path can answer directly without tools.",
-                  }
+                  },
             ),
           },
         },
       ],
-    })
+    }),
   );
+}
+
+function parseBrowserQaInput(value: string): {
+  projectId: string;
+  runId: string;
+  urlId: string;
+} | undefined {
+  const match = /fake-openrouter-browser-qa\s+(\{[^{}]+\})/u.exec(value);
+  if (match?.[1] === undefined) return;
+  try {
+    const parsed = JSON.parse(match[1]) as Record<string, unknown>;
+    if (
+      typeof parsed.projectId === "string" &&
+      typeof parsed.runId === "string" &&
+      typeof parsed.urlId === "string"
+    ) {
+      return {
+        projectId: parsed.projectId,
+        runId: parsed.runId,
+        urlId: parsed.urlId,
+      };
+    }
+  } catch {
+    return;
+  }
+  return;
+}
+
+function findBrowserQaSession(
+  messages: Array<{ content?: string | undefined }> | undefined,
+): { sessionId: string; generation: number } | undefined {
+  for (const message of [...(messages ?? [])].reverse()) {
+    if (typeof message.content !== "string") continue;
+    const candidates = [message.content];
+    try {
+      candidates.push(JSON.stringify(JSON.parse(message.content)));
+    } catch {
+      // Tool results may be wrapped in explanatory text.
+    }
+    for (const candidate of candidates) {
+      const normalized = candidate.replaceAll('\\"', '"');
+      if (!normalized.includes("browser.open")) continue;
+      const sessionId = (
+        /"sessionId"\s*:\s*"([^"\\]+)"/u.exec(normalized)?.[1]
+        ?? /^- sessionId:\s*(\S+)$/mu.exec(normalized)?.[1]
+      );
+      const generation = Number.parseInt(
+        /"generation"\s*:\s*(\d+)/u.exec(normalized)?.[1]
+          ?? /^- generation:\s*(\d+)$/mu.exec(normalized)?.[1]
+          ?? "",
+        10,
+      );
+      if (
+        sessionId !== undefined &&
+        Number.isSafeInteger(generation) &&
+        generation > 0
+      ) {
+        return { sessionId, generation };
+      }
+    }
+  }
+  return;
+}
+
+function hasSuccessfulBrowserQaResult(
+  messages: Array<{ content?: string | undefined }> | undefined,
+  operation: string,
+  requiredEvidence?: string,
+): boolean {
+  return (messages ?? []).some((message) =>
+    typeof message.content === "string" &&
+    message.content.includes(`Tool result: ${operation}`) &&
+    message.content.includes("- status: OK") &&
+    (requiredEvidence === undefined || message.content.includes(requiredEvidence))
+  );
+}
+
+function browserQaResultDiagnostic(
+  messages: Array<{ content?: string | undefined }> | undefined,
+  operation: string,
+): string {
+  const result = (messages ?? [])
+    .flatMap((message) => typeof message.content === "string" ? [message.content] : [])
+    .find((content) => content.includes(`Tool result: ${operation}`));
+  if (result === undefined) return "matching tool result absent";
+  return result
+    .split("\n")
+    .filter((line) => /^Tool result:|^- (?:status|operation|outcome|sessionId|generation|artifact)/u.test(line))
+    .join(" | ")
+    .slice(0, 1_000);
+}
+
+function writeBrowserQaError(response: ServerResponse, error: string): void {
+  response.writeHead(400, { "content-type": "application/json" });
+  response.end(JSON.stringify({ error }));
+}
+
+function writeToolCallResponse(
+  response: ServerResponse,
+  stream: boolean,
+  model: string,
+  call: { callId: string; name: string; input: Record<string, unknown> },
+): void {
+  const args = JSON.stringify(call.input);
+  if (stream) {
+    response.writeHead(200, {
+      "content-type": "text/event-stream",
+      connection: "close",
+    });
+    response.write(`data: ${JSON.stringify({
+      model,
+      choices: [{
+        delta: {
+          role: "assistant",
+          tool_calls: [{
+            index: 0,
+            id: call.callId,
+            type: "function",
+            function: { name: call.name, arguments: args },
+          }],
+        },
+      }],
+    })}\n\n`);
+    response.end("data: [DONE]\n\n");
+    return;
+  }
+  response.writeHead(200, {
+    "content-type": "application/json",
+    connection: "close",
+  });
+  response.end(JSON.stringify({
+    model,
+    output: [{
+      content: [{
+        id: call.callId,
+        type: "function_call",
+        name: call.name,
+        arguments: args,
+      }],
+    }],
+    choices: [{
+      finish_reason: "tool_calls",
+      message: {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: call.callId,
+          type: "function",
+          function: { name: call.name, arguments: args },
+        }],
+      },
+    }],
+  }));
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<string> {
@@ -496,8 +955,8 @@ function parseFakeModelMessage(content: string): {
 }
 
 function extractTaskSource(content: string): string | undefined {
-  const match = content.match(/^Task source:\s*\n(?<task>.+)$/imu);
-  return match?.groups?.task?.trim();
+  const match = content.match(/^Task source:\s*\n(.+)$/imu);
+  return match?.[1]?.trim();
 }
 
 function trimForUnderstanding(value: string): string {
@@ -566,7 +1025,7 @@ function readPort(args: string[]): number | undefined {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   void main().catch((error) => {
     process.stderr.write(
-      `${error instanceof Error ? error.message : String(error)}\n`
+      `${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.exitCode = 1;
   });

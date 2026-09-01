@@ -58,7 +58,50 @@ test("Kestrel One does not guess a mode switch without the explicit contract", (
   assert.doesNotMatch(html, /Switch to Build/u);
 });
 
-test("Kestrel One shows policy-owned approval choices and Environment guidance", () => {
+test("approval cards omit the generic review instruction", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[
+        {
+          ...interaction,
+          kind: "approval",
+          eventType: "user.approval",
+          prompt: "Review this action before it runs.",
+          requestEnvelope: {},
+        },
+      ]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+
+  assert.match(html, /Approval required/u);
+  assert.doesNotMatch(html, /Review this action before it runs\./u);
+});
+
+test("unstructured approval cards preserve their specific prompt", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[
+        {
+          ...interaction,
+          kind: "approval",
+          eventType: "user.approval",
+          prompt: "Approve deployment to production?",
+          requestEnvelope: {},
+        },
+      ]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+
+  assert.match(html, /Approve deployment to production\?/u);
+});
+
+test("legacy approval cards keep their explicit compatibility actions", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[
@@ -96,11 +139,9 @@ test("Kestrel One shows policy-owned approval choices and Environment guidance",
             environmentApprovalMode: "ask",
             projectApprovalMode: "ask",
             minimumApprovalMode: "auto",
+            rememberApprovalEligible: true,
             reasonCode: "environment_policy",
             canEditProject: true,
-            alwaysApprovalAction: "open_environment_apps",
-            environmentAppsHref:
-              "/organization/environments/environment-1/apps/tavily",
           },
         },
       ]}
@@ -110,25 +151,146 @@ test("Kestrel One shows policy-owned approval choices and Environment guidance",
     />,
   );
 
-  assert.match(html, />Deny</u);
-  assert.match(html, />Approve Once</u);
-  assert.match(html, />Always Approve</u);
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.match(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
+  assert.doesNotMatch(html, />Always Approve</u);
   assert.match(html, /Start a multi-source Tavily research task/u);
-  assert.match(html, /internet\.research/u);
+  assert.doesNotMatch(html, /internet\.research/u);
   assert.match(html, /Research request/u);
   assert.match(html, /Kestrel/u);
-  assert.match(html, /Environment: Ask first/u);
-  assert.match(html, /Project: Ask first/u);
-  assert.match(html, /Environment Apps is configured to ask/u);
-  assert.match(
-    html,
-    /organization\/environments\/environment-1\/apps\/tavily/u,
-  );
-  assert.doesNotMatch(html, /disabled=""[^>]*>Always Approve/u);
+  assert.doesNotMatch(html, /Environment: Ask first/u);
+  assert.doesNotMatch(html, /Project: Ask first/u);
+  assert.match(html, /Your environment asks before this action runs/u);
+  assert.doesNotMatch(html, /organization\/environments/u);
   assert.doesNotMatch(html, />Approve<\/button>/u);
 });
 
-test("Always Approve always hands persistent policy changes to Environment Apps", () => {
+test("strict V4 approval cards advertise exact decisions", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        prompt: "Review this action before it runs.",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v4",
+          approval: { toolName: "test.tool" },
+        },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "built-in",
+          capabilityKey: "test.tool",
+          capabilityDisplayName: "Test tool",
+          environmentApprovalMode: "ask",
+          projectApprovalMode: "ask",
+          minimumApprovalMode: "auto",
+          reasonCode: "environment_policy",
+          canEditProject: false,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />
+  );
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.match(html, />Allow once</u);
+  assert.doesNotMatch(html, /Review this action before it runs\./u);
+  assert.doesNotMatch(html, />Allow for thread</u);
+  assert.doesNotMatch(html, />Deny</u);
+});
+
+test("Browser grant cards expose one Allow and remember action", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        prompt: "Review this action before it runs.",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v4",
+          approval: {
+            toolName: "browser.request_grant",
+            presentation: {
+              title: "Allow this Browser domain",
+              summary: "Allow this HTTPS apex and its subdomains now and remember it.",
+              fields: [
+                { label: "Domain", value: "example.com" },
+                { label: "Scope", value: "Apex and subdomains" },
+                { label: "Port", value: "443 (HTTPS)" },
+                { label: "Person", value: "person-stable-id-1" },
+                { label: "Environment", value: "environment-stable-id-1" },
+              ],
+              policy: { rememberApprovalEligible: true },
+              browserDomainGrant: {
+                version: "browser_domain_grant_approval_v1",
+                requestingActorId: "person-stable-id-1",
+                environmentId: "environment-stable-id-1",
+                actionLabel: "Allow and remember",
+              },
+              requestingPersonDisplayName: "Unrelated Person Name",
+              requestingPersonEmail: "unrelated-person@example.test",
+            },
+          },
+        },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "built_in.browser",
+          capabilityKey: "request_grant",
+          capabilityDisplayName: "Request a Browser domain",
+          environmentApprovalMode: "ask",
+          projectApprovalMode: "ask",
+          minimumApprovalMode: "ask",
+          rememberApprovalEligible: true,
+          reasonCode: "environment_policy",
+          canEditProject: false,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Allow and remember</u);
+  assert.equal(html.match(/>Allow and remember/g)?.length, 1);
+  assert.doesNotMatch(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
+  assert.match(html, /example\.com/u);
+  assert.match(html, /Apex and subdomains/u);
+  assert.match(html, /person-stable-id-1/u);
+  assert.match(html, /environment-stable-id-1/u);
+  assert.doesNotMatch(html, /Unrelated Person Name/u);
+  assert.doesNotMatch(html, /unrelated-person@example\.test/u);
+});
+
+test("a strict hosted card with missing current authority exposes only Decline", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v4",
+          approval: { toolName: "exec_command" },
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.doesNotMatch(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
+});
+
+test("strict V4 cards advertise Remember Approval when policy permits it", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[
@@ -137,6 +299,7 @@ test("Always Approve always hands persistent policy changes to Environment Apps"
           kind: "approval",
           eventType: "user.approval",
           requestEnvelope: {
+            version: "runner_hosted_tool_approval_interaction_v4",
             approval: {
               toolCallId: "tool-call-2",
               toolName: "internet.research",
@@ -147,11 +310,12 @@ test("Always Approve always hands persistent policy changes to Environment Apps"
                 warnings: [],
                 policy: {
                   mode: "ask",
-                  reasonCode: "project_restriction",
+                  reasonCode: "environment_policy",
                   explanation:
-                    "This Project narrows the Environment policy to Ask first.",
+                    "Environment Apps is configured to ask before this capability runs.",
                   authorityKind: "hosted_app_policy",
                   authorityRevision: "revision-2",
+                  rememberApprovalEligible: true,
                 },
               },
             },
@@ -162,14 +326,12 @@ test("Always Approve always hands persistent policy changes to Environment Apps"
             appKey: "tavily",
             capabilityKey: "research",
             capabilityDisplayName: "Run research",
-            environmentApprovalMode: "auto",
+            environmentApprovalMode: "ask",
             projectApprovalMode: "ask",
             minimumApprovalMode: "auto",
-            reasonCode: "project_restriction",
+            rememberApprovalEligible: true,
+            reasonCode: "environment_policy",
             canEditProject: true,
-            alwaysApprovalAction: "open_environment_apps",
-            environmentAppsHref:
-              "/organization/environments/environment-1/apps/tavily",
           },
         },
       ]}
@@ -179,14 +341,224 @@ test("Always Approve always hands persistent policy changes to Environment Apps"
     />,
   );
 
-  assert.match(
-    html,
-    /href="\/organization\/environments\/environment-1\/apps\/tavily"/u,
-  );
-  assert.match(html, /This Project narrows the Environment policy/u);
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.match(html, />Allow once</u);
+  assert.match(html, />Allow for thread</u);
+  assert.doesNotMatch(html, />Always Approve</u);
+  assert.doesNotMatch(html, /href="\/organization\/environments/u);
+  assert.match(html, /Your environment asks before this action runs/u);
 });
 
-test("hosted approval lifecycle distinguishes recorded, accepted, and failed authorization", () => {
+test("Project Ask First V4 cards expose Remember Approval", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v4",
+          approval: {
+            toolName: "internet.research",
+            presentation: {
+              policy: {
+                reasonCode: "project_restriction",
+                rememberApprovalEligible: true,
+              },
+            },
+          },
+        },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "tavily",
+          capabilityKey: "research",
+          capabilityDisplayName: "Run research",
+          environmentApprovalMode: "auto",
+          projectApprovalMode: "ask",
+          minimumApprovalMode: "auto",
+          rememberApprovalEligible: true,
+          reasonCode: "project_restriction",
+          canEditProject: true,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.match(html, />Allow once</u);
+  assert.match(html, />Allow for thread</u);
+});
+
+test("a refreshed V4 card hides Remember Approval after Project policy becomes Blocked", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v4",
+          approval: {
+            toolName: "internet.research",
+            presentation: {
+              policy: {
+                reasonCode: "environment_policy",
+                rememberApprovalEligible: true,
+              },
+            },
+          },
+        },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "tavily",
+          capabilityKey: "research",
+          capabilityDisplayName: "Run research",
+          environmentApprovalMode: "ask",
+          projectApprovalMode: "deny",
+          minimumApprovalMode: "auto",
+          rememberApprovalEligible: false,
+          reasonCode: "environment_policy",
+          canEditProject: true,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.doesNotMatch(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
+});
+
+test("a refreshed built-in exec_command card hides Remember after Subject policy becomes Ask", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v4",
+          approval: {
+            toolName: "exec_command",
+            presentation: {
+              policy: {
+                reasonCode: "environment_policy",
+                rememberApprovalEligible: true,
+              },
+            },
+          },
+        },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "built_in.workspace",
+          capabilityKey: "executeCommand",
+          capabilityDisplayName: "Execute command",
+          environmentApprovalMode: "ask",
+          projectApprovalMode: "ask",
+          minimumApprovalMode: "auto",
+          subjectApprovalMode: "ask",
+          rememberApprovalEligible: false,
+          reasonCode: "environment_policy",
+          canEditProject: true,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.match(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
+});
+
+test("a refreshed built-in exec_command card exposes only Decline after Subject policy blocks it", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v4",
+          approval: {
+            toolName: "exec_command",
+            presentation: { policy: { rememberApprovalEligible: true } },
+          },
+        },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "built_in.workspace",
+          capabilityKey: "executeCommand",
+          capabilityDisplayName: "Execute command",
+          environmentApprovalMode: "ask",
+          projectApprovalMode: "ask",
+          minimumApprovalMode: "auto",
+          subjectApprovalMode: "deny",
+          rememberApprovalEligible: false,
+          reasonCode: "environment_policy",
+          canEditProject: true,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.doesNotMatch(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
+});
+
+test("a refreshed V4 card exposes only Decline after its exact resource closes", () => {
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v4",
+          approval: {
+            toolName: "internet.research",
+            presentation: {
+              policy: { reasonCode: "environment_policy" },
+            },
+          },
+        },
+        approvalPolicy: {
+          projectId: "project-1",
+          environmentId: "environment-1",
+          appKey: "tavily",
+          capabilityKey: "research",
+          capabilityDisplayName: "Run research",
+          environmentApprovalMode: "ask",
+          projectApprovalMode: "ask",
+          minimumApprovalMode: "auto",
+          approvalResourceAvailable: false,
+          reasonCode: "environment_policy",
+          canEditProject: true,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(html, />Don&#x27;t allow</u);
+  assert.doesNotMatch(html, />Allow once</u);
+  assert.doesNotMatch(html, />Allow for thread</u);
+});
+
+test("hosted approval lifecycle hides settled cards and retains retryable failures", () => {
   const approval = {
     ...interaction,
     kind: "approval" as const,
@@ -216,8 +588,7 @@ test("hosted approval lifecycle distinguishes recorded, accepted, and failed aut
       threadId="thread-1"
     />,
   );
-  assert.match(processing, /Decision recorded/u);
-  assert.doesNotMatch(processing, /Approve Once/u);
+  assert.equal(processing, "");
 
   const accepted = renderToStaticMarkup(
     <InteractionPanel
@@ -236,7 +607,7 @@ test("hosted approval lifecycle distinguishes recorded, accepted, and failed aut
       threadId="thread-1"
     />,
   );
-  assert.match(accepted, /Authorization accepted/u);
+  assert.equal(accepted, "");
 
   const failed = renderToStaticMarkup(
     <InteractionPanel
@@ -257,12 +628,12 @@ test("hosted approval lifecycle distinguishes recorded, accepted, and failed aut
       threadId="thread-1"
     />,
   );
-  assert.match(failed, /Authorization failed — operation not executed/u);
-  assert.match(failed, /EXTERNAL_APPROVAL_IDENTITY_MISMATCH/u);
-  assert.match(failed, /Retry authorization/u);
+  assert.match(failed, /Not run/u);
+  assert.doesNotMatch(failed, /EXTERNAL_APPROVAL_IDENTITY_MISMATCH/u);
+  assert.match(failed, /Try again/u);
 });
 
-test("Always Approve is unavailable for runtime-strict approvals", () => {
+test("Remember Approval is unavailable for runtime-strict V4 approvals", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
       interactions={[
@@ -271,6 +642,7 @@ test("Always Approve is unavailable for runtime-strict approvals", () => {
           kind: "approval",
           eventType: "user.approval",
           requestEnvelope: {
+            version: "runner_hosted_tool_approval_interaction_v4",
             approval: {
               toolCallId: "tool-call-runtime-strict",
               toolName: "internet.research",
@@ -303,9 +675,6 @@ test("Always Approve is unavailable for runtime-strict approvals", () => {
             canEditProject: true,
             approvalRequirementExplanation:
               "The current runtime mode requires approval for every tool call.",
-            alwaysApprovalAction: "unavailable",
-            environmentAppsHref:
-              "/organization/environments/environment-1/apps/tavily",
           },
         },
       ]}
@@ -315,9 +684,10 @@ test("Always Approve is unavailable for runtime-strict approvals", () => {
     />,
   );
 
-  assert.match(html, /disabled=""[^>]*>Always Approve/u);
+  assert.doesNotMatch(html, />Allow for thread</u);
+  assert.doesNotMatch(html, />Always Approve</u);
   assert.doesNotMatch(html, /href="\/organization\/environments/u);
-  assert.match(html, /current runtime mode requires approval/u);
+  assert.match(html, /This action always needs your approval/u);
 });
 
 test("approval cards never render arbitrary raw tool input", () => {
@@ -344,4 +714,43 @@ test("approval cards never render arbitrary raw tool input", () => {
   );
   assert.match(html, /Request details are hidden/u);
   assert.doesNotMatch(html, /must-not-render|also-hidden/u);
+});
+
+test("exec command approval cards stay compact and clamp long command previews", () => {
+  const command = `python3 - <<'PY'\n${"print('long command')\n".repeat(20)}PY`;
+  const html = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...interaction,
+        kind: "approval",
+        eventType: "user.approval",
+        requestEnvelope: {
+          version: "runner_hosted_tool_approval_interaction_v4",
+          approval: {
+            toolName: "exec_command",
+            presentation: {
+              title: "Run command",
+              fields: [
+                { label: "Command", value: command },
+                { label: "Working directory", value: "." },
+                { label: "Environment access", value: "[]" },
+              ],
+              policy: { reasonCode: "environment_policy" },
+            },
+          },
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+
+  assert.match(html, /gap-0/u);
+  assert.match(html, /py-0/u);
+  assert.match(html, /line-clamp-2/u);
+  assert.match(html, /title="python3 - &lt;&lt;&#x27;PY&#x27;/u);
+  assert.match(html, />Folder</u);
+  assert.match(html, />Environment</u);
+  assert.match(html, />None</u);
 });
