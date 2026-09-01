@@ -1871,7 +1871,7 @@ test("committed external effects never become retryable after output-contract fa
   assert.equal(result.outcome.retryable, false);
 });
 
-test("ambiguous external-effect handler failures remain terminal", async () => {
+test("external-effect failures remain terminal without an explicit durable dispatch protocol", async () => {
   const module = createEmbeddedToolModuleV1({
     ownerId: "kestrel.tests",
     toolId: "test.external.throwing",

@@ -15,6 +15,9 @@ export * from "./daemon.js";
 export * from "./connectionManager.js";
 export * from "./desktopUiState.js";
 export * from "./desktopAttachments.js";
+export * from "./browserEgressProxy.js";
+export * from "./desktopBrowserService.js";
+export * from "./desktopBrowserViewerEvidence.js";
 export {
   LOCAL_CORE_CREDENTIAL_IDS,
   parseLocalCoreCredentialId,

@@ -10,6 +10,7 @@ import {
   ResendReceivingProviderError,
   type ResendReceivingDomain,
   type ResendReceivingProvider,
+  type ResendWebhookCreateIntent,
   type ResendWebhookDecommissionProvider,
   type ResendWebhookCreateRecoveryProvider,
 } from "./receiving-provider";
@@ -188,9 +189,10 @@ export async function saveReceivingConnection(input: {
     requestedBaseUrl: input.webhookBaseUrl,
     env: input.env,
   });
-  const webhookTargetChanged =
-    JSON.stringify(existing?.webhookCreateIntent ?? null) !==
-    JSON.stringify(webhookIntent);
+  const webhookTargetChanged = !sameWebhookCreateIntent(
+    existing?.webhookCreateIntent ?? null,
+    webhookIntent,
+  );
   const suppliedApiKey = input.apiKey?.trim() || undefined;
   const storedEncryptedApiKey = existing?.encryptedApiKey ?? null;
   const existingApiKey = decryptStoredApiKey({
@@ -541,6 +543,17 @@ function sameReceivingCheckpoint(
       observed.webhookCreateAttemptedAt?.getTime() &&
     locked.providerWebhookId === observed.providerWebhookId &&
     locked.encryptedSigningSecret === observed.encryptedSigningSecret
+  );
+}
+
+function sameWebhookCreateIntent(
+  left: ResendWebhookCreateIntent | null,
+  right: ResendWebhookCreateIntent,
+) {
+  return (
+    left?.endpoint === right.endpoint &&
+    left.events.length === right.events.length &&
+    left.events.every((event, index) => event === right.events[index])
   );
 }
 

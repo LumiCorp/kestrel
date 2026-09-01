@@ -1,8 +1,34 @@
+import { CONVERSATION_ATTACHMENT_MAX_FILE_BYTES } from "@kestrel-agents/conversation";
+
 import type {
   ToolApprovalDispositionV1,
   ToolApprovalReasonCode,
 } from "../mode/contracts.js";
 import { isRememberApprovalEligibleV1 } from "../mode/contracts.js";
+import { canonicalizePublicBrowserDestination } from "../browser/domainAuthority.js";
+import {
+  parseBrowserDownloadPreparedEffectV1,
+  parseBrowserUploadPreparedEffectV1,
+} from "../browser/contracts.js";
+import type { PreparedToolInputAdapterV1 } from "../kestrel/contracts/tool-invocation.js";
+
+export interface BrowserDomainGrantApprovalPresentationV1 {
+  version: "browser_domain_grant_approval_v1";
+  sessionId: string;
+  sessionMode: "operator";
+  canonicalDomain: string;
+  scheme: "https";
+  scope: "apex_and_subdomains";
+  includeSubdomains: true;
+  port: 443;
+  ownerEffect: "requesting_person";
+  environmentEffect: "future_eligible_projects_in_environment";
+  sessionEffect: "immediate";
+  actionLabel: "Allow and remember";
+  requestingActorId?: string | undefined;
+  environmentId?: string | undefined;
+  approvalAuthorityRevision?: string | undefined;
+}
 
 export interface ToolApprovalPresentationV1 {
   title: string;
@@ -17,6 +43,7 @@ export interface ToolApprovalPresentationV1 {
     authorityRevision: string;
     rememberApprovalEligible: boolean;
   };
+  browserDomainGrant?: BrowserDomainGrantApprovalPresentationV1 | undefined;
 }
 
 type Presenter = {
@@ -316,7 +343,12 @@ const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
 export function buildToolApprovalPresentation(input: {
   toolName: string;
   effectiveInput: unknown;
+  inputAdapters?: readonly PreparedToolInputAdapterV1[] | undefined;
   disposition?: ToolApprovalDispositionV1 | undefined;
+  hostedApprovalScope?: {
+    requestingActorId: string;
+    environmentId: string;
+  } | undefined;
 }): ToolApprovalPresentationV1 {
   const presenterDefinition = PRESENTERS[input.toolName];
   const record = readRecord(input.effectiveInput);
@@ -328,6 +360,133 @@ export function buildToolApprovalPresentation(input: {
       revision: "legacy-external-confirm",
     },
   };
+  if (input.toolName === "browser.request_grant") {
+    const sessionId = readNonEmptyString(record?.sessionId, "sessionId");
+    const destination = readNonEmptyString(record?.destination, "destination");
+    const authority = canonicalizePublicBrowserDestination(destination);
+    const browserDomainGrant: BrowserDomainGrantApprovalPresentationV1 = {
+      version: "browser_domain_grant_approval_v1",
+      sessionId,
+      sessionMode: "operator",
+      canonicalDomain: authority.canonicalDomain,
+      scheme: authority.scheme,
+      scope: "apex_and_subdomains",
+      includeSubdomains: authority.includeSubdomains,
+      port: authority.port,
+      ownerEffect: "requesting_person",
+      environmentEffect: "future_eligible_projects_in_environment",
+      sessionEffect: "immediate",
+      actionLabel: "Allow and remember",
+      ...(input.hostedApprovalScope === undefined
+        ? {}
+        : {
+            requestingActorId: input.hostedApprovalScope.requestingActorId,
+            environmentId: input.hostedApprovalScope.environmentId,
+            approvalAuthorityRevision: disposition.authority.revision,
+          }),
+    };
+    return {
+      title: "Allow this Browser domain",
+      summary:
+        "Allow this HTTPS apex and its subdomains now and remember it for your eligible Projects in this Environment.",
+      fields: [
+        { label: "Domain", value: authority.canonicalDomain },
+        { label: "Scope", value: "Apex and subdomains" },
+        { label: "Port", value: "443 (HTTPS)" },
+        ...(input.hostedApprovalScope === undefined
+          ? [{ label: "Applies to", value: "You in this Environment" }]
+          : [
+              {
+                label: "Person",
+                value: input.hostedApprovalScope.requestingActorId,
+              },
+              {
+                label: "Environment",
+                value: input.hostedApprovalScope.environmentId,
+              },
+            ]),
+      ],
+      warnings: [
+        "This takes effect in the current Browser Session and future eligible Projects in this Environment.",
+      ],
+      policy: {
+        mode: "ask",
+        reasonCode: disposition.reasonCode,
+        explanation: approvalReasonExplanation(disposition.reasonCode),
+        authorityKind: disposition.authority.kind,
+        authorityRevision: disposition.authority.revision,
+        rememberApprovalEligible: false,
+      },
+      browserDomainGrant,
+    };
+  }
+  if (input.toolName === "browser.upload") {
+    const matches = (input.inputAdapters ?? []).filter(
+      (adapter) => adapter.adapterId === "kestrel.browser-upload-effect:v1",
+    );
+    if (matches.length !== 1) {
+      throw new Error("Browser upload approval is missing exact prepared effect authority.");
+    }
+    const effect = parseBrowserUploadPreparedEffectV1(matches[0]!.metadata);
+    return {
+      title: "Upload attachment",
+      summary: "Upload this active-turn attachment to the selected Browser file input.",
+      fields: [
+        { label: "File", value: effect.filename },
+        {
+          label: "Measured size",
+          value: `${effect.sizeBytes} bytes (${CONVERSATION_ATTACHMENT_MAX_FILE_BYTES / (1024 * 1024)} MiB maximum)`,
+        },
+        { label: "Declared media type", value: `${effect.declaredMediaType} (untrusted metadata)` },
+        { label: "Browser target", value: effect.targetLabel },
+      ],
+      warnings: [
+        "Only this approved attachment is transferred to this exact current file input.",
+      ],
+      policy: {
+        mode: "ask",
+        reasonCode: disposition.reasonCode,
+        explanation: approvalReasonExplanation(disposition.reasonCode),
+        authorityKind: disposition.authority.kind,
+        authorityRevision: disposition.authority.revision,
+        rememberApprovalEligible: false,
+      },
+    };
+  }
+  if (input.toolName === "browser.download") {
+    const matches = (input.inputAdapters ?? []).filter(
+      (adapter) => adapter.adapterId === "kestrel.browser-download-effect:v1",
+    );
+    if (matches.length !== 1) {
+      throw new Error("Browser download approval is missing exact prepared effect authority.");
+    }
+    const effect = parseBrowserDownloadPreparedEffectV1(matches[0]!.metadata);
+    return {
+      title: "Promote browser download",
+      summary: "Publish this quarantined Browser download as one file in the current Thread.",
+      fields: [
+        { label: "File", value: effect.filename },
+        {
+          label: "Measured size",
+          value: `${effect.measuredBytes} bytes (${CONVERSATION_ATTACHMENT_MAX_FILE_BYTES / (1024 * 1024)} MiB maximum)`,
+        },
+        { label: "Declared media type", value: `${effect.declaredMediaType} (untrusted metadata)` },
+        { label: "Source origin", value: effect.normalizedSourceOrigin },
+        { label: "Result", value: "One file in the current Thread" },
+      ],
+      warnings: [
+        "Only this exact completed quarantine item is published. Browser paths and storage locations remain hidden.",
+      ],
+      policy: {
+        mode: "ask",
+        reasonCode: disposition.reasonCode,
+        explanation: approvalReasonExplanation(disposition.reasonCode),
+        authorityKind: disposition.authority.kind,
+        authorityRevision: disposition.authority.revision,
+        rememberApprovalEligible: false,
+      },
+    };
+  }
   const fields =
     presenterDefinition === undefined || record === null
       ? []
@@ -413,6 +572,13 @@ function readRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function readNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`browser.request_grant ${field} is required.`);
+  }
+  return value.trim();
 }
 
 function readPath(record: Record<string, unknown>, path: string): unknown {

@@ -51,7 +51,7 @@ export class RuntimeComposer {
       ) {
         return existing;
       }
-      const record: ThreadAssemblyRecord = {
+      const record = await this.store.appendThreadAssemblyRecord({
         recordId: `assembly-record-${randomUUID()}`,
         threadId: input.thread.threadId,
         bundleId: defaultBundle.bundleId,
@@ -62,8 +62,7 @@ export class RuntimeComposer {
           previousRecordId: existing.record.recordId,
         },
         createdAt: new Date().toISOString(),
-      };
-      await this.store.appendThreadAssemblyRecord(record);
+      });
       return { record, bundle: defaultBundle };
     }
 
@@ -84,7 +83,7 @@ export class RuntimeComposer {
       bundle = defaultBundle;
     }
 
-    const record: ThreadAssemblyRecord = {
+    const record = await this.store.appendThreadAssemblyRecord({
       recordId: `assembly-record-${randomUUID()}`,
       threadId: input.thread.threadId,
       bundleId: bundle?.bundleId ?? "implicit/legacy",
@@ -94,8 +93,7 @@ export class RuntimeComposer {
         implicitLegacy: bundle === undefined,
       },
       createdAt: new Date().toISOString(),
-    };
-    await this.store.appendThreadAssemblyRecord(record);
+    });
     return {
       record,
       ...(bundle !== undefined ? { bundle } : {}),
@@ -480,7 +478,7 @@ export class RuntimeComposer {
     record: ThreadAssemblyRecord;
     bundle: AssemblyBundleRecord;
   }> {
-    const record: ThreadAssemblyRecord = {
+    const record = await this.store.appendThreadAssemblyRecord({
       recordId: `assembly-record-${randomUUID()}`,
       threadId: input.threadId,
       bundleId: input.bundle.bundleId,
@@ -488,8 +486,7 @@ export class RuntimeComposer {
       authority: input.authority,
       ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
       createdAt: new Date().toISOString(),
-    };
-    await this.store.appendThreadAssemblyRecord(record);
+    });
     return {
       record,
       bundle: input.bundle,

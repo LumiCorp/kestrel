@@ -14,6 +14,9 @@
     "typecheck:self": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@kestrel-agents/conversation": "workspace:^",
+    "@kestrel-agents/protocol": "workspace:^",
+    "@kestrel/mcp-security": "workspace:*",
     "@lumi/kestrel-environment-auth": "workspace:*"
   },
   "devDependencies": {

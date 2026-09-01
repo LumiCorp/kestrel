@@ -340,6 +340,8 @@ export async function resolveTurnAttachments(input: {
         attachmentId: row.fileId,
         threadId: turn.threadId,
         filename: row.filename,
+        declaredMediaType: row.declaredMediaType ?? "application/octet-stream",
+        detectedMediaType: row.detectedMediaType ?? row.declaredMediaType ?? "application/octet-stream",
         mimeType: row.detectedMediaType ?? row.declaredMediaType ?? "application/octet-stream",
         sizeBytes: row.sizeBytes,
         sha256: row.sha256!,

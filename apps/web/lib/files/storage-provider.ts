@@ -11,6 +11,7 @@ export type FileStorageProvider = {
     body: Readable;
     contentType: string;
     contentDisposition?: string | undefined;
+    signal?: AbortSignal | undefined;
   }): Promise<void>;
   readBuffer(key: string): Promise<Buffer>;
   readStream(key: string): Promise<NodeJS.ReadableStream>;
@@ -32,6 +33,7 @@ export function getManagedFileStorageProvider(): FileStorageProvider {
         body: input.body,
         contentType: input.contentType,
         ...(input.contentDisposition ? { contentDisposition: input.contentDisposition } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
       });
     },
     readBuffer: async (key) => await storage.getObjectBuffer(key),

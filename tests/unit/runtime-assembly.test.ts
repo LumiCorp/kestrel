@@ -633,6 +633,66 @@ test("RuntimeComposer keeps runtime-internal tools when capability loss narrows 
   assert.equal(recomposed?.bundle?.source, "runtime_derived");
 });
 
+test("RuntimeComposer serializes concurrent changes that observed the same assembly", async () => {
+  const store = new InMemorySessionStore();
+  const catalog = new AssemblyCatalog({
+    store,
+    profile: buildProfile({
+      toolAllowlist: ["fs.read_text", "web.search", "fs.write_text"],
+    }),
+  });
+  const defaultBundle = (await catalog.ensureDefaults()).defaultBundle;
+  assert.notEqual(defaultBundle, undefined);
+  const thread = buildThread("thread-concurrent-assembly-change");
+  await store.ensureSession(thread.sessionId);
+  await store.upsertThread(thread);
+  await store.appendThreadAssemblyRecord({
+    recordId: "assembly-record-concurrent-base",
+    threadId: thread.threadId,
+    bundleId: defaultBundle?.bundleId ?? "missing",
+    cause: "thread_start",
+    authority: "profile",
+    createdAt: "2099-08-28T12:00:00.000Z",
+  });
+  const composer = new RuntimeComposer({
+    store,
+    catalog,
+    policyEvaluator: new AssemblyPolicyEvaluator(),
+  });
+
+  const originalList = store.listThreadAssemblyRecords.bind(store);
+  let waiting: Array<() => void> = [];
+  store.listThreadAssemblyRecords = async (threadId) => {
+    const snapshot = await originalList(threadId);
+    await new Promise<void>((resolve) => {
+      waiting.push(resolve);
+      if (waiting.length === 2) {
+        const pair = waiting;
+        waiting = [];
+        pair.forEach((release) => release());
+      }
+    });
+    return snapshot;
+  };
+
+  const changes = await Promise.all([
+    composer.recomposeForCapabilityLoss({
+      threadId: thread.threadId,
+      availableToolNames: ["fs.read_text"],
+    }),
+    composer.recomposeForCapabilityLoss({
+      threadId: thread.threadId,
+      availableToolNames: ["web.search"],
+    }),
+  ]);
+  store.listThreadAssemblyRecords = originalList;
+
+  assert.deepEqual(
+    changes.map((change) => change?.record.createdAt).sort(),
+    ["2099-08-28T12:00:00.001Z", "2099-08-28T12:00:00.002Z"],
+  );
+});
+
 test("RuntimeComposer appends one canonical assembly transition for legacy Desktop threads", async () => {
   const store = new InMemorySessionStore();
   const legacyBundle = {
@@ -659,7 +719,7 @@ test("RuntimeComposer appends one canonical assembly transition for legacy Deskt
     bundleId: legacyBundle.bundleId,
     cause: "thread_start",
     authority: "profile",
-    createdAt: "2026-07-22T00:00:00.000Z",
+    createdAt: "2099-07-22T00:00:00.000Z",
   });
   const catalog = new AssemblyCatalog({
     store,
@@ -684,6 +744,7 @@ test("RuntimeComposer appends one canonical assembly transition for legacy Deskt
 
   assert.equal(migrated.record.cause, "profile_migration");
   assert.equal(migrated.record.authority, "profile");
+  assert.equal(migrated.record.createdAt, "2099-07-22T00:00:00.001Z");
   assert.equal(migrated.bundle?.metadata?.agentProfileId, "kestrel");
   assert.equal(repeated.record.recordId, migrated.record.recordId);
   assert.equal(

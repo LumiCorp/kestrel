@@ -282,7 +282,11 @@ export interface StepIO {
       modelToolCallId?: string | undefined;
       toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
     },
-  ): Promise<{ effectiveInput: Record<string, unknown> }>;
+  ): Promise<{
+    effectiveInput: Record<string, unknown>;
+    executionClass?: import("../../mode/contracts.js").ToolExecutionClass | undefined;
+    policy?: import("./tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined;
+  }>;
   prepareToolForApproval?(
     name: string,
     input: unknown,

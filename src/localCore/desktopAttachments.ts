@@ -6,14 +6,19 @@ import {
   extractAttachmentTextIsolated,
   isAttachmentTextExtractable,
 } from "@kestrel-agents/files";
+import {
+  CONVERSATION_ATTACHMENT_MAX_COUNT,
+  CONVERSATION_ATTACHMENT_MAX_FILE_BYTES,
+  CONVERSATION_ATTACHMENT_MAX_TURN_BYTES,
+} from "@kestrel-agents/conversation";
 import sharp from "sharp";
 
 import type { RunTurnAttachment } from "../kestrel/contracts/orchestration.js";
 import { resolveLocalCorePaths } from "./home.js";
 
-export const DESKTOP_MAX_ATTACHMENTS_PER_MESSAGE = 20;
-export const DESKTOP_MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
-export const DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES = 500 * 1024 * 1024;
+export const DESKTOP_MAX_ATTACHMENTS_PER_MESSAGE = CONVERSATION_ATTACHMENT_MAX_COUNT;
+export const DESKTOP_MAX_ATTACHMENT_BYTES = CONVERSATION_ATTACHMENT_MAX_FILE_BYTES;
+export const DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES = CONVERSATION_ATTACHMENT_MAX_TURN_BYTES;
 export const DESKTOP_DRAFT_ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_INLINE_TEXT_BYTES = 1024 * 1024;
 const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -116,6 +121,9 @@ export class DesktopAttachmentStore {
     filename: string;
     sourcePath: string;
     mimeType?: string | undefined;
+    sha256?: string | undefined;
+    /** Internal deterministic identity; public file APIs never accept this field. */
+    trustedFileId?: string | undefined;
     now?: Date | undefined;
   }): Promise<DesktopAttachmentMetadata> {
     const sourceInfo = await lstat(input.sourcePath);
@@ -128,6 +136,35 @@ export class DesktopAttachmentStore {
     return this.withMutation(async () => {
       const threadId = requireNonEmpty(input.threadId, "threadId");
       const filename = sanitizeFilename(input.filename);
+      if (
+        input.trustedFileId !== undefined &&
+        !/^file-browser-[0-9a-f]{64}$/u.test(input.trustedFileId)
+      ) {
+        throw new Error("Trusted file ID is invalid.");
+      }
+      if (
+        input.sha256 !== undefined &&
+        !/^[0-9a-f]{64}$/u.test(input.sha256)
+      ) {
+        throw new Error("Attachment hash is invalid.");
+      }
+      const existingIndex = await this.readIndex();
+      const existing = input.trustedFileId === undefined
+        ? undefined
+        : existingIndex.attachments.find((entry) => entry.fileId === input.trustedFileId);
+      if (existing) {
+        if (
+          existing.threadId !== threadId ||
+          existing.filename !== filename ||
+          existing.sizeBytes !== sourceInfo.size ||
+          existing.sha256 !== input.sha256 ||
+          existing.lifecycleState !== "ready" ||
+          await sha256File(path.join(this.blobPath, existing.sha256)) !== existing.sha256
+        ) {
+          throw new Error("Trusted file ID conflicts with an existing attachment.");
+        }
+        return existing;
+      }
       await mkdir(this.rootPath, { recursive: true, mode: 0o700 });
       await mkdir(this.blobPath, { recursive: true, mode: 0o700 });
       const temporary = path.join(this.rootPath, `import-${randomUUID()}.tmp`);
@@ -146,13 +183,16 @@ export class DesktopAttachmentStore {
         }
         const validation = validateAttachmentSample(filename, sample, copiedInfo.size, input.mimeType);
         const sha256 = await sha256File(temporary);
+        if (input.sha256 !== undefined && sha256 !== input.sha256) {
+          throw new Error("Attachment hash does not match its contents.");
+        }
         const blobFile = path.join(this.blobPath, sha256);
         await link(temporary, blobFile).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== "EEXIST") throw error;
         });
         const index = await this.readIndex();
         const createdAt = (input.now ?? new Date()).toISOString();
-        const fileId = `file-${randomUUID()}`;
+        const fileId = input.trustedFileId ?? `file-${randomUUID()}`;
         const metadata: DesktopAttachmentMetadata = {
           fileId,
           attachmentId: fileId,
@@ -254,6 +294,8 @@ export class DesktopAttachmentStore {
           attachmentId: entry.attachmentId,
           threadId: entry.threadId,
           filename: entry.filename,
+          declaredMediaType: entry.declaredMimeType ?? "application/octet-stream",
+          detectedMediaType: entry.detectedMimeType,
           mimeType: entry.mimeType,
           sizeBytes: entry.sizeBytes,
           sha256: entry.sha256,

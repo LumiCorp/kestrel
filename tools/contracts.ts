@@ -37,6 +37,7 @@ import type { TavilyInternetProvider } from "./internet/contracts.js";
 import type { ToolProviderConfigurationResolver } from "./providers/runtimeConfiguration.js";
 import type { Microsoft365ServicePort } from "../src/apps/microsoft365.js";
 import type { GoogleWorkspaceServicePort } from "../src/apps/googleWorkspace.js";
+import type { BrowserServicePort } from "../src/browser/contracts.js";
 
 export type ToolFreshnessClass = "live" | "volatile" | "static" | "runtime";
 export type ToolLatencyClass = "low" | "medium" | "high";
@@ -64,6 +65,8 @@ export interface ToolCapabilityMetadata {
   latencyClass: ToolLatencyClass;
   costClass: ToolCostClass;
   executionClass: ToolExecutionClass;
+  /** Trusted preparation can refine policy or execution class from validated input. */
+  inputDependentPreparation?: boolean | undefined;
   allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: ApprovalCapabilityClass[] | undefined;
@@ -87,6 +90,7 @@ export interface SharedToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  runtimeOutputSchema?: Record<string, unknown> | undefined;
   outputContract?: ModelToolContract | undefined;
   resultNormalizerId?: string | undefined;
   capability: ToolCapabilityMetadata;
@@ -130,10 +134,25 @@ export interface RuntimeToolRunContext {
   projectId?: string | undefined;
   approvalId?: string | undefined;
   threadId?: string | undefined;
+  /** Trusted active durable turn identity; never populated from tool input. */
+  turnId?: string | undefined;
+  /** Metadata-only attachment authority for the active turn. */
+  activeTurnAttachments?: readonly RuntimeToolAttachmentMetadata[] | undefined;
   activeTaskId?: string | undefined;
   delegationId?: string | undefined;
   delegationDepth?: number | undefined;
   rootDelegationId?: string | undefined;
+}
+
+export interface RuntimeToolAttachmentMetadata {
+  attachmentId: string;
+  filename: string;
+  /** User-declared, untrusted media type. */
+  declaredMediaType: string;
+  /** Host-validated media type. */
+  detectedMediaType: string;
+  sizeBytes: number;
+  sha256: string;
 }
 
 export interface DelegationTaskSnapshot {
@@ -254,6 +273,7 @@ export interface SharedToolContext {
   providerConfigurations?: ToolProviderConfigurationResolver | undefined;
   microsoft365Service?: Microsoft365ServicePort | undefined;
   googleWorkspaceService?: GoogleWorkspaceServicePort | undefined;
+  browserService?: BrowserServicePort | undefined;
   /** @deprecated Transitional compatibility for callers not yet using providerConfigurations. */
   internetEnv?: NodeJS.ProcessEnv | undefined;
   strictFinalizeProvenance?: boolean | undefined;
@@ -261,6 +281,8 @@ export interface SharedToolContext {
   codeExecutionService?: CodeExecutionServicePort | undefined;
   /** Gateway-owned raw-output sink; capability tools invoke it before teardown. */
   persistCompletedCapabilityResult?: ((rawOutput: unknown) => Promise<void>) | undefined;
+  /** Gateway-owned dispatch acknowledgement for exact external-effect outcomes. */
+  acknowledgeExternalEffect?: (() => Promise<void>) | undefined;
   sandboxCapabilityRuntime?: (
     Omit<SandboxCapabilityRuntimeContext, "sessionId" | "runId" | "toolCallId" | "policy" | "approval" | "parentAuthorization"> & {
       /** Set only by the trusted prepared-call path in UnifiedToolRegistry. */
@@ -322,7 +344,29 @@ export type SharedToolHandler = (input: unknown) => Promise<AgentToolResult>;
 
 export interface SharedToolModule {
   definition: SharedToolDefinition;
-  createHandler(context: SharedToolContext): SharedToolRawHandler;
+  /** Trusted runtime capability for crash-safe external-effect dispatch recovery. */
+  durableExternalEffectDispatch?:
+    | import("../src/io/ToolInvocationSupport.js").DurableExternalEffectDispatchV1
+    | undefined;
+  createHandler(
+    context: SharedToolContext,
+    prepared?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1 | undefined,
+  ): SharedToolRawHandler;
+  resolveExecutionClass?(input: Record<string, unknown>): ToolExecutionClass;
+  prepareInputAdapter?(
+    input: Record<string, unknown>,
+    context?: SharedToolContext | undefined,
+  ):
+    | import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1
+    | Promise<import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1>;
+  releasePrepared?(
+    prepared: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+    context: SharedToolContext,
+  ): Promise<void> | void;
+  resolvePolicy?(
+    context: SharedToolContext,
+    input: Record<string, unknown>,
+  ): Promise<import("../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1>;
   normalizeResult?(output: unknown, input: unknown): SharedToolNormalizedResult;
 }
 
@@ -361,6 +405,7 @@ export interface ToolCatalog {
   createRawHandlers(
     names: string[],
     context: SharedToolContext,
+    prepared?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1 | undefined,
   ): Record<string, SharedToolRawHandler>;
   createResultNormalizers(
     names: string[],
@@ -368,6 +413,28 @@ export interface ToolCatalog {
     string,
     (output: unknown, input: unknown) => SharedToolNormalizedResult
   >;
+  resolveExecutionClass(name: string, input: Record<string, unknown>): ToolExecutionClass | undefined;
+  getDurableExternalEffectDispatch(
+    name: string,
+  ): import("../src/io/ToolInvocationSupport.js").DurableExternalEffectDispatchV1 | undefined;
+  prepareInputAdapter(
+    name: string,
+    input: Record<string, unknown>,
+    context?: SharedToolContext | undefined,
+  ):
+    | import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1
+    | Promise<import("../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1>
+    | undefined;
+  releasePrepared(
+    name: string,
+    prepared: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+    context: SharedToolContext,
+  ): Promise<void> | void | undefined;
+  resolvePolicy(
+    name: string,
+    context: SharedToolContext,
+    input: Record<string, unknown>,
+  ): Promise<import("../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined>;
 }
 
 export interface ToolRegistryListOptions {

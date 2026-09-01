@@ -461,7 +461,11 @@ export interface EffectStore {
   claimEffectExecution(
     idempotencyKey: string,
     owner: { runId: string; sessionId: string },
-  ): Promise<"claimed" | "already_claimed" | "terminal">;
+  ): Promise<"claimed" | "already_claimed" | "already_dispatched" | "terminal">;
+  markEffectDispatched(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"dispatched" | "already_dispatched" | "not_claimed" | "terminal">;
   resetPreparedApprovalCleanupEffectExecution(
     idempotencyKey: string,
     owner: { runId: string; sessionId: string },
@@ -933,7 +937,7 @@ export interface ThreadStore {
   upsertAssemblyBundle(record: AssemblyBundleRecord): Promise<void>;
   getAssemblyBundle(bundleId: string): Promise<AssemblyBundleRecord | null>;
   listAssemblyBundles(input?: { source?: AssemblyBundleRecord["source"] | undefined }): Promise<AssemblyBundleRecord[]>;
-  appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<void>;
+  appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<ThreadAssemblyRecord>;
   listThreadAssemblyRecords(threadId: string): Promise<ThreadAssemblyRecord[]>;
   upsertAssemblyChangeProposal(record: AssemblyChangeProposalRecord): Promise<void>;
   getAssemblyChangeProposal(proposalId: string): Promise<AssemblyChangeProposalRecord | null>;
@@ -967,7 +971,7 @@ export interface AssemblyStore {
   upsertAssemblyBundle(record: AssemblyBundleRecord): Promise<void>;
   getAssemblyBundle(bundleId: string): Promise<AssemblyBundleRecord | null>;
   listAssemblyBundles(input?: { source?: AssemblyBundleRecord["source"] | undefined }): Promise<AssemblyBundleRecord[]>;
-  appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<void>;
+  appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<ThreadAssemblyRecord>;
   listThreadAssemblyRecords(threadId: string): Promise<ThreadAssemblyRecord[]>;
   upsertAssemblyChangeProposal(record: AssemblyChangeProposalRecord): Promise<void>;
   getAssemblyChangeProposal(proposalId: string): Promise<AssemblyChangeProposalRecord | null>;

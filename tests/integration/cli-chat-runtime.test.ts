@@ -1857,6 +1857,17 @@ test("KestrelChatRuntime does not persist a rejected mode reply", async () => {
           }],
         }),
         subscribe: () => ({ unsubscribe() {} }),
+        getOperatorThreadView: async () => ({
+          thread: {
+            threadId: "thread-mode-rejected",
+            sessionId: "session-mode-rejected",
+            title: "Rejected mode reply",
+            status: "WAITING" as const,
+            createdAt: now,
+            updatedAt: now,
+          },
+          childThreads: [],
+        }),
         replyToRequest: async () => {
           throw new Error("THREAD_RUN_ALREADY_ACTIVE");
         },
@@ -2038,6 +2049,17 @@ test("KestrelChatRuntime resolves session turns through the canonical orchestrat
       } as unknown as Kestrel;
 
       const threadRuntime = {
+        findMainThreadForSession: async () => ({
+          threadId: "thread-web-main",
+          sessionId: "session-canonical-thread",
+          title: "Main thread",
+          status: "IDLE",
+          metadata: {
+            mainThread: true,
+          },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
         ensureMainThreadForSession: async () => ({
           threadId: "thread-web-main",
           sessionId: "session-canonical-thread",

@@ -17,6 +17,9 @@ export interface EffectExecutionContext {
   // Capability-bearing tool handlers cross the durable boundary before they
   // return, closing the otherwise unobservable post-handler crash window.
   persistCompletedCapabilityResult?: ((output: unknown) => Promise<void>) | undefined;
+  // Explicitly adopted external-effect protocols cross this durable boundary
+  // before the host may dispatch the operation.
+  acknowledgeExternalEffect?: (() => Promise<void>) | undefined;
 }
 
 export type EffectHandler = (

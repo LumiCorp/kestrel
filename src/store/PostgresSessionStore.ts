@@ -1579,7 +1579,7 @@ export class PostgresSessionStore implements SessionStore {
               e.payload_json, e.idempotency_key, e.failure_policy, e.status, e.created_at
          FROM effects e
         WHERE e.session_id = $1
-          AND e.status IN ('PENDING', 'CLAIMED')
+          AND e.status IN ('PENDING', 'CLAIMED', 'DISPATCHED')
         ORDER BY e.id ASC`,
       [sessionId],
     );
@@ -1774,7 +1774,9 @@ export class PostgresSessionStore implements SessionStore {
             : tenantRead.status === "not_found" ? "not_found" : "conflict",
         } as const;
       }
-      if (effect.status === "CLAIMED") return { status: "started" } as const;
+      if (effect.status === "CLAIMED" || effect.status === "DISPATCHED") {
+        return { status: "started" } as const;
+      }
       if (effect.status !== "PENDING") return { status: "conflict" } as const;
       await executor.query(
         `UPDATE effects SET status = 'FAILED' WHERE idempotency_key = $1`,
@@ -1951,7 +1953,7 @@ export class PostgresSessionStore implements SessionStore {
   async claimEffectExecution(
     idempotencyKey: string,
     owner: { runId: string; sessionId: string },
-  ): Promise<"claimed" | "already_claimed" | "terminal"> {
+  ): Promise<"claimed" | "already_claimed" | "already_dispatched" | "terminal"> {
     await this.ensureSchemaV3();
     return this.withTransaction(async (executor) => {
       const effect = await executor.query<{
@@ -1977,7 +1979,11 @@ export class PostgresSessionStore implements SessionStore {
         throw new SandboxCapabilityExactResultConflictError("Effect execution owner or tenant does not match durable authority");
       }
       if (row.status !== "PENDING") {
-        return row.status === "CLAIMED" ? "already_claimed" : "terminal";
+        return row.status === "CLAIMED"
+          ? "already_claimed"
+          : row.status === "DISPATCHED"
+            ? "already_dispatched"
+            : "terminal";
       }
       const claimed = await executor.query(
         `UPDATE effects SET status = 'CLAIMED'
@@ -1988,6 +1994,48 @@ export class PostgresSessionStore implements SessionStore {
         throw new SandboxCapabilityExactResultConflictError("Effect execution claim lost its serialized authority");
       }
       return "claimed";
+    });
+  }
+
+  async markEffectDispatched(
+    idempotencyKey: string,
+    owner: { runId: string; sessionId: string },
+  ): Promise<"dispatched" | "already_dispatched" | "not_claimed" | "terminal"> {
+    await this.ensureSchemaV3();
+    return this.withTransaction(async (executor) => {
+      const effect = await executor.query<{
+        run_id: string;
+        session_id: string;
+        status: PersistedEffect["status"];
+      }>(
+        `SELECT run_id, session_id, status
+           FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
+        [idempotencyKey],
+      );
+      const row = effect.rows[0];
+      if (
+        row === undefined ||
+        row.run_id !== owner.runId ||
+        row.session_id !== owner.sessionId
+      ) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Effect dispatch owner does not match the locked effect",
+        );
+      }
+      if (row.status === "DISPATCHED") return "already_dispatched";
+      if (row.status === "PENDING") return "not_claimed";
+      if (row.status !== "CLAIMED") return "terminal";
+      const dispatched = await executor.query(
+        `UPDATE effects SET status = 'DISPATCHED'
+          WHERE idempotency_key = $1 AND run_id = $2 AND session_id = $3 AND status = 'CLAIMED'`,
+        [idempotencyKey, owner.runId, owner.sessionId],
+      );
+      if (dispatched.rowCount !== 1) {
+        throw new SandboxCapabilityExactResultConflictError(
+          "Effect dispatch acknowledgement lost its serialized authority",
+        );
+      }
+      return "dispatched";
     });
   }
 
@@ -2852,9 +2900,13 @@ export class PostgresSessionStore implements SessionStore {
         if (canonicalStoreJson(recorded) !== canonicalStoreJson(exactInput.result)) {
           throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result conflicts with recorded exact replay output");
         }
-        if (effectRow.status === "PENDING" || effectRow.status === "CLAIMED") {
+        if (
+          effectRow.status === "PENDING" ||
+          effectRow.status === "CLAIMED" ||
+          effectRow.status === "DISPATCHED"
+        ) {
           const completed = await executor.query(
-            `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status IN ('PENDING', 'CLAIMED')`,
+            `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status IN ('PENDING', 'CLAIMED', 'DISPATCHED')`,
             [exactInput.toolCallId],
           );
           if (completed.rowCount !== 1) {
@@ -2880,7 +2932,7 @@ export class PostgresSessionStore implements SessionStore {
         ],
       );
       const completed = await executor.query(
-        `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status IN ('PENDING', 'CLAIMED')`,
+        `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status IN ('PENDING', 'CLAIMED', 'DISPATCHED')`,
         [exactInput.toolCallId],
       );
       if (completed.rowCount !== 1) {
@@ -4519,7 +4571,7 @@ export class PostgresSessionStore implements SessionStore {
     return this.orchestrationStore.listAssemblyBundles(input);
   }
 
-  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<void> {
+  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<ThreadAssemblyRecord> {
     await this.ensureSchemaV3();
     return this.orchestrationStore.appendThreadAssemblyRecord(record);
   }

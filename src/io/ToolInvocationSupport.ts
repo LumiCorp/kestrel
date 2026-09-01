@@ -56,15 +56,28 @@ import {
 
 export const RUNTIME_DEADLINE_BUDGET_ADAPTER_ID =
   "runtime.deadline-budget:v1" as const;
+export const DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION =
+  "durable_external_effect_dispatch_v1" as const;
+
+export interface DurableExternalEffectDispatchV1 {
+  version: typeof DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION;
+  notStartedFailureCode: string;
+  notStartedMessage: string;
+  unknownOutcomeFailureCode: string;
+  unknownOutcomeMessage: string;
+}
 
 export interface PinnedToolExecutionV1 {
   descriptor: ToolDescriptorV1;
   activation: ToolActivationRefV1;
   validator: ValidateFunction;
+  /** Trusted runtime registration; never derived from prepared-call input or adapter metadata. */
+  durableExternalEffectDispatch?: DurableExternalEffectDispatchV1 | undefined;
   handler: (
     input: unknown,
     lifecycle?: {
       persistCompletedCapabilityResult: (rawOutput: unknown) => Promise<void>;
+      acknowledgeExternalEffect: () => Promise<void>;
     },
   ) => Promise<unknown>;
   normalizer: (
@@ -80,6 +93,7 @@ export interface PinnedToolExecutionV1 {
         }
       | undefined;
   };
+  resolveExecutionClass?: ((input: Record<string, unknown>) => ToolExecutionClass) | undefined;
 }
 
 export function createToolSurfaceForDescriptorsV1(input: {
@@ -180,8 +194,7 @@ export function createPreparedToolCallV1(input: {
           ...(input.approval.approvalId === undefined
             ? {}
             : { approvalId: input.approval.approvalId }),
-          authorityRevision: hashCanonical({
-            version: "prepared-tool-approval-authority-v1",
+          authorityRevision: derivePreparedToolApprovalAuthorityRevisionV1({
             activation: input.activation,
             effectiveInput: input.effectiveInput,
             inputAdapters,
@@ -213,6 +226,23 @@ export function createPreparedToolCallV1(input: {
       ? {}
       : { executionRequirements: input.executionRequirements }),
     preparedAt: input.preparedAt ?? new Date().toISOString(),
+  });
+}
+
+export function derivePreparedToolApprovalAuthorityRevisionV1(input: {
+  activation: ToolActivationRefV1;
+  effectiveInput: Record<string, unknown>;
+  inputAdapters: readonly PreparedToolInputAdapterV1[];
+  policyRevision: string;
+  upstreamAuthorityRevision: string;
+}): string {
+  return hashCanonical({
+    version: "prepared-tool-approval-authority-v1",
+    activation: input.activation,
+    effectiveInput: input.effectiveInput,
+    inputAdapters: input.inputAdapters,
+    policyRevision: input.policyRevision,
+    upstreamAuthorityRevision: input.upstreamAuthorityRevision,
   });
 }
 
@@ -303,14 +333,16 @@ export async function executePinnedToolCallV1(input: {
   pinned: PinnedToolExecutionV1;
   signal?: AbortSignal | undefined;
   persistCompletedCapabilityResult?: ((result: AgentToolResultV2) => Promise<void>) | undefined;
+  acknowledgeExternalEffect?: (() => Promise<void>) | undefined;
 }): Promise<AgentToolResultV2> {
   const prepared = parsePreparedToolCallV1(input.prepared);
+  const executionClass = input.pinned.resolveExecutionClass?.(prepared.effectiveInput) ??
+    input.pinned.descriptor.capability.executionClass;
   assertPreparedActivationMatches(prepared.activation, input.pinned.activation);
   if (
     prepared.stableAuthority?.version ===
       PREPARED_TOOL_STABLE_AUTHORITY_V2_VERSION &&
-    prepared.stableAuthority.executionClass !==
-      input.pinned.descriptor.capability.executionClass
+    prepared.stableAuthority.executionClass !== executionClass
   ) {
     throw createRuntimeFailure(
       "TOOL_ACTIVATION_STALE",
@@ -328,8 +360,26 @@ export async function executePinnedToolCallV1(input: {
   let rawOutput: unknown;
   let preCleanupResult: AgentToolResultV2 | undefined;
   let preCleanupRawOutputDigest: string | undefined;
+  let externalEffectAcknowledged = false;
+  const durableDispatch = executionClass === "external_side_effect" &&
+    input.pinned.durableExternalEffectDispatch !== undefined
+      ? parseDurableExternalEffectDispatchV1(
+          input.pinned.durableExternalEffectDispatch,
+        )
+      : undefined;
   try {
     rawOutput = await input.pinned.handler(prepared.effectiveInput, {
+      acknowledgeExternalEffect: async () => {
+        if (durableDispatch === undefined) {
+          throw createRuntimeFailure(
+            "TOOL_DISPATCH_PROTOCOL_UNDECLARED",
+            `Tool '${input.pinned.descriptor.toolId}' attempted durable dispatch acknowledgement without declaring the protocol.`,
+            { subsystem: "tooling", classification: "contract", recoverable: false },
+          );
+        }
+        await input.acknowledgeExternalEffect?.();
+        externalEffectAcknowledged = true;
+      },
       persistCompletedCapabilityResult: async (completedRawOutput) => {
         const result = buildCompletedToolResult({
           prepared,
@@ -350,14 +400,20 @@ export async function executePinnedToolCallV1(input: {
       },
     });
   } catch (error) {
-    if (error instanceof RunCancelledError || input.signal?.aborted === true) {
+    if (preCleanupResult !== undefined) {
+      return preCleanupResult;
+    }
+    if (
+      durableDispatch === undefined &&
+      (error instanceof RunCancelledError || input.signal?.aborted === true)
+    ) {
       throw error;
     }
-    const effectState =
-      input.pinned.descriptor.capability.executionClass ===
-      "external_side_effect"
+    const effectState = executionClass === "external_side_effect"
+      ? durableDispatch === undefined || externalEffectAcknowledged
         ? "unknown"
-        : "not_started";
+        : "not_started"
+      : "not_started";
     return buildFailureResult({
       prepared,
       descriptor: input.pinned.descriptor,
@@ -378,13 +434,56 @@ export async function executePinnedToolCallV1(input: {
     return preCleanupResult;
   }
 
-  return buildCompletedToolResult({ prepared, pinned: input.pinned, rawOutput, startedAt });
+  return buildCompletedToolResult({ prepared, pinned: input.pinned, rawOutput, startedAt, executionClass });
+}
+
+export function parseDurableExternalEffectDispatchV1(
+  value: unknown,
+): DurableExternalEffectDispatchV1 {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Registered external-effect dispatch protocol is invalid");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.version !== DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION ||
+    typeof record.notStartedFailureCode !== "string" ||
+    record.notStartedFailureCode.length === 0 ||
+    typeof record.notStartedMessage !== "string" ||
+    record.notStartedMessage.length === 0 ||
+    typeof record.unknownOutcomeFailureCode !== "string" ||
+    record.unknownOutcomeFailureCode.length === 0 ||
+    typeof record.unknownOutcomeMessage !== "string" ||
+    record.unknownOutcomeMessage.length === 0
+  ) {
+    throw new Error("Registered external-effect dispatch protocol is invalid");
+  }
+  return {
+    version: DURABLE_EXTERNAL_EFFECT_DISPATCH_VERSION,
+    notStartedFailureCode: record.notStartedFailureCode,
+    notStartedMessage: record.notStartedMessage,
+    unknownOutcomeFailureCode: record.unknownOutcomeFailureCode,
+    unknownOutcomeMessage: record.unknownOutcomeMessage,
+  };
 }
 
 export function buildUnknownPreparedToolCallResultV1(input: {
   prepared: PreparedToolCallV1;
   error: { code: string; message: string; details?: Record<string, unknown> | undefined };
   startedAt: string;
+}): AgentToolResultV2 {
+  return buildRecoveredPreparedToolCallResultV1({
+    ...input,
+    effectState: "unknown",
+    retryable: false,
+  });
+}
+
+export function buildRecoveredPreparedToolCallResultV1(input: {
+  prepared: PreparedToolCallV1;
+  error: { code: string; message: string; details?: Record<string, unknown> | undefined };
+  startedAt: string;
+  effectState: "not_started" | "unknown";
+  retryable: boolean;
 }): AgentToolResultV2 {
   const prepared = parsePreparedToolCallV1(input.prepared);
   const completedAt = new Date().toISOString();
@@ -405,9 +504,9 @@ export function buildUnknownPreparedToolCallResultV1(input: {
     kind: "failure",
     startedAt: input.startedAt,
     completedAt,
-    effectState: "unknown",
+    effectState: input.effectState,
     normalizedFailureCode: input.error.code,
-    retryable: false,
+    retryable: input.retryable,
     error: {
       message: input.error.message,
       ...(input.error.details === undefined ? {} : { details: input.error.details }),
@@ -427,11 +526,13 @@ function buildCompletedToolResult(input: {
   pinned: PinnedToolExecutionV1;
   rawOutput: unknown;
   startedAt: string;
+  executionClass?: ToolExecutionClass | undefined;
 }): AgentToolResultV2 {
   const { prepared, pinned, rawOutput, startedAt } = input;
 
   const effectState =
-    pinned.descriptor.capability.executionClass === "external_side_effect"
+    (input.executionClass ?? pinned.resolveExecutionClass?.(prepared.effectiveInput) ??
+      pinned.descriptor.capability.executionClass) === "external_side_effect"
       ? "committed"
       : "not_applicable";
   if (isAgentToolResult(rawOutput)) {

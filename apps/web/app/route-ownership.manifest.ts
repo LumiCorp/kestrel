@@ -790,6 +790,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/apps/browser/personal-domains/route.ts",
+    "/api/apps/browser/personal-domains",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/apps/[appKey]/installation/route.ts",
     "/api/apps/:appKey/installation",
     "apps",
@@ -1506,6 +1513,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/runtime/browser-artifacts/[fileId]/route.ts",
+    "/api/runtime/browser-artifacts/:fileId",
+    "artifacts",
+    "service-boundary",
+    "service-bearer",
+  ),
+  api(
     "app/api/mobile/v1/account/deletion-request/route.ts",
     "/api/mobile/v1/account/deletion-request",
     "mobile",
@@ -1775,6 +1789,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/api/threads/[id]/stream/route.ts",
     "/api/threads/:id/stream",
     "threads",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/threads/[id]/browser-viewer/route.ts",
+    "/api/threads/:id/browser-viewer",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/threads/[id]/browser-viewer/v1/route.ts",
+    "/api/threads/:id/browser-viewer/v1",
+    "apps",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized,
   ),

@@ -45,6 +45,7 @@ export function createExecuteToolCallHandler(
         signal: context.signal,
         runContext,
         persistCompletedCapabilityResult: context.persistCompletedCapabilityResult,
+        acknowledgeExternalEffect: context.acknowledgeExternalEffect,
       },
     );
     return result;

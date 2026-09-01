@@ -9,6 +9,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  lt,
   lte,
   ne,
   or,
@@ -27,6 +28,7 @@ import {
 } from "./fly-metrics";
 import { runFlyOrganizationMetering } from "./fly-metering-coordinator";
 import { describeFlyMachineUsage } from "./fly-usage";
+import { browserWorkerRunningSeconds } from "./browser-worker-usage";
 import { parseModelCostIdentity } from "./pricing";
 import { recordUsageEvent } from "./store";
 
@@ -300,12 +302,23 @@ export async function meterFlyReconciledHour(now = new Date()) {
       ),
     }),
   ]);
+  const browserWorkers = await meterPersistedBrowserWorkersHour({
+    startedAt,
+    endedAt,
+  });
   if (
     environments.length === 0 &&
     workspaceRows.length === 0 &&
     snapshotRows.length === 0
   ) {
-    return { gateways: 0, workspaces: 0, volumes: 0, snapshots: 0, networkSeries: 0 };
+    return {
+      gateways: 0,
+      workspaces: 0,
+      volumes: 0,
+      snapshots: 0,
+      browserWorkers,
+      networkSeries: 0,
+    };
   }
   for (const backup of snapshotRows) {
     if (!backup.sizeBytes) continue;
@@ -365,8 +378,106 @@ export async function meterFlyReconciledHour(now = new Date()) {
   return {
     ...totals,
     snapshots: snapshotRows.length,
+    browserWorkers,
     failedOrganizations: organizationMetering.failures.length,
   };
+}
+
+export async function meterPersistedBrowserWorkersHour(input: {
+  startedAt: Date;
+  endedAt: Date;
+}) {
+  const rows = await knowledgeDb
+    .select({
+      sessionId: schema.browserSessionResources.sessionId,
+      generation: schema.browserSessionResources.machineGeneration,
+      createdAt: schema.browserSessionResources.createdAt,
+      cleanupConfirmedAt: schema.browserSessionResources.cleanupConfirmedAt,
+      sessionState: schema.browserSessions.state,
+      organizationId: schema.environmentRunExecutions.organizationId,
+      environmentId: schema.environmentRunExecutions.environmentId,
+      actorUserId: schema.environmentRunExecutions.actorId,
+      projectId: schema.environmentRunExecutions.projectId,
+      threadId: schema.environmentRunExecutions.threadId,
+      runId: schema.environmentRunExecutions.id,
+      region: schema.environments.region,
+    })
+    .from(schema.browserSessionResources)
+    .innerJoin(
+      schema.browserSessions,
+      eq(schema.browserSessions.sessionId, schema.browserSessionResources.sessionId),
+    )
+    .innerJoin(
+      schema.threadTurns,
+      eq(schema.threadTurns.id, schema.browserSessionResources.originatingTurnId),
+    )
+    .innerJoin(
+      schema.environmentRunExecutions,
+      eq(
+        schema.environmentRunExecutions.id,
+        schema.threadTurns.environmentExecutionId,
+      ),
+    )
+    .innerJoin(
+      schema.environments,
+      and(
+        eq(
+          schema.environments.organizationId,
+          schema.environmentRunExecutions.organizationId,
+        ),
+        eq(
+          schema.environments.id,
+          schema.environmentRunExecutions.environmentId,
+        ),
+      ),
+    )
+    .where(
+      and(
+        lt(schema.browserSessionResources.createdAt, input.endedAt),
+        or(
+          isNull(schema.browserSessionResources.cleanupConfirmedAt),
+          gt(schema.browserSessionResources.cleanupConfirmedAt, input.startedAt),
+        ),
+      ),
+    );
+  let metered = 0;
+  for (const row of rows) {
+    const quantity = browserWorkerRunningSeconds({
+      createdAt: row.createdAt,
+      cleanupConfirmedAt: row.cleanupConfirmedAt,
+      startedAt: input.startedAt,
+      endedAt: input.endedAt,
+    });
+    if (quantity <= 0) continue;
+    await recordUsageEvent({
+      organizationId: row.organizationId,
+      actorUserId: row.actorUserId,
+      projectId: row.projectId,
+      threadId: row.threadId,
+      runId: row.runId,
+      category: "environments",
+      provider: "fly",
+      service: "machine.shared-cpu-1x.1024mb",
+      meter: "running_seconds",
+      quantity,
+      unit: "second",
+      sourceKind: "fly_reconciled_resource",
+      sourceId: `browser:${row.sessionId}:g${row.generation}`,
+      occurredAt: input.startedAt,
+      intervalStartedAt: input.startedAt,
+      intervalEndedAt: input.endedAt,
+      metadata: {
+        source: "browser_session_lifecycle",
+        environmentId: row.environmentId,
+        sessionId: row.sessionId,
+        generation: row.generation,
+        region: row.region,
+        state: row.sessionState,
+      },
+    });
+    metered += 1;
+  }
+  return metered;
 }
 
 async function meterFlyOrganizationReconciledHour(input: {

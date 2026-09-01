@@ -110,6 +110,36 @@ const desktopBridge: DesktopBridge = {
   getKestrelOneAccount() {
     return ipcRenderer.invoke("desktop:get-kestrel-one-account");
   },
+  listBrowserPersonalDomains(input) {
+    return ipcRenderer.invoke("desktop:list-browser-personal-domains", input);
+  },
+  revokeBrowserPersonalDomain(input) {
+    return ipcRenderer.invoke("desktop:revoke-browser-personal-domain", input);
+  },
+  connectBrowserViewer(input) {
+    return ipcRenderer.invoke("desktop:browser-viewer-connect", input);
+  },
+  readBrowserViewerFrame(input) {
+    return ipcRenderer.invoke("desktop:browser-viewer-frame", input);
+  },
+  acceptBrowserTakeover(input) {
+    return ipcRenderer.invoke("desktop:browser-viewer-accept", input);
+  },
+  renewBrowserInputLease(input) {
+    return ipcRenderer.invoke("desktop:browser-viewer-renew", input);
+  },
+  sendBrowserViewerInput(input) {
+    return ipcRenderer.invoke("desktop:browser-viewer-input", input);
+  },
+  returnBrowserControl(input) {
+    return ipcRenderer.invoke("desktop:browser-viewer-return", input);
+  },
+  disconnectBrowserViewer(input) {
+    return ipcRenderer.invoke("desktop:browser-viewer-disconnect", input);
+  },
+  closeBrowserViewerSession(input) {
+    return ipcRenderer.invoke("desktop:browser-viewer-close", input);
+  },
   startKestrelOneAuthorization(input) {
     return ipcRenderer.invoke("desktop:start-kestrel-one-authorization", input);
   },

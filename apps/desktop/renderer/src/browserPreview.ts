@@ -330,6 +330,28 @@ export function ensureBrowserPreviewBridge(): void {
     async getKestrelOneAccount() {
       return { status: "signed_out" as const };
     },
+    async listBrowserPersonalDomains(
+      input: Parameters<DesktopBridge["listBrowserPersonalDomains"]>[0],
+    ) {
+      return {
+        accountId: "preview-account",
+        environmentId: input.environmentId,
+        revision: 0,
+        authority: {
+          version: "browser_personal_domain_authority_v1",
+          userId: "preview-account",
+          environmentId: input.environmentId,
+          revision: "0",
+          activeDomains: [],
+        },
+        domains: [],
+      };
+    },
+    async revokeBrowserPersonalDomain(
+      input: Parameters<DesktopBridge["revokeBrowserPersonalDomain"]>[0],
+    ) {
+      return await this.listBrowserPersonalDomains(input);
+    },
     async getKestrelOneEnvironments() {
       return createPreviewEnvironmentStatus();
     },
@@ -358,6 +380,10 @@ export function ensureBrowserPreviewBridge(): void {
           defaultModelConfigurationId: settings.defaultModelConfigurationId,
           defaultEnabledBuiltInAppIds: settings.defaultEnabledBuiltInAppIds,
           appearanceTheme: settings.appearanceTheme,
+          browserPersonalDomains: {
+            version: "desktop_browser_personal_domains_v1",
+            partitions: [],
+          },
         },
         credentials: {
           backend: "macos_keychain",

@@ -3,7 +3,7 @@ id: production-delivery-channels
 domain: operations
 status: active
 owner: kestrel-one
-last_verified_at: 2026-08-22
+last_verified_at: 2026-08-30
 depends_on:
   - ../apps/web/vercel.json
   - ../deploy/fly/image-catalog.json
@@ -11,6 +11,7 @@ depends_on:
   - ../deploy/fly/kestrel-one-control-worker/ROLLOUT.md
   - ../deploy/fly/kestrel-one-runner/ROLLOUT.md
   - ../deploy/fly/kestrel-one-runpod-worker/ROLLOUT.md
+  - ../deploy/fly/kestrel-one-browser-worker/ROLLOUT.md
   - ../deploy/fly/kestrel-one-turn-worker/ROLLOUT.md
   - ../scripts/publish-production-image.ts
   - ../scripts/deploy-production-fly-machine.ts
@@ -27,7 +28,9 @@ derive image identity from Git.
 - Advancing the protected `production` branch lets Vercel natively deploy
   `one` and `docs`. The `one` build performs the ordinary production migration.
 - Every image is published manually with a tag chosen by the operator.
-- Every Fly Machine is changed manually, one exact Machine at a time.
+- Long-lived platform Fly Machines are changed manually, one exact Machine at
+  a time. Ephemeral Browser Machines are created and destroyed per session by
+  the control plane from one configured immutable worker image digest.
 - Managed RunPod worker and profile changes are separate manual operations.
 - Every tenant Environment is changed manually. No command widens the rollout.
 
@@ -49,6 +52,7 @@ scope:
 | `turn-worker` | Published image, then one Fly Machine update; follow its [role rollout](../deploy/fly/kestrel-one-turn-worker/ROLLOUT.md) |
 | `control-worker` | Published image, then one Fly Machine update; follow its [role rollout](../deploy/fly/kestrel-one-control-worker/ROLLOUT.md) |
 | `runpod-worker` | Published image, then one Fly Machine update; follow its [role rollout](../deploy/fly/kestrel-one-runpod-worker/ROLLOUT.md) |
+| `browser-worker` | Published image, then one session-scoped live canary; follow its [role rollout](../deploy/fly/kestrel-one-browser-worker/ROLLOUT.md) |
 | Router and Workspace Runtime | Two published images, then one Environment update; follow the [paired runtime rollout](../deploy/fly/kestrel-one-runner/ROLLOUT.md) |
 | Managed RunPod profile | Separate manual profile operation; never implied by a worker image |
 
@@ -93,7 +97,7 @@ do not change Fly, RunPod, or tenant Environments to compensate.
 ## 2. Publish only the images in scope
 
 Valid roles are `workspace-runtime`, `environment-router`, `preview-edge`,
-`turn-worker`, `control-worker`, and `runpod-worker`.
+`turn-worker`, `control-worker`, `runpod-worker`, and `browser-worker`.
 
 Publish one role at a time:
 
@@ -118,6 +122,14 @@ Image smoke is publication evidence only. It may prove an image-local health or
 missing-configuration contract, but it never proves production configuration,
 provider state, consumer registration, reconciliation, or live work delivery.
 The selected role rollout defines the required production proof.
+
+For `browser-worker`, retain the publisher's final immutable repository digest,
+install that exact digest as `KESTREL_BROWSER_WORKER_IMAGE` through the reviewed
+Kestrel One configuration path, and follow the
+[Browser worker rollout](../deploy/fly/kestrel-one-browser-worker/ROLLOUT.md).
+The control plane creates one ephemeral Machine per Browser Session. Never pass
+`browser-worker` to `production:fly:machine`; there is no fixed Browser Machine
+to update.
 
 If build, smoke, or push fails, nothing has been deployed. Fix the failure and
 rerun only the selected role.

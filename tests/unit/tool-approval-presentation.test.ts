@@ -4,6 +4,54 @@ import test from "node:test";
 import { buildToolApprovalPresentation } from "../../src/runtime/toolApprovalPresentation.js";
 import { normalizeToolActionInput } from "../../tools/runtime/normalizeToolInput.js";
 
+test("Browser upload approval presents only the exact approval-hashed effect", () => {
+  const presentation = buildToolApprovalPresentation({
+    toolName: "browser.upload",
+    effectiveInput: {
+      sessionId: "browser-session-1",
+      snapshotId: "snapshot-1",
+      targetRef: "@e1",
+      attachmentId: "attachment-1",
+      sourceUrl: "https://storage.example/secret",
+    },
+    inputAdapters: [{
+      adapterId: "kestrel.browser-upload-effect:v1",
+      metadata: {
+        version: "browser_upload_preparation_v1",
+        turnId: "turn-1",
+        threadId: "thread-1",
+        attachmentId: "attachment-1",
+        filename: "evidence.txt",
+        declaredMediaType: "text/plain",
+        detectedMediaType: "text/plain",
+        sizeBytes: 19,
+        sha256: "a".repeat(64),
+        sessionId: "browser-session-1",
+        generation: 1,
+        snapshotId: "snapshot-1",
+        documentRevision: "document-1",
+        targetRef: "@e1",
+        targetLabel: "Supporting evidence",
+      },
+    }],
+    disposition: {
+      mode: "ask",
+      reasonCode: "tool_minimum",
+      authority: { kind: "runtime_policy", revision: "approval-revision" },
+    },
+  });
+
+  assert.equal(presentation.title, "Upload attachment");
+  assert.deepEqual(presentation.fields, [
+    { label: "File", value: "evidence.txt" },
+    { label: "Measured size", value: "19 bytes (100 MiB maximum)" },
+    { label: "Declared media type", value: "text/plain (untrusted metadata)" },
+    { label: "Browser target", value: "Supporting evidence" },
+  ]);
+  assert.equal(presentation.policy.rememberApprovalEligible, false);
+  assert.doesNotMatch(JSON.stringify(presentation), /sourceUrl|storage\.example|sha256/u);
+});
+
 test("approval presenters show meaningful normalized fields without transport secrets", () => {
   const presentation = buildToolApprovalPresentation({
     toolName: "kestrel_one.google_calendar_create_event",
@@ -149,6 +197,61 @@ test("unknown tools receive a conservative redacted fallback", () => {
     /never-render|also-hidden|apiKey/u,
   );
   assert.match(presentation.summary, /Sensitive request data is hidden/u);
+});
+
+test("Browser domain grants expose one canonical allow-and-remember decision", () => {
+  const presentation = buildToolApprovalPresentation({
+    toolName: "browser.request_grant",
+    effectiveInput: {
+      sessionId: "browser-session-1",
+      destination:
+        "https://tenant.docs.example.com/private/path?token=secret#fragment",
+    },
+    disposition: {
+      mode: "ask",
+      reasonCode: "environment_policy",
+      authority: { kind: "hosted_app_policy", revision: "browser-policy-7" },
+    },
+    hostedApprovalScope: {
+      requestingActorId: "user-7",
+      environmentId: "environment-3",
+    },
+  });
+
+  assert.equal(presentation.title, "Allow this Browser domain");
+  assert.deepEqual(presentation.browserDomainGrant, {
+    version: "browser_domain_grant_approval_v1",
+    sessionId: "browser-session-1",
+    sessionMode: "operator",
+    canonicalDomain: "example.com",
+    scheme: "https",
+    scope: "apex_and_subdomains",
+    includeSubdomains: true,
+    port: 443,
+    ownerEffect: "requesting_person",
+    environmentEffect: "future_eligible_projects_in_environment",
+    sessionEffect: "immediate",
+    actionLabel: "Allow and remember",
+    requestingActorId: "user-7",
+    environmentId: "environment-3",
+    approvalAuthorityRevision: "browser-policy-7",
+  });
+  assert.equal(presentation.policy.rememberApprovalEligible, false);
+  assert.match(JSON.stringify(presentation), /Apex and subdomains/u);
+  assert.match(JSON.stringify(presentation), /user-7/u);
+  assert.match(JSON.stringify(presentation), /environment-3/u);
+  assert.doesNotMatch(JSON.stringify(presentation), /private|token|secret|fragment/u);
+  assert.throws(
+    () =>
+      buildToolApprovalPresentation({
+        toolName: "browser.request_grant",
+        effectiveInput: {
+          sessionId: "browser-session-1",
+          destination: "http://example.com",
+        },
+      }),
+    /HTTPS/u,
+  );
 });
 
 test("Workspace file-share approval names every selected path and public-link control", () => {

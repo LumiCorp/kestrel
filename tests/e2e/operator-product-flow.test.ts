@@ -86,10 +86,12 @@ async function createHarness(): Promise<{
       resolveExecutionProfile: async (request: {
         client: "cli";
         profileId: string;
+        environmentPresetId: "cli_dev_local";
       }) => {
         assert.deepEqual(request, {
           client: "cli",
           profileId: activeProfile.id,
+          environmentPresetId: "cli_dev_local",
         });
         const fingerprint =
           "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -104,6 +106,7 @@ async function createHarness(): Promise<{
             ...activeProfile,
             id: profileId,
             agentProfileId: "kestrel",
+            environmentPresetId: "cli_dev_local",
           },
         };
       },
@@ -140,6 +143,7 @@ test("operator shell deterministic journey e2e covers start, inspect, delegation
   await (appState.handleLine as (line: string) => Promise<void>)("orchestration-task");
   await (appState.handleLine as (line: string) => Promise<void>)("orchestration");
   await (appState.handleLine as (line: string) => Promise<void>)(workspace.manifest.workspaceId);
+  await (appState.handleLine as (line: string) => Promise<void>)("default");
   await (appState.handleLine as (line: string) => Promise<void>)("Run deterministic shell journey");
   await (appState.handleLine as (line: string) => Promise<void>)("current");
   await (appState.handleLine as (line: string) => Promise<void>)("default");
@@ -188,8 +192,13 @@ test("operator shell deterministic journey e2e covers start, inspect, delegation
         return {
           type: "session.described",
           payload: {
-            sessionId: "session-1",
-            updatedAt: new Date().toISOString(),
+            sessionId: String(payload.sessionId),
+            version: 1,
+            activeAssembly: {
+              mode: "explicit",
+              bundleId: "bundle:kestrel:cli",
+              environmentPresetId: "cli_dev_local",
+            },
           },
         };
       }
@@ -197,7 +206,7 @@ test("operator shell deterministic journey e2e covers start, inspect, delegation
         return {
           type: "workspace.checkpoint",
           payload: {
-            sessionId: "session-1",
+            sessionId: String(payload.sessionId),
             operation: "list",
             checkpoints: [
               {
@@ -226,6 +235,7 @@ test("operator shell deterministic journey e2e covers start, inspect, delegation
       throw new Error(`Unexpected command ${type}`);
     },
   };
+  appState.sessionController = undefined;
 
   await (appState.handleCommand as (parsed: unknown) => Promise<void>)({ kind: "command", command: "mcp", args: [] });
   {

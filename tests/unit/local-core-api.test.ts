@@ -18,17 +18,39 @@ import path from "node:path";
 
 import {
   LOCAL_CORE_DESKTOP_PROFILE_ID,
+  DesktopBrowserService,
   LocalCoreApiError,
   LocalCoreClient,
   acquireCoreLock,
+  createPackagedDesktopBrowserService,
   createDefaultLocalCoreRuntimeConfiguration,
   parseLocalCoreDesktopExecutionConfig,
   readCoreLock,
+  resolvePackagedDesktopBrowserResourcesRoot,
   resolveLocalCorePaths,
   startLocalCoreApiServer,
 } from "../../src/localCore/index.js";
+import type {
+  DesktopBrowserAcceptedOperation,
+  DesktopBrowserEngineAdapter,
+  DesktopBrowserEngineInvocation,
+  DesktopBrowserNativeHandoffAuthority,
+  DesktopBrowserNativeHandoffPresentation,
+} from "../../src/localCore/desktopBrowserService.js";
+import type {
+  CreateLocalCoreBrowserEgressProxyInput,
+  LocalCoreBrowserEgressProxy,
+} from "../../src/localCore/browserEgressProxy.js";
+import type { BrowserOperationLifecycleV1 } from "../../src/browser/contracts.js";
+import { getDesktopBrowserRuntimeExecutableRelativePaths } from "../../src/browser/runtimeReleaseManifest.js";
+import type { PreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
 import { LOCAL_CORE_RUNTIME_CONFIGURATION_FILE_NAME } from "../../src/localCore/runtimeConfiguration.js";
 import { parseLocalCoreSystemShutdownRequest } from "../../src/localCore/contracts.js";
+import type { DesktopBrowserPersonalDomainsV1 } from "../../src/desktopShell/contracts.js";
+import {
+  mutateLocalCoreLocalSettings,
+  readLocalCoreLocalSettings,
+} from "../../src/localCore/localSettings.js";
 import {
   closeLocalCoreStore,
   ensureLocalCoreStore,
@@ -57,6 +79,340 @@ import {
 } from "../../packages/protocol/src/index.js";
 
 describe("Local Core API process contracts", { concurrency: 2 }, () => {
+  test("Kestrel One sign-out closes Desktop Browser authority first", async () => {
+    const home = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-core-browser-signout-"),
+    );
+    class TrackingDesktopBrowserService extends DesktopBrowserService {
+      closeCalls = 0;
+
+      override async close(): Promise<void> {
+        this.closeCalls += 1;
+        await super.close();
+      }
+    }
+    const browserService = new TrackingDesktopBrowserService({
+      homePath: home,
+      engineExecutablePath: "/unused/agent-browser",
+      chromeExecutablePath: "/unused/Chrome",
+      projectRunRegistry: {
+        resolvePreviewUrl() {
+          throw new Error("not used");
+        },
+      },
+      engine: {
+        async acceptOperation(input) {
+          return {
+            sessionId: input.sessionId,
+            operationId: input.operationId,
+            grantGeneration: input.grantGeneration,
+            acceptanceToken: `accepted:${input.operationId}`,
+          };
+        },
+        releaseOperation() {},
+        async open() {},
+        async command() {
+          return { stdout: "", stderr: "" };
+        },
+        async close() {},
+      },
+      scheduleExpiry: false,
+    });
+    const server = await startLocalCoreApiServer({
+      env: { KESTREL_CORE_HOME: home },
+      platform: "darwin",
+      coreVersion: "0.6.0",
+      idleTimeoutMs: 0,
+      browserService,
+      credentialStore: new MemoryLocalCoreCredentialStore(),
+    });
+    try {
+      const client = new LocalCoreClient({
+        socketPath: server.socketPath,
+        token: server.token,
+      });
+      assert.deepEqual(await client.signOutKestrelOneAccount(), {
+        status: "signed_out",
+      });
+      assert.equal(browserService.closeCalls, 1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("packaged Desktop Browser resources derive only from the packaged Local Core root", () => {
+    assert.equal(
+      resolvePackagedDesktopBrowserResourcesRoot({
+        repoRoot:
+          "/Applications/Kestrel.app/Contents/Resources/kestrel-runtime/payload",
+        platform: "darwin",
+      }),
+      "/Applications/Kestrel.app/Contents/Resources",
+    );
+    assert.equal(
+      resolvePackagedDesktopBrowserResourcesRoot({
+        repoRoot: "/tmp/ambient-browser-runtime",
+        platform: "darwin",
+      }),
+      undefined,
+    );
+    assert.equal(
+      resolvePackagedDesktopBrowserResourcesRoot({
+        repoRoot:
+          "/Applications/Kestrel.app/Contents/Resources/kestrel-runtime/payload",
+        platform: "linux",
+      }),
+      undefined,
+    );
+  });
+
+  test("packaged Desktop Browser composition durably records real viewer transitions without sensitive payloads", async () => {
+    const passwordSentinel = "viewer-password-unique-9Y!";
+    const mfaSentinel = "viewer-mfa-unique-734921";
+    const debugSentinel = "viewer-debug-unique-4c91";
+    const fixture = await createPackagedViewerEvidenceFixture({
+      mfaSentinel,
+      debugSentinel,
+    });
+    try {
+      const opened = asLocalCoreRecord(
+        await fixture.service.execute(
+          localCoreBrowserCall("browser.open", {
+            mode: "qa",
+            target: {
+              kind: "desktop_project_run",
+              projectId: fixture.projectId,
+              runId: fixture.runId,
+              urlId: fixture.urlId,
+            },
+          }),
+          localCoreBrowserLifecycle(fixture),
+        ),
+      );
+      const session = asLocalCoreRecord(opened.session);
+      const sessionId = String(session.sessionId);
+      const generation = Number(session.generation);
+      assert.equal(fixture.engine.openedWithNativeHandoff, true);
+      await fixture.service.execute(
+        localCoreBrowserCall("browser.request_takeover", {
+          sessionId,
+          generation,
+          reason: "Authentication required.",
+          debuggingData: debugSentinel,
+        }),
+        localCoreBrowserLifecycle(fixture),
+      );
+
+      const hostileConnectionRequest = {
+        principalId: fixture.principalId,
+        threadId: fixture.threadId,
+        projectId: fixture.projectId,
+        password: passwordSentinel,
+        mfaCode: mfaSentinel,
+        engineEndpoint: debugSentinel,
+      };
+      const connection = requirePackagedViewerBinding(
+        await fixture.service.connectViewer(hostileConnectionRequest),
+      );
+      const hostileAcceptanceRequest = {
+        ...connection,
+        principalId: fixture.principalId,
+        input: { text: passwordSentinel },
+        proxyEndpoint: mfaSentinel,
+      };
+      const accepted = requirePackagedViewerBinding(
+        await fixture.service.acceptViewerTakeover(hostileAcceptanceRequest),
+      );
+      const acceptedLeaseId = accepted.leaseId;
+      assert.ok(acceptedLeaseId);
+      assert.deepEqual(fixture.engine.nativeHandoffAuthorities[0], {
+        sessionId,
+        generation,
+        threadId: fixture.threadId,
+        projectId: fixture.projectId,
+        principalId: fixture.principalId,
+        connectionId: connection.connectionId,
+        leaseId: acceptedLeaseId,
+        expiresAt: fixture.engine.nativeHandoffAuthorities[0]?.expiresAt,
+      });
+      const hostileRenewalRequest = {
+        ...connection,
+        principalId: fixture.principalId,
+        leaseId: acceptedLeaseId,
+        password: passwordSentinel,
+      };
+      const renewed = requirePackagedViewerBinding(
+        await fixture.service.renewViewerInputLease(hostileRenewalRequest),
+      );
+      const renewedLeaseId = renewed.leaseId;
+      assert.ok(renewedLeaseId);
+      const hostileViewerInputRequest = {
+        ...connection,
+        principalId: fixture.principalId,
+        leaseId: renewedLeaseId,
+        viewerInput: {
+          version: "desktop_browser_viewer_input_v1" as const,
+          kind: "keyboard" as const,
+          phase: "down" as const,
+          key: "Unidentified",
+          text: `${passwordSentinel}:${mfaSentinel}`,
+        },
+        frame: debugSentinel,
+      };
+      await fixture.service.sendViewerInput(hostileViewerInputRequest);
+      assert.deepEqual(fixture.engine.viewerInputTexts, [
+        `${passwordSentinel}:${mfaSentinel}`,
+      ]);
+      await fixture.service.returnViewerControl({
+        ...connection,
+        principalId: fixture.principalId,
+        leaseId: renewedLeaseId,
+      });
+      assert.equal(fixture.engine.revokedNativeHandoffAuthorities.length, 1);
+
+      await fixture.service.execute(
+        localCoreBrowserCall("browser.request_takeover", {
+          sessionId,
+          generation,
+          reason: "MFA required.",
+        }),
+        localCoreBrowserLifecycle(fixture),
+      );
+      const returnedConnection = requirePackagedViewerBinding(
+        await fixture.service.connectViewer({
+          principalId: fixture.principalId,
+          threadId: fixture.threadId,
+          projectId: fixture.projectId,
+        }),
+      );
+      const acceptedAgain = requirePackagedViewerBinding(
+        await fixture.service.acceptViewerTakeover({
+          ...returnedConnection,
+          principalId: fixture.principalId,
+        }),
+      );
+      assert.ok(acceptedAgain.leaseId);
+      await fixture.service.disconnectViewer({
+        ...returnedConnection,
+        principalId: fixture.principalId,
+      });
+      const reconnected = requirePackagedViewerBinding(
+        await fixture.service.connectViewer({
+          principalId: fixture.principalId,
+          threadId: fixture.threadId,
+          projectId: fixture.projectId,
+        }),
+      );
+      const replacementLease = requirePackagedViewerBinding(
+        await fixture.service.acceptViewerTakeover({
+          ...reconnected,
+          principalId: fixture.principalId,
+        }),
+      );
+      assert.ok(replacementLease.leaseId);
+      await fixture.service.loseViewerAuthority({
+        ...reconnected,
+        principalId: fixture.principalId,
+      });
+      await fixture.service.close();
+
+      const raw = await readFile(
+        path.join(fixture.homePath, "logs", "tui-diagnostics.log"),
+        "utf8",
+      );
+      assert.deepEqual(
+        [...raw.matchAll(/"name":"([^"]+)"/gu)].map((match) => match[1]),
+        [
+          "request",
+          "acceptance",
+          "lease_issue",
+          "lease_renewal",
+          "return",
+          "request",
+          "acceptance",
+          "lease_issue",
+          "disconnect",
+          "lease_issue",
+          "authorization_loss",
+          "cleanup",
+        ],
+      );
+      assert.match(raw, /"reason":"principal_changed"/u);
+      assert.match(raw, new RegExp(`"sessionId":"${sessionId}"`, "u"));
+      assert.match(raw, new RegExp(`"generation":${generation}`, "u"));
+      assert.match(raw, new RegExp(`"threadId":"${fixture.threadId}"`, "u"));
+      assert.match(raw, new RegExp(`"projectId":"${fixture.projectId}"`, "u"));
+      for (const sentinel of [passwordSentinel, mfaSentinel, debugSentinel]) {
+        assert.doesNotMatch(raw, new RegExp(sentinel, "u"));
+      }
+      assert.doesNotMatch(
+        raw,
+        /password|mfaCode|input|viewerInput|frame|url|engineEndpoint|proxyEndpoint|debuggingData/u,
+      );
+    } finally {
+      await fixture.service.close();
+      await rm(fixture.fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("packaged Desktop Browser composition keeps viewer evidence sink failures non-fatal", async () => {
+    const fixture = await createPackagedViewerEvidenceFixture({
+      mfaSentinel: "viewer-failure-mfa-734921",
+      debugSentinel: "viewer-failure-debug-4c91",
+    });
+    try {
+      const opened = asLocalCoreRecord(
+        await fixture.service.execute(
+          localCoreBrowserCall("browser.open", {
+            mode: "qa",
+            target: {
+              kind: "desktop_project_run",
+              projectId: fixture.projectId,
+              runId: fixture.runId,
+              urlId: fixture.urlId,
+            },
+          }),
+          localCoreBrowserLifecycle(fixture),
+        ),
+      );
+      const session = asLocalCoreRecord(opened.session);
+      await writeFile(path.join(fixture.homePath, "logs"), "not-a-directory");
+      await assert.doesNotReject(
+        fixture.service.execute(
+          localCoreBrowserCall("browser.request_takeover", {
+            sessionId: String(session.sessionId),
+            generation: Number(session.generation),
+            reason: "Authentication required.",
+          }),
+          localCoreBrowserLifecycle(fixture),
+        ),
+      );
+      const connection = requirePackagedViewerBinding(
+        await fixture.service.connectViewer({
+          principalId: fixture.principalId,
+          threadId: fixture.threadId,
+          projectId: fixture.projectId,
+        }),
+      );
+      await assert.doesNotReject(
+        fixture.service.acceptViewerTakeover({
+          ...connection,
+          principalId: fixture.principalId,
+        }),
+      );
+      await assert.doesNotReject(
+        fixture.service.loseViewerAuthority({
+          ...connection,
+          principalId: fixture.principalId,
+        }),
+      );
+      await assert.doesNotReject(fixture.service.close());
+    } finally {
+      await fixture.service.close();
+      await rm(fixture.fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   test("Local Core code-update shutdown requires its exact confirmation contract", () => {
     assert.deepEqual(
       parseLocalCoreSystemShutdownRequest({
@@ -373,6 +729,75 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
       }
       assert.equal(existsSync(paths.apiSocketPath), false);
       assert.equal(existsSync(paths.lockPath), false);
+    } finally {
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Desktop Browser revision adoption validates the exact typed contract", async () => {
+    const home = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-browser-adoption-api-"),
+    );
+    const server = await startLocalCoreApiServer({
+      env: { KESTREL_CORE_HOME: home },
+      platform: "linux",
+      coreVersion: "0.6.0",
+      idleTimeoutMs: 0,
+    });
+    const client = new LocalCoreClient({
+      socketPath: server.socketPath,
+      token: server.token,
+    });
+    try {
+      assert.deepEqual(
+        await client.adoptDesktopBrowserPersonalRevision({
+          accountId: "account-1",
+          environmentId: "environment-1",
+          personalRevision: 2,
+        }),
+        { personalRevision: 2, closedUnauthorizedConnections: 0 },
+      );
+      for (const body of [
+        {
+          accountId: "account-1",
+          environmentId: "environment-1",
+          personalRevision: 2,
+          unexpected: true,
+        },
+        {
+          accountId: "account-1",
+          environmentId: "environment-1",
+          personalRevision: 2,
+          threadId: "thread-1",
+        },
+        {
+          accountId: " ",
+          environmentId: "environment-1",
+          personalRevision: 2,
+        },
+      ]) {
+        await assert.rejects(
+          client.postJson("/v1/browser/personal-domain-revisions/adopt", body),
+          (error) =>
+            error instanceof LocalCoreApiError &&
+            error.statusCode === 400 &&
+            error.code === "DESKTOP_BROWSER_REVISION_INVALID",
+        );
+      }
+      await assert.rejects(
+        client.adoptDesktopBrowserPersonalRevision({
+          accountId: "account-1",
+          environmentId: "environment-1",
+          personalRevision: 2,
+          threadId: "thread-1",
+          sessionId: "browser-1",
+        }),
+        (error) =>
+          error instanceof LocalCoreApiError &&
+          error.statusCode === 503 &&
+          error.code === "DESKTOP_BROWSER_UNAVAILABLE",
+      );
     } finally {
       await server.close();
       await rm(home, { recursive: true, force: true });
@@ -2226,7 +2651,10 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
         "filesystem",
         "dev_shell",
       ]);
-      assert.equal(loadedSession?.effectiveAssemblyId, "bundle:kestrel:developer");
+      assert.equal(
+        loadedSession?.effectiveAssemblyId,
+        "bundle:kestrel:developer",
+      );
 
       const profiles = await new ProfileStore(home).load();
       assert.equal(
@@ -2391,6 +2819,132 @@ describe("Local Core API process contracts", { concurrency: 2 }, () => {
       const restored = await client.desktopSettings();
       assert.equal(restored.settings.selectedProvider, "ollama");
       assert.equal(restored.modelPolicy.provider, "ollama");
+    } finally {
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Local Core settings reject grant authorship, allow explicit revocation, and preserve owned grants", async () => {
+    const home = await mkdtemp(path.join("/tmp", "kcad-browser-settings-"));
+    const server = await startLocalCoreApiServer({
+      env: { KESTREL_CORE_HOME: home },
+      platform: "darwin",
+      coreVersion: "0.6.0",
+      databaseMode: "external",
+      externalDatabaseUrl: "postgres://kestrel:kestrel@example.invalid/kestrel",
+      idleTimeoutMs: 0,
+    });
+    try {
+      const client = new LocalCoreClient({
+        socketPath: server.socketPath,
+        token: server.token,
+      });
+      const partition = (revision: number, domains: string[]) => ({
+        version: "desktop_browser_personal_domain_partition_v1",
+        accountId: "account-1",
+        environmentId: "environment-1",
+        revision,
+        domains: domains.map((canonicalDomain, index) => ({
+          version: "desktop_browser_personal_domain_record_v1",
+          authority: {
+            version: "browser_public_domain_authority_v1",
+            scheme: "https",
+            canonicalDomain,
+            includeSubdomains: true,
+            port: 443,
+          },
+          state: "active",
+          provenance: {
+            version: "desktop_browser_personal_domain_provenance_v1",
+            source: "browser.request_grant",
+            approvalId: `approval-${index + 1}`,
+            approvedAt: `2026-08-30T12:00:0${index}.000Z`,
+          },
+          createdAt: `2026-08-30T12:00:0${index}.000Z`,
+          updatedAt: `2026-08-30T12:00:0${index}.000Z`,
+        })),
+      });
+      const value = (revision: number, domains: string[]) => ({
+        version: "desktop_browser_personal_domains_v1",
+        partitions: [partition(revision, domains)],
+      });
+
+      await assert.rejects(
+        () =>
+          client.patchDesktopSettings({
+            browserPersonalDomains: value(1, ["example.com"]),
+          }),
+        (error) =>
+          error instanceof LocalCoreApiError &&
+          error.statusCode === 409 &&
+          error.code === "LOCAL_CORE_BROWSER_SETTINGS_STALE",
+      );
+
+      const owned = value(1, ["example.com"]);
+      await mutateLocalCoreLocalSettings(
+        server.status.home.homePath,
+        (current) => ({
+          settings: { ...current, browserPersonalDomains: owned },
+          result: undefined,
+        }),
+      );
+
+      await client.patchDesktopSettings({ selectedProvider: "ollama" });
+      const restored = await client.desktopSettings<{
+        selectedProvider: string;
+      }>();
+      assert.equal(restored.settings.selectedProvider, "ollama");
+      assert.deepEqual(
+        (await readLocalCoreLocalSettings(server.status.home.homePath))
+          .browserPersonalDomains,
+        owned,
+      );
+
+      const revoked: DesktopBrowserPersonalDomainsV1 = {
+        version: "desktop_browser_personal_domains_v1",
+        partitions: [
+          {
+            ...owned.partitions[0]!,
+            version: "desktop_browser_personal_domain_partition_v1",
+            revision: 2,
+            domains: [
+              {
+                ...owned.partitions[0]!.domains[0]!,
+                version: "desktop_browser_personal_domain_record_v1",
+                authority: {
+              ...owned.partitions[0]!.domains[0]!.authority,
+              version: "browser_public_domain_authority_v1",
+              scheme: "https",
+              includeSubdomains: true,
+              port: 443,
+            },
+                provenance: {
+                  ...owned.partitions[0]!.domains[0]!.provenance,
+                  version: "desktop_browser_personal_domain_provenance_v1",
+                  source: "browser.request_grant",
+                },
+                state: "revoked",
+                updatedAt: "2026-08-30T12:01:00.000Z",
+                revokedAt: "2026-08-30T12:01:00.000Z",
+              },
+            ],
+          },
+        ],
+      };
+      await assert.doesNotReject(() =>
+        client.patchDesktopSettings({ browserPersonalDomains: revoked }),
+      );
+
+      const reactivated = value(3, ["example.com"]);
+      await assert.rejects(
+        () =>
+          client.patchDesktopSettings({ browserPersonalDomains: reactivated }),
+        (error) =>
+          error instanceof LocalCoreApiError &&
+          error.statusCode === 409 &&
+          error.code === "LOCAL_CORE_BROWSER_SETTINGS_STALE",
+      );
     } finally {
       await server.close();
       await rm(home, { recursive: true, force: true });
@@ -3060,6 +3614,286 @@ test("Local Core API idle timeout resets after admitted request activity", async
     await rm(home, { recursive: true, force: true });
   }
 });
+
+class PackagedViewerEvidenceEngine implements DesktopBrowserEngineAdapter {
+  readonly viewerInputTexts: string[] = [];
+  readonly nativeHandoffAuthorities: DesktopBrowserNativeHandoffAuthority[] = [];
+  readonly revokedNativeHandoffAuthorities: DesktopBrowserNativeHandoffAuthority[] = [];
+  openedWithNativeHandoff = false;
+
+  async acceptOperation(input: {
+    sessionId: string;
+    operationId: string;
+    grantGeneration: number;
+  }): Promise<DesktopBrowserAcceptedOperation> {
+    return {
+      sessionId: input.sessionId,
+      operationId: input.operationId,
+      grantGeneration: input.grantGeneration,
+      acceptanceToken: `${input.operationId}:${input.grantGeneration}`,
+    };
+  }
+
+  releaseOperation(_operation: DesktopBrowserAcceptedOperation): void {}
+
+  async open(
+    input: DesktopBrowserEngineInvocation & { destination: string },
+  ): Promise<void> {
+    this.openedWithNativeHandoff = input.nativeAuthenticationHandoff === true;
+  }
+
+  async command(): Promise<{ stdout: string; stderr: string }> {
+    return { stdout: "", stderr: "" };
+  }
+
+  async dispatchViewerInput(
+    input: DesktopBrowserEngineInvocation & {
+      viewerInput: {
+        kind: "pointer" | "keyboard";
+        text?: string | undefined;
+      };
+    },
+  ): Promise<void> {
+    if (input.viewerInput.text !== undefined) {
+      this.viewerInputTexts.push(input.viewerInput.text);
+    }
+  }
+
+  async presentNativeHandoff(input: {
+    authority: DesktopBrowserNativeHandoffAuthority;
+  }): Promise<DesktopBrowserNativeHandoffPresentation> {
+    this.nativeHandoffAuthorities.push(structuredClone(input.authority));
+    return { windowId: 52, targetId: "packaged-active-target" };
+  }
+
+  async revokeNativeHandoff(input: {
+    authority: DesktopBrowserNativeHandoffAuthority;
+  }): Promise<void> {
+    this.revokedNativeHandoffAuthorities.push(
+      structuredClone(input.authority),
+    );
+  }
+
+  async close(_input: DesktopBrowserEngineInvocation): Promise<void> {}
+}
+
+async function createPackagedViewerEvidenceFixture(input: {
+  mfaSentinel: string;
+  debugSentinel: string;
+}) {
+  const fixtureRoot = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-packaged-viewer-evidence-"),
+  );
+  const homePath = path.join(fixtureRoot, "home");
+  const resourcesRoot = path.join(fixtureRoot, "Resources");
+  const repoRoot = path.join(resourcesRoot, "kestrel-runtime", "payload");
+  const relative = getDesktopBrowserRuntimeExecutableRelativePaths();
+  const engineExecutablePath = path.join(
+    resourcesRoot,
+    relative.engineExecutablePath,
+  );
+  const chromeExecutablePath = path.join(
+    resourcesRoot,
+    relative.chromeExecutablePath,
+  );
+  await Promise.all([
+    mkdir(path.dirname(engineExecutablePath), { recursive: true }),
+    mkdir(path.dirname(chromeExecutablePath), { recursive: true }),
+    mkdir(repoRoot, { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(engineExecutablePath, `engine:${input.debugSentinel}`),
+    writeFile(chromeExecutablePath, `chrome:${input.debugSentinel}`),
+  ]);
+  await Promise.all([
+    chmod(engineExecutablePath, 0o755),
+    chmod(chromeExecutablePath, 0o755),
+  ]);
+
+  const engine = new PackagedViewerEvidenceEngine();
+  const projectId = "project-packaged-viewer";
+  const projectRoot = path.join(fixtureRoot, "project");
+  const runId = "run-packaged-viewer";
+  const urlId = "preview-packaged-viewer";
+  const threadId = "thread-packaged-viewer";
+  const principalId = "desktop-main-window";
+  let nextId = 0;
+  const service = createPackagedDesktopBrowserService({
+    homePath,
+    repoRoot,
+    platform: "darwin",
+    projectRunRegistry: {
+      resolvePreviewUrl(request) {
+        assert.deepEqual(request, { runId, urlId });
+        return {
+          run: { runId, projectPath: projectRoot } as never,
+          url: `http://localhost:4317/?debug=${encodeURIComponent(input.debugSentinel)}`,
+        };
+      },
+    },
+    account: {
+      async account(): Promise<never> {
+        throw new Error(
+          "QA viewer composition must not resolve account state.",
+        );
+      },
+    },
+    desktopEnvironments: {
+      async snapshot(): Promise<never> {
+        throw new Error(
+          "QA viewer composition must not resolve Environment state.",
+        );
+      },
+    },
+    withAuthorityAdmission: async (action) => await action(),
+    runtimeDependencies: {
+      engine,
+      createProxy: async (binding) =>
+        packagedViewerEvidenceProxy(binding, input.mfaSentinel),
+      now: () => new Date("2026-08-30T12:00:00.000Z"),
+      randomId: () => String(++nextId).padStart(8, "0"),
+      scheduleExpiry: false,
+    },
+  });
+  assert.ok(
+    service,
+    "staged packaged Browser resources should compose a service",
+  );
+  await service.initialize();
+  return {
+    fixtureRoot,
+    homePath,
+    service,
+    engine,
+    projectId,
+    projectRoot,
+    runId,
+    urlId,
+    threadId,
+    principalId,
+  };
+}
+
+function packagedViewerEvidenceProxy(
+  binding: CreateLocalCoreBrowserEgressProxyInput,
+  proxySecret: string,
+): LocalCoreBrowserEgressProxy {
+  const launchBinding = {
+    version: "local_core_browser_egress_launch_binding_v1" as const,
+    proxyServer: "http://127.0.0.1:4318",
+    username: "packaged-viewer",
+    password: proxySecret,
+    threadId: binding.threadId,
+    sessionId: binding.sessionId,
+    generation: binding.generation,
+    effectiveAllowlistRevision: binding.authority.effectiveAllowlistRevision,
+    chromiumFlags: ["--disable-quic"],
+  };
+  return {
+    version: "local_core_browser_egress_proxy_v1",
+    launchBinding,
+    async adoptAuthority(nextBinding) {
+      return {
+        receipt: {
+          version: "browser_allowlist_adoption_receipt_v1",
+          sessionId: nextBinding.sessionId,
+          effectiveAllowlistRevision:
+            nextBinding.authority.effectiveAllowlistRevision,
+          closedUnauthorizedConnections: 0,
+        },
+        launchBinding,
+      };
+    },
+    async close() {},
+  };
+}
+
+let localCoreBrowserCallSequence = 0;
+
+function localCoreBrowserCall(
+  toolName: string,
+  effectiveInput: Record<string, unknown>,
+): PreparedToolCallV1 {
+  localCoreBrowserCallSequence += 1;
+  const id = `${toolName}-${localCoreBrowserCallSequence}`;
+  return {
+    version: "v1",
+    runId: `run-${id}`,
+    sessionId: "runtime-session-packaged-viewer",
+    callId: `call-${id}`,
+    activation: {
+      version: "v1",
+      descriptor: {
+        version: "v1",
+        toolId: toolName,
+        sourceKind: "builtin",
+        sourceId: "kestrel.browser",
+        contractRevision: "browser-contract",
+        inputSchemaHash: "input",
+        outputContractHash: "output",
+      },
+      registryGeneration: "registry-packaged-viewer",
+      scopeFingerprint: "scope-packaged-viewer",
+    },
+    origin: {
+      kind: "trusted_runtime",
+      producerId: "packaged-viewer-composition-test",
+      adapterId: "packaged-viewer-composition-test:v1",
+    },
+    effectiveInput,
+    inputAdapters: [],
+    policy: { decision: "allow", policyRevision: "policy-packaged-viewer" },
+    preparedAt: "2026-08-30T12:00:00.000Z",
+  };
+}
+
+function localCoreBrowserLifecycle(input: {
+  projectId: string;
+  projectRoot: string;
+  threadId: string;
+}): BrowserOperationLifecycleV1 {
+  return {
+    authority: {
+      threadId: input.threadId,
+      projectId: input.projectId,
+      projectRoot: input.projectRoot,
+    },
+    async acknowledgeDispatch() {},
+    async persistCompletedResult() {},
+  };
+}
+
+function asLocalCoreRecord(value: unknown): Record<string, unknown> {
+  assert.ok(
+    value !== null && typeof value === "object" && !Array.isArray(value),
+  );
+  return value as Record<string, unknown>;
+}
+
+function requirePackagedViewerBinding(value: {
+  available: boolean;
+  threadId?: string | undefined;
+  projectId?: string | undefined;
+  sessionId?: string | undefined;
+  generation?: number | undefined;
+  connectionId?: string | undefined;
+  inputLeaseId?: string | undefined;
+}) {
+  assert.equal(value.available, true);
+  assert.ok(value.threadId);
+  assert.ok(value.projectId);
+  assert.ok(value.sessionId);
+  assert.ok(value.generation);
+  assert.ok(value.connectionId);
+  return {
+    threadId: value.threadId,
+    projectId: value.projectId,
+    sessionId: value.sessionId,
+    generation: value.generation,
+    connectionId: value.connectionId,
+    leaseId: value.inputLeaseId,
+  };
+}
 
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,

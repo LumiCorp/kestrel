@@ -10,6 +10,10 @@ import {
   AppSettingsSection,
 } from "@/components/apps/app-settings-layout";
 import {
+  BrowserPersonalDomains,
+  type BrowserPersonalDomainEnvironmentView,
+} from "@/components/apps/browser-personal-domains";
+import {
   SettingsDisclosure,
   SettingsStatusNotice,
 } from "@/components/settings/settings-section";
@@ -155,7 +159,13 @@ function approvalLabel(
   return "Automatic";
 }
 
-export function AppDetail({ app }: { app: AppDetailType }) {
+export function AppDetail({
+  app,
+  browserPersonalDomainEnvironments = [],
+}: {
+  app: AppDetailType;
+  browserPersonalDomainEnvironments?: readonly BrowserPersonalDomainEnvironmentView[];
+}) {
   const groups = new Map<string, AppDetailType["capabilities"]>();
   for (const capability of app.capabilities) {
     const entries = groups.get(capability.groupKey) ?? [];
@@ -257,6 +267,12 @@ export function AppDetail({ app }: { app: AppDetailType }) {
           </div>
         )}
       </AppSettingsSection>
+
+      {app.key === "built_in.browser" ? (
+        <BrowserPersonalDomains
+          initialEnvironments={browserPersonalDomainEnvironments}
+        />
+      ) : null}
 
       <SettingsDisclosure
         description={`${app.capabilityCount} capabilities. Environment policy is the ceiling; Projects can only narrow it.`}

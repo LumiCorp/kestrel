@@ -26,10 +26,14 @@ function operatorArgs(args: string[]) {
 export function productionImageBuildCommands(input: {
   dockerfile: string;
   image: string;
+  prepare?: string | undefined;
   tag: string;
   smoke: string;
 }) {
   return [
+    ...(input.prepare
+      ? [{ command: "pnpm", args: ["run", input.prepare] }]
+      : []),
     {
       command: "docker",
       args: [
@@ -80,6 +84,7 @@ export async function publishProductionImage(
   for (const command of productionImageBuildCommands({
     dockerfile: image.dockerfile,
     image: taggedImage,
+    prepare: image.prepare,
     tag,
     smoke: image.smoke,
   })) {

@@ -55,6 +55,7 @@ import type {
   DesktopThreadAuthorityResult,
 } from "../../src/contracts";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
+import { BrowserViewer } from "./BrowserViewer";
 import {
   ConversationTimeline,
   TimelineMarker,
@@ -2351,6 +2352,13 @@ export function DesktopApp(props: {
             inert={workNavigatorOpen ? true : undefined}
             style={{ "--collaborator-inspector-width": `${collaboratorInspectorWidth}px` } as CSSProperties}
           >
+          {threadProject?.id === undefined ? null : (
+            <BrowserViewer
+              key={`${localCoreThreadId(activeThread.sessionId)}:${threadProject.id}`}
+              threadId={localCoreThreadId(activeThread.sessionId)}
+              projectId={threadProject.id}
+            />
+          )}
           <ConversationTimeline
             items={conversationTimeline}
             active={activeRun !== undefined}

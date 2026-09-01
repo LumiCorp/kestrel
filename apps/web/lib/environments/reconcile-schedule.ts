@@ -23,7 +23,9 @@ export async function runScheduledEnvironmentReconciliation(input?: {
   createLock?: (lockKey: string) => Promise<EnvironmentReconcileLock>;
 }) {
   return withEnvironmentReconcileLock({
-    run: input?.reconcile ?? loadAndReconcileHostedEnvironments,
+    run: async () => {
+      return await (input?.reconcile ?? loadAndReconcileHostedEnvironments)();
+    },
     createLock: input?.createLock,
   });
 }

@@ -69,6 +69,7 @@ import {
   type DesktopOtaHttpsServer,
 } from "./desktop-ota-https-server.js";
 import { assertDesktopOtaFixturePortAvailable } from "./desktop-ota-fixture.js";
+import { waitForAsyncValue } from "./desktop-smoke-poll.js";
 
 const repoRoot = resolveRepoRoot(process.cwd());
 const desktopRoot = path.join(repoRoot, "apps", "desktop");
@@ -807,32 +808,46 @@ async function verifyReadyDesktop(
   });
   await page.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
   await page.locator(".composer").waitFor({ state: "visible", timeout: 60_000 });
-  await page.waitForFunction(
-    async () => {
+  const state = await waitForAsyncValue(
+    async () => await page.evaluate(async () => {
       const bridge = (globalThis as DesktopPageGlobal).kestrelDesktop;
-      return bridge !== undefined &&
-        ((await bridge.getBootState()) as { phase?: string }).phase === "ready";
+      if (bridge === undefined) {
+        return undefined;
+      }
+      const [appInfo, bootState, bridgeInfo, launchState] = await Promise.all([
+        bridge.getAppInfo(),
+        bridge.getBootState(),
+        bridge.getBridgeInfo(),
+        bridge.getLaunchState(),
+      ]);
+      return { appInfo, bootState, bridgeInfo, launchState };
+    }) as Promise<{
+      appInfo: { isPackaged: boolean; version: string };
+      bootState: { phase: string };
+      bridgeInfo: { connected: boolean; version: string };
+      launchState: { phase: string };
+    } | undefined>,
+    (candidate) =>
+      candidate?.bootState.phase === "ready" &&
+      candidate.launchState.phase === "ready",
+    {
+      description: `Desktop ${expectedVersion} boot and launch readiness`,
+      timeoutMs: 60_000,
     },
-    undefined,
-    { timeout: 60_000 },
   );
-  const state = await page.evaluate(async () => {
-    const bridge = (globalThis as DesktopPageGlobal).kestrelDesktop!;
-    return {
-      appInfo: await bridge.getAppInfo(),
-      bootState: await bridge.getBootState(),
-      bridgeInfo: await bridge.getBridgeInfo(),
-    };
-  }) as {
+  assert.notEqual(state, undefined);
+  const readyState = state as {
     appInfo: { isPackaged: boolean; version: string };
     bootState: { phase: string };
     bridgeInfo: { connected: boolean; version: string };
+    launchState: { phase: string };
   };
-  assert.equal(state.appInfo.isPackaged, true);
-  assert.equal(state.appInfo.version, expectedVersion);
-  assert.equal(state.bootState.phase, "ready");
-  assert.equal(state.bridgeInfo.connected, true);
-  assert.equal(state.bridgeInfo.version, DESKTOP_BRIDGE_VERSION);
+  assert.equal(readyState.appInfo.isPackaged, true);
+  assert.equal(readyState.appInfo.version, expectedVersion);
+  assert.equal(readyState.bootState.phase, "ready");
+  assert.equal(readyState.launchState.phase, "ready");
+  assert.equal(readyState.bridgeInfo.connected, true);
+  assert.equal(readyState.bridgeInfo.version, DESKTOP_BRIDGE_VERSION);
 }
 
 async function seedPersistenceMarker(
@@ -842,14 +857,17 @@ async function seedPersistenceMarker(
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill(marker);
-  await page.waitForFunction(
-    async (expected) => {
+  await waitForAsyncValue(
+    async () => await page.evaluate(async (expected) => {
       const bridge = (globalThis as DesktopPageGlobal).kestrelDesktop;
       return bridge !== undefined &&
         JSON.stringify(await bridge.getUiState()).includes(String(expected));
+    }, marker),
+    (persisted) => persisted,
+    {
+      description: `Desktop ${marker} persistence marker`,
+      timeoutMs: 30_000,
     },
-    marker,
-    { timeout: 30_000 },
   );
 }
 

@@ -13,6 +13,7 @@ import type {
   DesktopCapabilityCategory,
   DesktopCapabilityView,
   DesktopCapabilityId,
+  DesktopBrowserPersonalDomainProjectionV1,
   DesktopModelProvider,
   DesktopRendererSettings,
   DesktopRendererSettingsUpdate,
@@ -146,6 +147,12 @@ export function SettingsWorkspace({
     useState<DesktopEnvironmentStatusProjection>();
   const [kestrelOneAccount, setKestrelOneAccount] =
     useState<KestrelOneAccountStatus>();
+  const [browserDomainEnvironmentId, setBrowserDomainEnvironmentId] =
+    useState("");
+  const [browserPersonalDomains, setBrowserPersonalDomains] =
+    useState<DesktopBrowserPersonalDomainProjectionV1>();
+  const [browserPersonalDomainsBusy, setBrowserPersonalDomainsBusy] =
+    useState(false);
   const [receivingOrganizationId, setReceivingOrganizationId] = useState("");
   const [receivingConnection, setReceivingConnection] =
     useState<KestrelOneReceivingConnection>();
@@ -179,6 +186,8 @@ export function SettingsWorkspace({
   const savingRef = useRef(false);
   const refreshVersionRef = useRef(0);
   const kestrelOneAccountRefreshVersionRef = useRef(0);
+  const browserDomainEnvironmentIdRef = useRef("");
+  const browserPersonalDomainsRequestVersionRef = useRef(0);
   const receivingSelectionVersionRef = useRef(0);
   const grouped = useMemo(
     () =>
@@ -204,6 +213,19 @@ export function SettingsWorkspace({
     () => settings.modelConfigurations.find((entry) => entry.id === selectedId),
     [settings.modelConfigurations, selectedId],
   );
+  const browserDomainEnvironments = useMemo(() => {
+    if (kestrelOneAccount?.status !== "signed_in") return [];
+    const environments = new Map<string, string>();
+    for (const project of kestrelOneAccount.projection.projects) {
+      if (!environments.has(project.environmentId)) {
+        environments.set(project.environmentId, project.name);
+      }
+    }
+    return [...environments].map(([environmentId, projectName]) => ({
+      environmentId,
+      projectName,
+    }));
+  }, [kestrelOneAccount]);
 
   useEffect(() => {
     const query = window.matchMedia?.("(prefers-color-scheme: dark)");
@@ -311,6 +333,83 @@ export function SettingsWorkspace({
     }, 2000);
     return () => window.clearInterval(timer);
   }, [kestrelOne?.environments.length]);
+
+  useEffect(() => {
+    const available = new Set(
+      browserDomainEnvironments.map((entry) => entry.environmentId),
+    );
+    if (
+      kestrelOneAccount?.status !== "signed_in" ||
+      browserDomainEnvironments.length === 0
+    ) {
+      browserDomainEnvironmentIdRef.current = "";
+      browserPersonalDomainsRequestVersionRef.current += 1;
+      setBrowserDomainEnvironmentId("");
+      setBrowserPersonalDomains(undefined);
+      setBrowserPersonalDomainsBusy(false);
+      return;
+    }
+    if (!available.has(browserDomainEnvironmentId)) {
+      const environmentId =
+        browserDomainEnvironments[0]?.environmentId ?? "";
+      browserDomainEnvironmentIdRef.current = environmentId;
+      browserPersonalDomainsRequestVersionRef.current += 1;
+      setBrowserDomainEnvironmentId(environmentId);
+      setBrowserPersonalDomains(undefined);
+      setBrowserPersonalDomainsBusy(false);
+    }
+  }, [kestrelOneAccount, browserDomainEnvironments, browserDomainEnvironmentId]);
+
+  useEffect(() => {
+    if (
+      kestrelOneAccount?.status !== "signed_in" ||
+      browserDomainEnvironmentId === ""
+    ) {
+      setBrowserPersonalDomains(undefined);
+      return;
+    }
+    const environmentId = browserDomainEnvironmentId;
+    browserDomainEnvironmentIdRef.current = environmentId;
+    const requestVersion =
+      ++browserPersonalDomainsRequestVersionRef.current;
+    let disposed = false;
+    setBrowserPersonalDomainsBusy(true);
+    void window.kestrelDesktop
+      .listBrowserPersonalDomains({
+        environmentId,
+      })
+      .then((projection) => {
+        if (
+          !disposed &&
+          requestVersion === browserPersonalDomainsRequestVersionRef.current &&
+          environmentId === browserDomainEnvironmentIdRef.current
+        ) {
+          setBrowserPersonalDomains(projection);
+        }
+      })
+      .catch((error) => {
+        if (
+          !disposed &&
+          requestVersion === browserPersonalDomainsRequestVersionRef.current &&
+          environmentId === browserDomainEnvironmentIdRef.current
+        ) {
+          setBrowserPersonalDomains(undefined);
+          onError(errorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (
+          !disposed &&
+          requestVersion === browserPersonalDomainsRequestVersionRef.current &&
+          environmentId === browserDomainEnvironmentIdRef.current
+        ) {
+          setBrowserPersonalDomainsBusy(false);
+        }
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [kestrelOneAccount, browserDomainEnvironmentId]);
 
   useEffect(() => {
     if (!kestrelOneThreadId) {
@@ -493,6 +592,53 @@ export function SettingsWorkspace({
     } catch (error) {
       if (refreshVersion !== kestrelOneAccountRefreshVersionRef.current) return;
       onError(errorMessage(error));
+    }
+  }
+
+  async function revokeBrowserPersonalDomain(
+    environmentId: string,
+    canonicalDomain: string,
+  ): Promise<void> {
+    if (
+      environmentId === "" ||
+      environmentId !== browserDomainEnvironmentIdRef.current
+    ) {
+      return;
+    }
+    const requestVersion =
+      ++browserPersonalDomainsRequestVersionRef.current;
+    setBrowserPersonalDomainsBusy(true);
+    onError(undefined);
+    try {
+      const projection =
+        await window.kestrelDesktop.revokeBrowserPersonalDomain({
+          environmentId,
+          canonicalDomain,
+        });
+      if (
+        requestVersion !== browserPersonalDomainsRequestVersionRef.current ||
+        environmentId !== browserDomainEnvironmentIdRef.current
+      ) {
+        return;
+      }
+      setBrowserPersonalDomains(projection);
+      setNotice(
+        `${canonicalDomain} is no longer allowed for future Browser requests in this Environment.`,
+      );
+    } catch (error) {
+      if (
+        requestVersion === browserPersonalDomainsRequestVersionRef.current &&
+        environmentId === browserDomainEnvironmentIdRef.current
+      ) {
+        onError(errorMessage(error));
+      }
+    } finally {
+      if (
+        requestVersion === browserPersonalDomainsRequestVersionRef.current &&
+        environmentId === browserDomainEnvironmentIdRef.current
+      ) {
+        setBrowserPersonalDomainsBusy(false);
+      }
     }
   }
 
@@ -1615,6 +1761,80 @@ export function SettingsWorkspace({
                     </small>
                   </div>
                 ))
+              )}
+            </div>
+          ) : null}
+          {kestrelOneAccount?.status === "signed_in" ? (
+            <div className="settings-form">
+              <strong>Personal Browser domains</strong>
+              <p>
+                Domains you allowed through the Browser App are personal to
+                your account in one Environment.
+              </p>
+              {browserDomainEnvironments.length === 0 ? (
+                <small>No accessible Environment is available.</small>
+              ) : (
+                <>
+                  <label>
+                    Environment
+                    <select
+                      value={browserDomainEnvironmentId}
+                      onChange={(event) => {
+                        const environmentId = event.target.value;
+                        browserDomainEnvironmentIdRef.current = environmentId;
+                        browserPersonalDomainsRequestVersionRef.current += 1;
+                        setBrowserDomainEnvironmentId(environmentId);
+                        setBrowserPersonalDomains(undefined);
+                        setBrowserPersonalDomainsBusy(false);
+                      }}
+                    >
+                      {browserDomainEnvironments.map((environment) => (
+                        <option
+                          key={environment.environmentId}
+                          value={environment.environmentId}
+                        >
+                          {environment.projectName} · {environment.environmentId}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {browserPersonalDomainsBusy ? (
+                    <small>Refreshing personal Browser domains…</small>
+                  ) : browserPersonalDomains?.domains.length ? (
+                    browserPersonalDomains.domains.map((domain) => (
+                      <div
+                        className="capability-detail"
+                        key={domain.authority.canonicalDomain}
+                      >
+                        <strong>
+                          {domain.authority.canonicalDomain} and subdomains
+                        </strong>
+                        <small>
+                          {domain.state === "active"
+                            ? `Allowed · revision ${browserPersonalDomains.revision}`
+                            : "Revoked"}
+                        </small>
+                        {domain.state === "active" ? (
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            disabled={browserPersonalDomainsBusy}
+                            onClick={() =>
+                              void revokeBrowserPersonalDomain(
+                                browserPersonalDomains.environmentId,
+                                domain.authority.canonicalDomain,
+                              )
+                            }
+                          >
+                            Revoke
+                          </button>
+                        ) : null}
+                      </div>
+                    ))
+                  ) : (
+                    <small>No personal Browser domains in this Environment.</small>
+                  )}
+                </>
               )}
             </div>
           ) : null}

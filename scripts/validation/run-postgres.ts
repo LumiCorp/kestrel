@@ -10,6 +10,7 @@ const files = execFileSync(
   .concat(
     "apps/web/lib/knowledge/queue.postgres.test.ts",
     "apps/web/lib/ai/managed-runpod-lifecycle.postgres.test.ts",
+    "apps/web/lib/browser/lifecycle.postgres.test.ts",
     "apps/web/lib/costs/store.postgres.test.ts",
     "apps/web/lib/environments/authorization-renewal.postgres.test.ts",
     "apps/web/lib/environments/desktop.postgres.test.ts",
@@ -77,7 +78,11 @@ const groups = [
   {
     name: "Apps",
     databaseUrl: required("KESTREL_APPS_DB_TEST_URL"),
+    environment: {
+      NEXT_PUBLIC_APP_URL: "https://one.example.test",
+    },
     files: [
+      "lib/apps/browser-domain-service.postgres.test.ts",
       "lib/apps/hosted-approval-proof.postgres.test.ts",
       "lib/apps/platform-oauth-registration-legacy-settings-migration.postgres.test.ts",
       "lib/apps/platform-oauth-registrations.postgres.test.ts",
@@ -100,6 +105,7 @@ const groups = [
     files: [
       "lib/ai/gateways.postgres.test.ts",
       "lib/ai/managed-runpod-lifecycle.postgres.test.ts",
+      "lib/browser/lifecycle.postgres.test.ts",
       "lib/costs/store.postgres.test.ts",
       "lib/email/config.postgres.test.ts",
       "lib/email-receipts/ingress.postgres.test.ts",
@@ -218,6 +224,7 @@ function runGroup(group: (typeof groups)[number]): Promise<void> {
           ...process.env,
           DATABASE_URL: group.databaseUrl,
           POSTGRES_URL: group.databaseUrl,
+          ...(group.environment ?? {}),
         },
         stdio: "inherit",
       },

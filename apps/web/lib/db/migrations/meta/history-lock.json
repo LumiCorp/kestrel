@@ -95,5 +95,8 @@
   "0093_platform_personal_oauth_authorization_broker": "1787940000000:cb07df8af4ca3df84ed58ead0ba4d8af410ca969da6d919c439485ac6b32ebbf",
   "0094_exact_exec_command_approval_scope": "1787943600000:7a57e38c2c5e2db521dc8e4fbda0c8658d6cd76eaffe048c467277f5ad24c47d",
   "0095_autonomous_workflow_activation": "1787947200000:61cfa6ab113897366cafb834dabc6145a045c1a473e500d787ae0d4bf94b5445",
-  "0096_resend_managed_domains_public_aliases": "1787950800000:7959d0f34c8f9516039b0d373a4d7d4e0b14b699511b1900f80ee8cd5d296289"
+  "0096_resend_managed_domains_public_aliases": "1787950800000:7959d0f34c8f9516039b0d373a4d7d4e0b14b699511b1900f80ee8cd5d296289",
+  "0097_browser_personal_domains": "1787954400000:3df8cb61cce924d6c7119455f029b0bab29aa9f0b9029e4ab06fd17df4688f9c",
+  "0098_hosted_browser_sessions": "1787958000000:dbb80c52b65ce3a357485c921dee17989e1564e89ea2859d7d487ebcbd3b9606",
+  "0099_browser_download_promotions": "1787961600000:6dd84c51cb9494d2090bc2b0e15da32bcb5a80454676b07271fbc672fd82a03d"
 }

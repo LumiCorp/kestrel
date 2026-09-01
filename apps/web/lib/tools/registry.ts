@@ -8,6 +8,7 @@ import type {
   ToolProviderDefinition,
   ToolProviderKey,
 } from "./types.js";
+import { BROWSER_TOOL_NAMES } from "../../../../src/browser/contracts.js";
 function createDefaultPolicy(
   overrides: Partial<ToolCapabilityPolicy>,
 ): ToolCapabilityPolicy {
@@ -69,6 +70,45 @@ if (!MICROSOFT_365_APP_MANIFEST) {
 }
 
 export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
+  {
+    key: KESTREL_APP_IDS.BROWSER,
+    displayName: "Browser",
+    description:
+      "Test Kestrel applications and operate allowed public websites through an isolated browser.",
+    type: "built_in",
+    authType: "system",
+    app: {
+      category: "engineering",
+      connectionModel: "none",
+      connectionRequirement: "none",
+      authMethods: ["none"],
+      delivery: "lifecycle",
+      installMode: "inherited",
+      icon: "globe",
+    },
+    metadata: { icon: "globe", category: "built_in", provider: "kestrel_browser" },
+    capabilities: BROWSER_TOOL_NAMES.map((runtimeName) => {
+      const operation = runtimeName.slice("browser.".length);
+      const alwaysApproval = runtimeName === "browser.upload" || runtimeName === "browser.download";
+      return createCapability({
+        key: operation,
+        runtimeName,
+        displayName: `Browser ${operation.replaceAll("_", " ")}`,
+        description: `Run the stable ${runtimeName} Browser App operation.`,
+        accessMode: runtimeName === "browser.snapshot" || runtimeName === "browser.inspect"
+          ? "read"
+          : runtimeName === "browser.tabs" ? "status" : "write",
+        ...(alwaysApproval ? { minimumApprovalMode: "ask" as const } : {}),
+        defaultPolicy: {
+          enabled: false,
+          approvalMode: alwaysApproval ? "ask" : "auto",
+          loggingMode: "metadata_only",
+          rateLimitMode: "off",
+        },
+        metadata: { group: "browser" },
+      });
+    }),
+  },
   {
     key: "built_in.workspace",
     displayName: "Workspace",

@@ -371,6 +371,12 @@ test("workflow persistence enforces policy and resolves one latest run", async (
     definition: createStarterWorkflowDefinition(),
   });
   assert.ok(workflow);
+  await workflows.activateProjectWorkflowVersion({
+    organizationId: ids.organization,
+    projectId: ids.project,
+    userId: ids.user,
+    workflowId: workflow.id,
+  });
   const [version] = await sql<{ id: string }[]>`
     SELECT "id" FROM "project_workflow_versions"
     WHERE "workflow_id" = ${workflow.id} AND "version" = 1
@@ -380,13 +386,16 @@ test("workflow persistence enforces policy and resolves one latest run", async (
     INSERT INTO "project_workflow_runs" (
       "id", "workflow_id", "workflow_version_id", "actor_user_id", "trigger",
       "environment_id_snapshot", "project_context_revision_id_snapshot",
-      "model_id_snapshot", "status", "created_at", "updated_at"
+      "model_id_snapshot", "workflow_workspace_id", "activation_manifest_digest",
+      "status", "created_at", "updated_at"
     ) VALUES
       (${`older-${suffix}`}, ${workflow.id}, ${version.id}, ${ids.user}, 'manual',
        ${ids.environment}, ${ids.context}, 'openrouter/openai/safe-workflow-model',
+       ${`workflow-run:older-${suffix}`}, ${`sha256:${"a".repeat(64)}`},
        'completed', ${new Date(now.getTime() - 1000)}, ${now}),
       (${`newer-${suffix}`}, ${workflow.id}, ${version.id}, ${ids.user}, 'manual',
        ${ids.environment}, ${ids.context}, 'openrouter/openai/safe-workflow-model',
+       ${`workflow-run:newer-${suffix}`}, ${`sha256:${"b".repeat(64)}`},
        'failed', ${now}, ${now})
   `;
   const direct = await workflows.getProjectWorkflowForUser({
@@ -404,6 +413,12 @@ test("workflow persistence enforces policy and resolves one latest run", async (
     title: "Joined workflow",
     modelId: "openrouter/openai/safe-workflow-model",
     definition: joinedDefinition(),
+  });
+  await workflows.activateProjectWorkflowVersion({
+    organizationId: ids.organization,
+    projectId: ids.project,
+    userId: ids.user,
+    workflowId: joinedWorkflow.id,
   });
   const joinedRun = await workflows.createProjectWorkflowRun({
     organizationId: ids.organization,

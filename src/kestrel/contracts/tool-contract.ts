@@ -48,6 +48,7 @@ export interface ToolCapabilityContractV1 {
   latencyClass: ToolLatencyClassV1;
   costClass: ToolCostClassV1;
   executionClass: ToolExecutionClass;
+  inputDependentPreparation?: boolean | undefined;
   allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: ApprovalCapabilityClass[] | undefined;
@@ -180,6 +181,7 @@ const CAPABILITY_KEYS = new Set([
   "latencyClass",
   "costClass",
   "executionClass",
+  "inputDependentPreparation",
   "allowedInteractionModes",
   "capabilityClasses",
   "approvalCapabilities",
@@ -787,6 +789,14 @@ function parseCapability(value: unknown): ToolCapabilityContractV1 {
       input.allowedInteractionModes,
       INTERACTION_MODES,
       "tool descriptor.capability.allowedInteractionModes",
+    );
+  }
+  if (
+    input.inputDependentPreparation !== undefined &&
+    typeof input.inputDependentPreparation !== "boolean"
+  ) {
+    throw new Error(
+      "tool descriptor.capability.inputDependentPreparation must be a boolean",
     );
   }
   if (input.approvalCapabilities !== undefined) {

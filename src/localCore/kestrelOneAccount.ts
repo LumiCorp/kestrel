@@ -2,6 +2,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { WebSocket } from "ws";
 
+import {
+  parseBrowserEnvironmentDomainAuthority,
+  parseBrowserProjectDomainAuthority,
+  type BrowserEnvironmentDomainAuthorityV1,
+  type BrowserProjectDomainAuthorityV1,
+} from "../browser/domainAuthority.js";
 import type { LocalCoreCredentialStore } from "./credentialStore.js";
 
 const ACCOUNT_CREDENTIAL_ID = "kestrel_one.account" as const;
@@ -28,6 +34,12 @@ export interface KestrelOneAccountProjection {
     environmentId: string;
     environmentProvider: "fly" | "desktop";
     desktopWorkspaceRef?: string | null | undefined;
+    browserAuthority?:
+      | {
+          environment: BrowserEnvironmentDomainAuthorityV1;
+          project: BrowserProjectDomainAuthorityV1;
+        }
+      | undefined;
     role: "owner" | "editor" | "member";
   }>;
   threads: Array<{
@@ -63,7 +75,14 @@ export type KestrelOneReceivingConnection = {
   lastHealthCheckedAt: string | null;
   lastTestedAt: string | null;
   lastErrorCode: string | null;
-  readiness: "not_configured" | "credential_insufficient" | "domain_unready" | "ready_inactive" | "staged" | "active" | "error";
+  readiness:
+    | "not_configured"
+    | "credential_insufficient"
+    | "domain_unready"
+    | "ready_inactive"
+    | "staged"
+    | "active"
+    | "error";
 };
 
 export type KestrelOneReceivingDomain = {
@@ -175,18 +194,31 @@ export class LocalCoreKestrelOneAccountManager {
   readonly #store: LocalCoreCredentialStore;
   readonly #fetch: typeof fetch;
   readonly #now: () => number;
+  readonly #beforeCredentialReplace: () => Promise<void>;
+  readonly #withCredentialReplacement: <T>(
+    action: () => Promise<T>,
+  ) => Promise<T>;
   readonly #sessions = new Map<string, ActiveSession>();
   readonly #previews = new Map<string, DesktopPreviewTunnel>();
   #refreshPromise: Promise<StoredAccountCredential> | undefined;
+  #credentialMutationTail: Promise<void> = Promise.resolve();
 
   constructor(input: {
     credentialStore: LocalCoreCredentialStore;
     fetchImpl?: typeof fetch;
     now?: () => number;
+    beforeCredentialReplace?: (() => Promise<void>) | undefined;
+    withCredentialReplacement?:
+      | (<T>(action: () => Promise<T>) => Promise<T>)
+      | undefined;
   }) {
     this.#store = input.credentialStore;
     this.#fetch = input.fetchImpl ?? fetch;
     this.#now = input.now ?? Date.now;
+    this.#beforeCredentialReplace =
+      input.beforeCredentialReplace ?? (async () => undefined);
+    this.#withCredentialReplacement =
+      input.withCredentialReplacement ?? (async (action) => await action());
   }
 
   async start(input: {
@@ -294,7 +326,9 @@ export class LocalCoreKestrelOneAccountManager {
       },
     );
     if (response.status === 401) {
-      await this.#store.delete(ACCOUNT_CREDENTIAL_ID);
+      await this.#replaceCredential(async () => {
+        await this.#store.delete(ACCOUNT_CREDENTIAL_ID);
+      });
       return { status: "signed_out" };
     }
     if (!response.ok) {
@@ -323,18 +357,18 @@ export class LocalCoreKestrelOneAccountManager {
         },
       ).catch(() => {});
     }
-    await this.#store.delete(ACCOUNT_CREDENTIAL_ID);
+    await this.#replaceCredential(async () => {
+      await this.#store.delete(ACCOUNT_CREDENTIAL_ID);
+    });
     return { status: "signed_out" };
   }
 
   async receivingConnection(
     organizationId: string,
   ): Promise<KestrelOneReceivingConnection> {
-    const body = await this.#receivingRequest(
-      organizationId,
-      "",
-      { method: "GET" },
-    );
+    const body = await this.#receivingRequest(organizationId, "", {
+      method: "GET",
+    });
     return parseReceivingConnection(body.connection);
   }
 
@@ -342,11 +376,17 @@ export class LocalCoreKestrelOneAccountManager {
     organizationId: string;
     apiKey?: string | undefined;
   }): Promise<KestrelOneReceivingDomain[]> {
-    const body = await this.#receivingRequest(input.organizationId, "/domains", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...(input.apiKey ? { apiKey: input.apiKey } : {}) }),
-    });
+    const body = await this.#receivingRequest(
+      input.organizationId,
+      "/domains",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+        }),
+      },
+    );
     return requireArray(body.domains, "receiving domains").map(
       parseReceivingDomain,
     );
@@ -606,7 +646,12 @@ export class LocalCoreKestrelOneAccountManager {
         session.baseUrl,
         this.#now(),
       );
-      await this.#store.set(ACCOUNT_CREDENTIAL_ID, JSON.stringify(credential));
+      await this.#replaceCredential(async () => {
+        await this.#store.set(
+          ACCOUNT_CREDENTIAL_ID,
+          JSON.stringify(credential),
+        );
+      });
       session.view = {
         sessionId: session.sessionId,
         state: "complete",
@@ -644,13 +689,33 @@ export class LocalCoreKestrelOneAccountManager {
     return refresh;
   }
 
+  async #replaceCredential<T>(action: () => Promise<T>): Promise<T> {
+    return await this.#serializeCredentialMutation(() =>
+      this.#withCredentialReplacement(async () => {
+        await this.#beforeCredentialReplace();
+        return await action();
+      }),
+    );
+  }
+
+  async #serializeCredentialMutation<T>(action: () => Promise<T>): Promise<T> {
+    const result = this.#credentialMutationTail.then(action, action);
+    this.#credentialMutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await result;
+  }
+
   async #receivingRequest(
     organizationId: string,
     suffix: string,
     init: RequestInit,
   ): Promise<Record<string, unknown>> {
     const credential = await this.#requireCredential();
-    const id = encodeURIComponent(requireText(organizationId, "organizationId"));
+    const id = encodeURIComponent(
+      requireText(organizationId, "organizationId"),
+    );
     const response = await this.#fetch(
       new URL(
         `/api/desktop/v1/organizations/${id}/email/receiving${suffix}`,
@@ -706,8 +771,17 @@ export class LocalCoreKestrelOneAccountManager {
       stored.baseUrl,
       this.#now(),
     );
-    await this.#store.set(ACCOUNT_CREDENTIAL_ID, JSON.stringify(refreshed));
-    return refreshed;
+    return await this.#serializeCredentialMutation(async () => {
+      const current = await this.#readCredential();
+      if (current === undefined) {
+        throw new Error(
+          "Kestrel One account changed during credential refresh.",
+        );
+      }
+      if (current.refreshToken !== stored.refreshToken) return current;
+      await this.#store.set(ACCOUNT_CREDENTIAL_ID, JSON.stringify(refreshed));
+      return refreshed;
+    });
   }
 
   async #readCredential(): Promise<StoredAccountCredential | undefined> {
@@ -818,7 +892,7 @@ class DesktopPreviewTunnel {
       throw new Error("Desktop preview expiration is invalid.");
     }
     this.#expiresAt = nextExpiresAt;
-    if (!(this.#closed || this.#socket ) && Date.now() < this.#expiresAt) {
+    if (!(this.#closed || this.#socket) && Date.now() < this.#expiresAt) {
       if (this.#reconnectTimer) clearTimeout(this.#reconnectTimer);
       this.#reconnectTimer = undefined;
       this.#connect();
@@ -1174,6 +1248,13 @@ function parseAccountProjection(value: unknown): KestrelOneAccountProjection {
                   "project.desktopWorkspaceRef",
                 ),
               }),
+        ...(item.browserAuthority === undefined
+          ? {}
+          : {
+              browserAuthority: parseDesktopBrowserAuthorityProjection(
+                item.browserAuthority,
+              ),
+            }),
         role,
       };
     }),
@@ -1208,7 +1289,25 @@ function parseAccountProjection(value: unknown): KestrelOneAccountProjection {
   };
 }
 
-function parseReceivingConnection(value: unknown): KestrelOneReceivingConnection {
+function parseDesktopBrowserAuthorityProjection(value: unknown): {
+  environment: BrowserEnvironmentDomainAuthorityV1;
+  project: BrowserProjectDomainAuthorityV1;
+} {
+  const record = requireRecord(value, "project.browserAuthority");
+  const keys = Object.keys(record).sort();
+  if (JSON.stringify(keys) !== JSON.stringify(["environment", "project"])) {
+    throw new Error("Kestrel One Browser authority projection is invalid.");
+  }
+  const environment = parseBrowserEnvironmentDomainAuthority(
+    record.environment,
+  );
+  const project = parseBrowserProjectDomainAuthority(record.project);
+  return { environment, project };
+}
+
+function parseReceivingConnection(
+  value: unknown,
+): KestrelOneReceivingConnection {
   const item = requireRecord(value, "receiving connection");
   return {
     provider: requireEnum(item.provider, ["resend"], "provider"),
@@ -1269,8 +1368,16 @@ function parseReceivingDomain(value: unknown): KestrelOneReceivingDomain {
   return {
     id: requireText(item.id, "domain.id"),
     name: requireText(item.name, "domain.name"),
-    status: requireEnum(item.status, ["pending", "verified", "failed"], "domain.status"),
-    receiving: requireEnum(item.receiving, ["enabled", "disabled"], "domain.receiving"),
+    status: requireEnum(
+      item.status,
+      ["pending", "verified", "failed"],
+      "domain.status",
+    ),
+    receiving: requireEnum(
+      item.receiving,
+      ["enabled", "disabled"],
+      "domain.receiving",
+    ),
     mxStatus: requireEnum(
       item.mxStatus,
       ["unknown", "pending", "verified", "failed"],

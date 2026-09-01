@@ -7,6 +7,7 @@ export const KESTREL_APP_IDS = {
   KNOWLEDGE_SEARCH: "built_in.knowledge_search",
   SANDBOX: "built_in.sandbox",
   ARTIFACTS: "built_in.artifacts",
+  BROWSER: "built_in.browser",
   GITHUB: "github",
   GOOGLE_WORKSPACE: "google_workspace",
   MICROSOFT_365: "microsoft_365",
@@ -128,6 +129,19 @@ export const KESTREL_STANDARD_APP_MANIFESTS: readonly AppPluginManifest[] = [
     "Artifacts",
     "Create and maintain conversation documents.",
     [c("documents", "Documents", "Create and review artifacts.")],
+    true,
+  ),
+  p(
+    KESTREL_APP_IDS.BROWSER,
+    "Browser",
+    "Test Kestrel applications and operate allowed public websites through an isolated browser.",
+    [
+      c(
+        "operate",
+        "Browser operation",
+        "Open, inspect, interact with, capture, and close isolated browser sessions.",
+      ),
+    ],
     true,
   ),
   p(

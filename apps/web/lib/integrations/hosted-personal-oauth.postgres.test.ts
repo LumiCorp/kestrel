@@ -233,13 +233,13 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
   const disconnectRefreshStarted = new Promise<void>((resolve) => {
     notifyDisconnectRefreshStarted = resolve;
   });
-  const inFlightDisconnectRefresh = resolveCalendar({
-    fetchImpl: (async () => {
+  const inFlightDisconnectRefresh = resolveCalendar(
+    (async (_request: Parameters<typeof fetch>[0]) => {
       notifyDisconnectRefreshStarted?.();
       await disconnectRefreshReleased;
       return Response.json({ access_token: "disconnect-race-access", refresh_token: "disconnect-race-refresh", token_type: "Bearer", expires_in: 3600 });
     }) as typeof fetch,
-  });
+  );
   await disconnectRefreshStarted;
   const disconnectWhileRefreshing = appService.disconnectPersonalAppConnection({
     organizationId,
@@ -279,6 +279,7 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
     }) as typeof fetch,
   });
   assert.equal(reconnectedAfterDisconnect.connectionId, completed.connectionId);
+  await sql`INSERT INTO "project_app_connections" ("project_id", "app_key", "connection_id", "scope", "user_id", "is_default", "added_by_user_id", "created_at", "updated_at") VALUES (${projectId}, 'google_workspace', ${completed.connectionId}, 'personal', ${userId}, true, ${userId}, ${new Date()}, ${new Date()})`;
 
   await sql`UPDATE "platform_personal_oauth_authorizations" SET "expires_at" = ${new Date(Date.now() - 60_000)} WHERE "connection_id" = ${completed.connectionId}`;
   let releaseReconnectRefresh: (() => void) | undefined;
@@ -289,13 +290,13 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
   const reconnectRefreshStarted = new Promise<void>((resolve) => {
     notifyReconnectRefreshStarted = resolve;
   });
-  const inFlightReconnectRefresh = resolveCalendar({
-    fetchImpl: (async () => {
+  const inFlightReconnectRefresh = resolveCalendar(
+    (async (_request: Parameters<typeof fetch>[0]) => {
       notifyReconnectRefreshStarted?.();
       await reconnectRefreshReleased;
       return Response.json({ access_token: "stale-refresh-access", refresh_token: "stale-refresh-refresh", token_type: "Bearer", expires_in: 3600 });
     }) as typeof fetch,
-  });
+  );
   await reconnectRefreshStarted;
   const reconnectDuringRefreshStart = await broker.startHostedPersonalAuthorization({
     provider: "google_workspace",
@@ -340,7 +341,10 @@ test("hosted personal OAuth persists a fixed-origin, organization-pack-bound, si
     projectId,
     operation: "availability.query",
   });
-  assert.equal(availabilityToken.accessToken, "refreshed-access");
+  assert.equal(
+    availabilityToken.accessToken,
+    "reconnected-during-refresh-access",
+  );
   await assert.rejects(
     broker.resolveHostedPersonalProviderToken({ provider: "google_workspace", connectionId: completed.connectionId, organizationId, userId, projectId, operation: "events.list" }),
     (error: unknown) => error instanceof broker.HostedPersonalOAuthError && error.code === "OAUTH_OPERATION_DENIED",

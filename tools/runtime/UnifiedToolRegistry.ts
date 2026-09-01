@@ -25,6 +25,7 @@ import {
 } from "../../src/kestrel/contracts/tool-contract.js";
 import {
   parseDurablePreparedInvocationId,
+  parsePreparedToolCallV1,
   type AgentToolResultV2,
   type PreparedToolCallV1,
   type ResolvedModelToolIntentV1,
@@ -86,6 +87,12 @@ import {
 import { isFileTextReadToolName } from "../../src/runtime/fileTextReadTools.js";
 import { withPreparedExecCommandApprovalContext } from "./approvedExecCommandContext.js";
 import type { RunnerWorkflowRunAuthorityV1 } from "@kestrel-agents/protocol";
+import {
+  BROWSER_SERVICE_PORT_VERSION,
+  isBrowserToolName,
+  isConformingBrowserServicePort,
+} from "../../src/browser/contracts.js";
+import { createKestrelOneBrowserService } from "../kestrelOne/browserService.js";
 
 type CapabilityManifestItem = ToolCapabilityMetadata & {
   name: string;
@@ -139,10 +146,16 @@ type PinnedExecutionSource = {
   ) => (input: unknown) => Promise<unknown>;
   retain?: (() => void) | undefined;
   release?: (() => Promise<void> | void) | undefined;
+  releasePrepared?: ((prepared: PreparedToolCallV1) => Promise<void> | void) | undefined;
   transformInput?:
     | ((input: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>)
     | undefined;
   inputAdapterId?: string | undefined;
+  resolveExecutionClass?: ((input: Record<string, unknown>) => import("../../src/mode/contracts.js").ToolExecutionClass) | undefined;
+  prepareInputAdapter?: ((input: Record<string, unknown>) =>
+    | import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1
+    | Promise<import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1>) | undefined;
+  resolvePolicy?: ((input: Record<string, unknown>) => Promise<import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined>) | undefined;
 };
 
 interface WorkspaceSkillReadProgress {
@@ -748,6 +761,18 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         this.builtInDescriptors.has(source.pinned.descriptor.toolId),
       );
       const normalizedEffectiveInput = asRecord(effectiveInput);
+      const browserResolvedPolicy = await source.resolvePolicy?.(
+        normalizedEffectiveInput ?? {},
+      );
+      const effectivePolicy = browserResolvedPolicy === undefined
+        ? input.policy
+        : {
+            decision: browserResolvedPolicy.decision,
+            policyRevision: hashCanonical({
+              upstreamPolicyRevision: input.policy.policyRevision,
+              browserPolicyRevision: browserResolvedPolicy.policyRevision,
+            }),
+          };
       const execCommandContinuation =
         input.activation.descriptor.toolId === "exec_command" &&
         typeof normalizedEffectiveInput?.sessionId === "string" &&
@@ -797,8 +822,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               budgeted.shortCircuitResult,
         };
       }
+      const preservesBrowserApprovalAuthority =
+        isBrowserToolName(input.activation.descriptor.toolId) &&
+        effectivePolicy.decision === "allow";
       const stableApproval =
-        input.policy.decision === "approval_required" &&
+        (effectivePolicy.decision === "approval_required" ||
+          preservesBrowserApprovalAuthority) &&
         !workflowAuthorityAllows &&
         !rememberedExecCommandMatch &&
         !execCommandContinuation &&
@@ -806,9 +835,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         options.runContext !== undefined
           ? createPreparedToolApprovalAuthorityV2({
               activation: input.activation,
-              executionClass: source.pinned.descriptor.capability.executionClass,
+              executionClass: source.resolveExecutionClass?.(asRecord(effectiveInput) ?? {}) ??
+                source.pinned.descriptor.capability.executionClass,
               effectiveInput: asRecord(effectiveInput) ?? {},
-              policyRevision: input.policy.policyRevision,
+              policyRevision: effectivePolicy.policyRevision,
               approvalAuthorityRevision: input.approval.authorityRevision,
               capabilities: input.approvalCapabilities ?? [],
               runContext: options.runContext,
@@ -822,9 +852,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         origin: input.origin,
         effectiveInput: asRecord(effectiveInput) ?? {},
         policy: workflowAuthorityAllows || rememberedExecCommandMatch || execCommandContinuation
-          ? { ...input.policy, decision: "allow" }
-          : input.policy,
-        ...(input.approval === undefined ? {} : { approval: input.approval }),
+          ? { ...effectivePolicy, decision: "allow" }
+          : effectivePolicy,
+        ...((effectivePolicy.decision !== "approval_required" &&
+            !preservesBrowserApprovalAuthority) ||
+          input.approval === undefined
+          ? {}
+          : { approval: input.approval }),
         ...(stableApproval ?? {}),
         inputAdapters: [
           ...(source.inputAdapterId === undefined
@@ -835,6 +869,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                   metadata: {},
                 },
               ]),
+          ...(source.prepareInputAdapter === undefined
+            ? []
+            : [await source.prepareInputAdapter(asRecord(effectiveInput) ?? {})]),
           ...(input.activation.descriptor.toolId === "dev.shell.run" ||
           input.activation.descriptor.toolId === "exec_command"
             ? [
@@ -872,7 +909,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   async inspectToolCall(
     input: Parameters<NonNullable<ToolGateway["inspectToolCall"]>>[0],
     options: ToolGatewayCallOptions = {},
-  ): Promise<{ effectiveInput: Record<string, unknown> }> {
+  ): Promise<{
+    effectiveInput: Record<string, unknown>;
+    executionClass?: import("../../src/mode/contracts.js").ToolExecutionClass | undefined;
+    policy?: import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined;
+  }> {
     const authorizationProvider = await this.ensureExecutionAuthorization(
       options.runContext,
     );
@@ -947,13 +988,20 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               input: transformedValidatedInput,
               runtimeBudgetRemainingMs: options.runtimeBudgetRemainingMs,
             });
-      return {
-        effectiveInput: validatePinnedInput(
+      const effectiveInput = validatePinnedInput(
           source.pinned.descriptor.toolId,
           budgeted.input,
           inputValidator,
           this.builtInDescriptors.has(source.pinned.descriptor.toolId),
-        ),
+        );
+      const normalizedEffectiveInput = asRecord(effectiveInput) ?? {};
+      const policy = await source.resolvePolicy?.(normalizedEffectiveInput);
+      return {
+        effectiveInput: normalizedEffectiveInput,
+        ...(source.resolveExecutionClass === undefined
+          ? {}
+          : { executionClass: source.resolveExecutionClass(normalizedEffectiveInput) }),
+        ...(policy === undefined ? {} : { policy }),
       };
     } finally {
       if (source !== snapshotSource) await source.release?.();
@@ -1008,9 +1056,18 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       let persistCompletedCapabilityRawOutput:
         | ((rawOutput: unknown) => Promise<void>)
         | undefined;
+      let acknowledgeExternalEffect: (() => Promise<void>) | undefined;
       const preparedHandler = source.createHandler(
         {
           ...options,
+          acknowledgeExternalEffect: async () => {
+            if (acknowledgeExternalEffect === undefined) {
+              throw new Error(
+                "External-effect dispatch acknowledgement is unavailable for this prepared execution.",
+              );
+            }
+            await acknowledgeExternalEffect();
+          },
           persistCompletedCapabilityRawOutput: (rawOutput) => {
             if (persistCompletedCapabilityRawOutput === undefined) {
               throw new Error(
@@ -1029,12 +1086,14 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           handler: (toolInput, lifecycle) => {
             persistCompletedCapabilityRawOutput =
               lifecycle?.persistCompletedCapabilityResult;
+            acknowledgeExternalEffect = lifecycle?.acknowledgeExternalEffect;
             return preparedHandler(toolInput);
           },
         },
         signal: options.signal,
         persistCompletedCapabilityResult:
           options.persistCompletedCapabilityResult,
+        acknowledgeExternalEffect: options.acknowledgeExternalEffect,
       });
       if (
         result.outcome.kind === "failure" &&
@@ -1055,9 +1114,18 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             let persistRetryCapabilityRawOutput:
               | ((rawOutput: unknown) => Promise<void>)
               | undefined;
+            let acknowledgeRetryExternalEffect: (() => Promise<void>) | undefined;
             const retryHandler = retrySource.createHandler(
               {
                 ...options,
+                acknowledgeExternalEffect: async () => {
+                  if (acknowledgeRetryExternalEffect === undefined) {
+                    throw new Error(
+                      "External-effect dispatch acknowledgement is unavailable for this prepared execution.",
+                    );
+                  }
+                  await acknowledgeRetryExternalEffect();
+                },
                 persistCompletedCapabilityRawOutput: (rawOutput) => {
                   if (persistRetryCapabilityRawOutput === undefined) {
                     throw new Error(
@@ -1076,12 +1144,15 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                 handler: (toolInput, lifecycle) => {
                   persistRetryCapabilityRawOutput =
                     lifecycle?.persistCompletedCapabilityResult;
+                  acknowledgeRetryExternalEffect =
+                    lifecycle?.acknowledgeExternalEffect;
                   return retryHandler(toolInput);
                 },
               },
               signal: options.signal,
               persistCompletedCapabilityResult:
                 options.persistCompletedCapabilityResult,
+              acknowledgeExternalEffect: options.acknowledgeExternalEffect,
             });
           } finally {
             await retrySource.release?.();
@@ -1122,28 +1193,79 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     }
   }
 
-  async releasePreparedToolCall(prepared: PreparedToolCallV1): Promise<void> {
+  async resolvePreparedExternalEffectDispatch(
+    input: PreparedToolCallV1,
+    options: Pick<ToolGatewayCallOptions, "runContext"> = {},
+  ): Promise<
+    | import("../../src/io/ToolInvocationSupport.js").DurableExternalEffectDispatchV1
+    | undefined
+  > {
+    const prepared = parsePreparedToolCallV1(input);
+    if (
+      defaultToolCatalog.getDurableExternalEffectDispatch(
+        prepared.activation.descriptor.toolId,
+      ) === undefined
+    ) {
+      return;
+    }
     const key = preparedExecutionKey(prepared);
+    const retainedSource = this.preparedExecutions.get(key);
+    const source =
+      retainedSource ??
+      (options.runContext === undefined
+        ? undefined
+        : this.rehydratePreparedExecution(prepared, options.runContext));
+    if (source === undefined) return;
+    try {
+      if (
+        hashCanonical(source.pinned.activation) !==
+        hashCanonical(prepared.activation)
+      ) {
+        return;
+      }
+      const executionClass =
+        source.resolveExecutionClass?.(prepared.effectiveInput) ??
+        source.pinned.descriptor.capability.executionClass;
+      return executionClass === "external_side_effect"
+        ? source.pinned.durableExternalEffectDispatch
+        : undefined;
+    } finally {
+      if (source !== retainedSource) await source.release?.();
+    }
+  }
+
+  async releasePreparedToolCall(prepared: PreparedToolCallV1): Promise<void> {
+    const exactPrepared = parsePreparedToolCallV1(prepared);
+    const key = preparedExecutionKey(exactPrepared);
     const existingRelease = this.releasingPreparedExecutions.get(key);
     if (existingRelease !== undefined) {
       await existingRelease;
       return;
     }
-    if (this.executingPreparedExecutionKeys.has(key)) return;
-    const source = this.preparedExecutions.get(key);
+    if (
+      this.closed ||
+      this.isPreparedExecutionTerminal(exactPrepared, key) ||
+      this.executingPreparedExecutionKeys.has(key)
+    ) return;
+    const retainedSource = this.preparedExecutions.get(key);
+    const source =
+      retainedSource ?? this.rehydratePreparedReleaseExecution(exactPrepared);
     if (source === undefined) {
-      if (this.closed || this.isPreparedExecutionTerminal(prepared, key))
-        return;
-      this.markPreparedExecutionTerminal(prepared, key);
+      this.markPreparedExecutionTerminal(exactPrepared, key);
       return;
     }
-    if (this.closed) return;
-    this.markPreparedExecutionTerminal(prepared, key);
-    const release = Promise.resolve().then(() => source.release?.());
+    const release = Promise.resolve().then(async () => {
+      await source.releasePrepared?.(exactPrepared);
+      this.markPreparedExecutionTerminal(exactPrepared, key);
+      await source.release?.();
+    });
     this.releasingPreparedExecutions.set(key, release);
     try {
       await release;
-      if (this.preparedExecutions.get(key) === source) {
+      if (
+        retainedSource !== undefined &&
+        this.preparedExecutions.get(key) === source
+      ) {
         this.preparedExecutions.delete(key);
       }
     } finally {
@@ -1800,9 +1922,46 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           { recoverable: false, toolName: descriptor.toolId },
         );
       }
+      const hasExecutionClassResolver =
+        defaultToolCatalog.resolveExecutionClass(descriptor.toolId, {}) !== undefined;
+      const hasPreparedInputAdapter =
+        defaultToolCatalog.prepareInputAdapter(descriptor.toolId, {}) !== undefined;
+      const resolveExecutionClass = (input: Record<string, unknown>) =>
+        defaultToolCatalog.resolveExecutionClass(descriptor.toolId, input) ??
+        descriptor.capability.executionClass;
+      const durableExternalEffectDispatch =
+        defaultToolCatalog.getDurableExternalEffectDispatch(
+          descriptor.toolId,
+        );
       return {
-        pinned: { descriptor, activation, validator, normalizer },
+        pinned: {
+          descriptor,
+          activation,
+          validator,
+          normalizer,
+          ...(hasExecutionClassResolver ? { resolveExecutionClass } : {}),
+          ...(durableExternalEffectDispatch === undefined
+            ? {}
+            : { durableExternalEffectDispatch }),
+        },
         inputAdapterId: "kestrel.builtin-input-normalizer:v1",
+        ...(hasExecutionClassResolver ? { resolveExecutionClass } : {}),
+        ...(hasPreparedInputAdapter === false ? {} : {
+          prepareInputAdapter: (input: Record<string, unknown>) =>
+            defaultToolCatalog.prepareInputAdapter(
+              descriptor.toolId,
+              input,
+              activeContext,
+            )!,
+        }),
+        releasePrepared: (prepared: PreparedToolCallV1) =>
+          defaultToolCatalog.releasePrepared(
+            descriptor.toolId,
+            prepared,
+            activeContext,
+          ),
+        resolvePolicy: (input: Record<string, unknown>) =>
+          defaultToolCatalog.resolvePolicy(descriptor.toolId, activeContext, input),
         transformInput: async (input) => {
           const normalized = normalizeToolActionInput(
             descriptor.toolId,
@@ -1867,6 +2026,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                   ...executionContext,
                   persistCompletedCapabilityResult:
                     handlerOptions.persistCompletedCapabilityRawOutput,
+                  acknowledgeExternalEffect:
+                    handlerOptions.acknowledgeExternalEffect,
                 };
           const handlers = defaultToolCatalog.createRawHandlers(
             [descriptor.toolId],
@@ -1880,6 +2041,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                   toolConsole: handlerOptions.console,
                   signal: handlerOptions.signal,
                 },
+            prepared,
           );
           const handler = handlers[descriptor.toolId];
           if (handler === undefined) {
@@ -1963,6 +2125,60 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     return this.createPinnedExecutionSource(
       descriptor,
       input.activation,
+      runContext,
+    );
+  }
+
+  /**
+   * Rebuilds only a fixed built-in release hook after process restart. The
+   * prepared activation and stable hosted authority remain the identity; the
+   * current execution ticket supplies transport authority and is never read
+   * from persisted prepared-call input.
+   */
+  private rehydratePreparedReleaseExecution(
+    prepared: PreparedToolCallV1,
+  ): PinnedExecutionSource | undefined {
+    const descriptor = this.builtInDescriptors.get(
+      prepared.activation.descriptor.toolId,
+    );
+    if (
+      descriptor === undefined ||
+      hashCanonical(toToolDescriptorRefV1(descriptor)) !==
+        hashCanonical(prepared.activation.descriptor)
+    ) return;
+    const stable = prepared.stableAuthority;
+    const executionTicket =
+      this.executionTicketsByRun.get(prepared.runId) ??
+      this.resolveUnambiguousSessionExecutionTicket(prepared.sessionId);
+    const runContext: ToolRunContext | undefined =
+      stable === undefined || executionTicket === undefined
+        ? undefined
+        : {
+            runId: prepared.runId,
+            sessionId: prepared.sessionId,
+            payload: {
+              actor: stable.actor,
+              hostedApprovalAuthority: {
+                organizationId: stable.organizationId,
+                environmentId: stable.environmentId,
+                projectId: stable.projectId,
+                threadId: stable.threadId,
+              },
+              mcpContext: {
+                organizationId: stable.organizationId,
+                environmentId: stable.environmentId,
+                projectId: stable.projectId,
+                threadId: stable.threadId,
+                ...(typeof stable.resourceAuthority.gatewayUrl === "string"
+                  ? { gatewayUrl: stable.resourceAuthority.gatewayUrl }
+                  : {}),
+              },
+            },
+            sessionState: {},
+          };
+    return this.createPinnedExecutionSource(
+      descriptor,
+      prepared.activation,
       runContext,
     );
   }
@@ -2461,6 +2677,14 @@ function resolveScopedRunContext(
         }
       : {}),
   };
+  if (
+    scopedBaseContext.browserService === undefined &&
+    scopedBaseContext.kestrelOne?.executionTicket
+  ) {
+    scopedBaseContext.browserService = createKestrelOneBrowserService(
+      scopedBaseContext,
+    );
+  }
   return {
     allowlist: toolAllowlist === undefined ? fallback : new Set(toolAllowlist),
     builtInContext: withDefaultFileSystemPolicy({
@@ -2577,15 +2801,23 @@ function resolveRuntimeToolRunContext(
   const projectContext =
     asRecord(payloadRecord?.projectContext) ??
     asRecord(metadata?.projectContext);
+  const workspace = asRecord(payloadRecord?.workspace);
   const missionControl =
     asRecord(payloadRecord?.missionControl) ??
     asRecord(metadata?.missionControl);
   const projectId =
     asNonEmptyString(projectContext?.projectId) ??
-    asNonEmptyString(missionControl?.projectId);
+    asNonEmptyString(missionControl?.projectId) ??
+    asNonEmptyString(workspace?.projectId);
   const threadId =
     asNonEmptyString(orchestration?.threadId) ??
     asNonEmptyString(metadata?.threadId);
+  const turnId = asNonEmptyString(metadata?.turnId);
+  const activeTurnId = asNonEmptyString(metadata?.activeTurnId);
+  const activeTurnAttachments =
+    turnId !== undefined && activeTurnId === turnId
+      ? projectActiveTurnAttachmentMetadata(payloadRecord?.attachments)
+      : undefined;
   const activeTaskId =
     asNonEmptyString(orchestration?.activeTaskId) ??
     asNonEmptyString(orchestration?.taskId) ??
@@ -2607,11 +2839,51 @@ function resolveRuntimeToolRunContext(
     ...(projectId !== undefined ? { projectId } : {}),
     ...(approvalId !== undefined ? { approvalId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
+    ...(turnId !== undefined && activeTurnId === turnId ? { turnId } : {}),
+    ...(activeTurnAttachments === undefined ? {} : { activeTurnAttachments }),
     ...(activeTaskId !== undefined ? { activeTaskId } : {}),
     ...(delegationId !== undefined ? { delegationId } : {}),
     ...(delegationDepth !== undefined ? { delegationDepth } : {}),
     ...(rootDelegationId !== undefined ? { rootDelegationId } : {}),
   };
+}
+
+function projectActiveTurnAttachmentMetadata(value: unknown) {
+  if (!Array.isArray(value)) return;
+  const attachments = value.map((candidate) => {
+    const record = asRecord(candidate);
+    const attachmentId = asNonEmptyString(record?.attachmentId);
+    const filename = asNonEmptyString(record?.filename);
+    const declaredMediaType = asNonEmptyString(record?.declaredMediaType) ??
+      "application/octet-stream";
+    const detectedMediaType = asNonEmptyString(record?.detectedMediaType) ??
+      asNonEmptyString(record?.mimeType);
+    const sha256 = asNonEmptyString(record?.sha256);
+    const sizeBytes = record?.sizeBytes;
+    if (
+      attachmentId === undefined ||
+      filename === undefined ||
+      detectedMediaType === undefined ||
+      sha256 === undefined ||
+      !/^[0-9a-f]{64}$/u.test(sha256) ||
+      !Number.isSafeInteger(sizeBytes) ||
+      Number(sizeBytes) < 0
+    ) return;
+    return {
+      attachmentId,
+      filename,
+      declaredMediaType,
+      detectedMediaType,
+      sizeBytes: Number(sizeBytes),
+      sha256,
+    };
+  });
+  if (attachments.some((attachment) => attachment === undefined)) return;
+  const resolved = attachments as NonNullable<typeof attachments[number]>[];
+  if (new Set(resolved.map((attachment) => attachment.attachmentId)).size !== resolved.length) {
+    return;
+  }
+  return resolved;
 }
 
 function readPendingApprovalId(state: unknown): string | undefined {
@@ -3168,6 +3440,9 @@ function isBuiltInToolDisabledByContext(
   if (name.startsWith("dev.shell.")) {
     return context.devShell?.enabled !== true;
   }
+  if (isBrowserToolName(name)) {
+    return !isConformingBrowserServicePort(context.browserService);
+  }
 
   return false;
 }
@@ -3182,6 +3457,10 @@ function toToolRuntimeStatus(
     providers: {
       mcp: status,
       tools: context.providerConfigurations?.list() ?? [],
+      browser: {
+        contractVersion: BROWSER_SERVICE_PORT_VERSION,
+        ready: isConformingBrowserServicePort(context.browserService),
+      },
     },
   };
 }

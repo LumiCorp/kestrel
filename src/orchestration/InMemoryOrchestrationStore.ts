@@ -1,5 +1,10 @@
 import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionRecord, AssemblyChangeProposalRecord, ContextCheckpointRecord, ContextPolicyDefinitionRecord, ContextSummaryArtifactRecord, ConversationTurnTerminalEnvelopeV1, DelegationRecord, InteractionRequestRecord, OperatorAttentionRecord, OperatorFocusRecord, SpecialistDefinitionRecord, ThreadAssemblyRecord, ThreadCompactionEventRecord, ThreadRecord } from "../kestrel/contracts/orchestration.js";
-import { compareThreadAssemblyRecordsNewestFirst } from "./threadAssemblyOrdering.js";
+import {
+  assertMatchingThreadAssemblyRetry,
+  compareThreadAssemblyRecordsNewestFirst,
+  orderThreadAssemblyRecordAfter,
+  selectLatestThreadAssemblyRecord,
+} from "./threadAssemblyOrdering.js";
 import { parseHarnessEconomicsPolicyV1 } from "../economics/policy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
@@ -280,9 +285,21 @@ export class InMemoryOrchestrationStore implements OrchestrationStore {
       .map((record) => clone(record));
   }
 
-  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<void> {
+  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<ThreadAssemblyRecord> {
+    const duplicate = [...this.threadAssemblies.values()]
+      .flat()
+      .find((candidate) => candidate.recordId === record.recordId);
+    if (duplicate !== undefined) {
+      assertMatchingThreadAssemblyRetry(record, duplicate);
+      return clone(duplicate);
+    }
     const existing = this.threadAssemblies.get(record.threadId) ?? [];
-    this.threadAssemblies.set(record.threadId, [...existing, clone(record)]);
+    const persisted = orderThreadAssemblyRecordAfter(
+      record,
+      selectLatestThreadAssemblyRecord(existing),
+    );
+    this.threadAssemblies.set(record.threadId, [...existing, clone(persisted)]);
+    return clone(persisted);
   }
 
   async listThreadAssemblyRecords(threadId: string): Promise<ThreadAssemblyRecord[]> {

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, stat, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
@@ -96,13 +96,25 @@ export function createDesktopProjectRunLedger(input: {
   return {
     async readRuns() {
       try {
-        const parsed = JSON.parse(await readFile(input.ledgerPath, "utf8")) as unknown;
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        const parsed = JSON.parse(
+          await readFile(input.ledgerPath, "utf8"),
+        ) as unknown;
+        if (
+          typeof parsed !== "object" ||
+          parsed === null ||
+          Array.isArray(parsed)
+        ) {
           return [];
         }
         const runs = (parsed as { runs?: unknown }).runs;
         return Array.isArray(runs)
-          ? runs.map(parseLedgerRun).filter((run): run is DesktopManagedProjectRun => run !== undefined).map(settleHydratedRun).slice(0, limit)
+          ? runs
+              .map(parseLedgerRun)
+              .filter(
+                (run): run is DesktopManagedProjectRun => run !== undefined,
+              )
+              .map(settleHydratedRun)
+              .slice(0, limit)
           : [];
       } catch {
         return [];
@@ -115,14 +127,18 @@ export function createDesktopProjectRunLedger(input: {
         .slice(0, limit)
         .map(sanitizeRunForLedger);
       await mkdir(path.dirname(input.ledgerPath), { recursive: true });
-      await writeFile(input.ledgerPath, `${JSON.stringify({ version: 1, runs: sanitized }, null, 2)}\n`, "utf8");
+      await writeFile(
+        input.ledgerPath,
+        `${JSON.stringify({ version: 1, runs: sanitized }, null, 2)}\n`,
+        "utf8",
+      );
     },
   };
 }
 
 function parseLedgerRun(value: unknown): DesktopManagedProjectRun | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return ;
+    return;
   }
   const record = value as Record<string, unknown>;
   if (
@@ -136,7 +152,7 @@ function parseLedgerRun(value: unknown): DesktopManagedProjectRun | undefined {
     typeof record.startedAt !== "string" ||
     typeof record.updatedAt !== "string"
   ) {
-    return ;
+    return;
   }
   if (
     record.status !== "running" &&
@@ -145,7 +161,7 @@ function parseLedgerRun(value: unknown): DesktopManagedProjectRun | undefined {
     record.status !== "failed" &&
     record.status !== "stopped"
   ) {
-    return ;
+    return;
   }
   return {
     runId: record.runId,
@@ -157,13 +173,27 @@ function parseLedgerRun(value: unknown): DesktopManagedProjectRun | undefined {
     status: record.status,
     startedAt: record.startedAt,
     updatedAt: record.updatedAt,
-    ...(typeof record.completedAt === "string" ? { completedAt: record.completedAt } : {}),
-    ...(typeof record.exitCode === "number" ? { exitCode: record.exitCode } : {}),
-    ...(typeof record.stopSignal === "string" ? { stopSignal: record.stopSignal } : {}),
-    ...(Array.isArray(record.previewUrls)
-      ? { previewUrls: record.previewUrls.map(parseLedgerPreviewUrl).filter((entry): entry is DesktopManagedProjectRunPreviewUrl => entry !== undefined) }
+    ...(typeof record.completedAt === "string"
+      ? { completedAt: record.completedAt }
       : {}),
-    ...(typeof record.primaryPreviewUrl === "string" && isPreviewableHttpUrl(record.primaryPreviewUrl)
+    ...(typeof record.exitCode === "number"
+      ? { exitCode: record.exitCode }
+      : {}),
+    ...(typeof record.stopSignal === "string"
+      ? { stopSignal: record.stopSignal }
+      : {}),
+    ...(Array.isArray(record.previewUrls)
+      ? {
+          previewUrls: record.previewUrls
+            .map(parseLedgerPreviewUrl)
+            .filter(
+              (entry): entry is DesktopManagedProjectRunPreviewUrl =>
+                entry !== undefined,
+            ),
+        }
+      : {}),
+    ...(typeof record.primaryPreviewUrl === "string" &&
+    isPreviewableHttpUrl(record.primaryPreviewUrl)
       ? { primaryPreviewUrl: record.primaryPreviewUrl }
       : {}),
     ...(Array.isArray(record.outputTail)
@@ -171,16 +201,22 @@ function parseLedgerRun(value: unknown): DesktopManagedProjectRun | undefined {
           outputTail: record.outputTail
             .map(parseLedgerOutputLine)
             .filter(
-              (
-                entry,
-              ): entry is DesktopManagedProjectRunOutputLine =>
+              (entry): entry is DesktopManagedProjectRunOutputLine =>
                 entry !== undefined,
             )
             .slice(-RUN_TAIL_LIMIT),
         }
       : {}),
-    stdoutTail: Array.isArray(record.stdoutTail) ? record.stdoutTail.filter((line): line is string => typeof line === "string") : [],
-    stderrTail: Array.isArray(record.stderrTail) ? record.stderrTail.filter((line): line is string => typeof line === "string") : [],
+    stdoutTail: Array.isArray(record.stdoutTail)
+      ? record.stdoutTail.filter(
+          (line): line is string => typeof line === "string",
+        )
+      : [],
+    stderrTail: Array.isArray(record.stderrTail)
+      ? record.stderrTail.filter(
+          (line): line is string => typeof line === "string",
+        )
+      : [],
   };
 }
 
@@ -205,9 +241,11 @@ function parseLedgerOutputLine(
   };
 }
 
-function parseLedgerPreviewUrl(value: unknown): DesktopManagedProjectRunPreviewUrl | undefined {
+function parseLedgerPreviewUrl(
+  value: unknown,
+): DesktopManagedProjectRunPreviewUrl | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return ;
+    return;
   }
   const record = value as Record<string, unknown>;
   if (
@@ -221,9 +259,14 @@ function parseLedgerPreviewUrl(value: unknown): DesktopManagedProjectRunPreviewU
     Number.isFinite(record.count) === false ||
     record.count < 1
   ) {
-    return ;
+    return;
   }
   return {
+    urlId:
+      typeof record.urlId === "string" &&
+      /^preview-[a-f0-9]{32}$/u.test(record.urlId)
+        ? record.urlId
+        : desktopProjectRunPreviewUrlId(record.url),
     url: record.url,
     source: record.source,
     firstSeenAt: record.firstSeenAt,
@@ -233,7 +276,9 @@ function parseLedgerPreviewUrl(value: unknown): DesktopManagedProjectRunPreviewU
   };
 }
 
-function settleHydratedRun(run: DesktopManagedProjectRun): DesktopManagedProjectRun {
+function settleHydratedRun(
+  run: DesktopManagedProjectRun,
+): DesktopManagedProjectRun {
   if (run.status !== "running" && run.status !== "stopping") {
     return run;
   }
@@ -252,18 +297,18 @@ function settleHydratedRun(run: DesktopManagedProjectRun): DesktopManagedProject
   };
 }
 
-function sanitizeRunForLedger(run: DesktopManagedProjectRun): DesktopManagedProjectRun {
+function sanitizeRunForLedger(
+  run: DesktopManagedProjectRun,
+): DesktopManagedProjectRun {
   const previewUrls = run.previewUrls?.map((entry) => ({
     ...entry,
     url: redactDiagnosticText(entry.url).value,
     line: redactDiagnosticText(entry.line).value,
   }));
-  const outputTail = run.outputTail
-    ?.slice(-RUN_TAIL_LIMIT)
-    .map((entry) => ({
-      ...entry,
-      line: redactDiagnosticText(entry.line).value,
-    }));
+  const outputTail = run.outputTail?.slice(-RUN_TAIL_LIMIT).map((entry) => ({
+    ...entry,
+    line: redactDiagnosticText(entry.line).value,
+  }));
   return {
     ...run,
     projectPath: redactDiagnosticText(run.projectPath).value,
@@ -285,7 +330,9 @@ function appendTail(existing: string[], line: string): string[] {
     return existing;
   }
   const next = [...existing, normalized];
-  return next.length > RUN_TAIL_LIMIT ? next.slice(next.length - RUN_TAIL_LIMIT) : next;
+  return next.length > RUN_TAIL_LIMIT
+    ? next.slice(next.length - RUN_TAIL_LIMIT)
+    : next;
 }
 
 function appendOutputTail(
@@ -316,9 +363,11 @@ function extractPreviewUrlsFromLine(line: string): string[] {
 function isPreviewableHttpUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
-    return (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
       parsed.username.length === 0 &&
-      parsed.password.length === 0;
+      parsed.password.length === 0
+    );
   } catch {
     return false;
   }
@@ -348,6 +397,7 @@ function appendPreviewUrls(
     const existingIndex = next.findIndex((entry) => entry.url === url);
     if (existingIndex === -1) {
       next.push({
+        urlId: desktopProjectRunPreviewUrlId(url),
         url,
         source: input.source,
         firstSeenAt: input.observedAt,
@@ -372,7 +422,10 @@ function appendPreviewUrls(
   };
 }
 
-function compareRunsByStartDesc(left: DesktopManagedProjectRun, right: DesktopManagedProjectRun): number {
+function compareRunsByStartDesc(
+  left: DesktopManagedProjectRun,
+  right: DesktopManagedProjectRun,
+): number {
   return right.startedAt.localeCompare(left.startedAt);
 }
 
@@ -417,15 +470,18 @@ export async function readProjectLauncherDescriptor(input: {
   try {
     const manifestStat = await stat(manifestPath);
     if (manifestStat.isFile() === false) {
-      return ;
+      return;
     }
   } catch {
-    return ;
+    return;
   }
 
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    parsed = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
   } catch (error) {
     throw createDesktopError({
       code: "desktop.invalid_package_json",
@@ -435,31 +491,44 @@ export async function readProjectLauncherDescriptor(input: {
   }
 
   const scriptsValue = parsed.scripts;
-  const scripts = typeof scriptsValue === "object" && scriptsValue !== null && Array.isArray(scriptsValue) === false
-    ? Object.entries(scriptsValue)
-        .filter((entry): entry is [string, string] => typeof entry[0] === "string" && typeof entry[1] === "string")
-        .map(([name, command]) => ({
-          name,
-          command,
-        }))
-    : [];
+  const scripts =
+    typeof scriptsValue === "object" &&
+    scriptsValue !== null &&
+    Array.isArray(scriptsValue) === false
+      ? Object.entries(scriptsValue)
+          .filter(
+            (entry): entry is [string, string] =>
+              typeof entry[0] === "string" && typeof entry[1] === "string",
+          )
+          .map(([name, command]) => ({
+            name,
+            command,
+          }))
+      : [];
   if (scripts.length === 0) {
-    return ;
+    return;
   }
 
-  const normalizedPackageManager = normalizePackageManagerField(parsed.packageManager);
-  const packageManager = normalizedPackageManager.packageManager ?? input.packageManagerOverride;
+  const normalizedPackageManager = normalizePackageManagerField(
+    parsed.packageManager,
+  );
+  const packageManager =
+    normalizedPackageManager.packageManager ?? input.packageManagerOverride;
 
   return {
     projectPath,
     manifestPath,
     scripts,
     ...(packageManager !== undefined ? { packageManager } : {}),
-    packageManagerSelectionRequired: normalizedPackageManager.packageManager === undefined
-      && normalizedPackageManager.unsupportedPackageManager === undefined
-      && input.packageManagerOverride === undefined,
+    packageManagerSelectionRequired:
+      normalizedPackageManager.packageManager === undefined &&
+      normalizedPackageManager.unsupportedPackageManager === undefined &&
+      input.packageManagerOverride === undefined,
     ...(normalizedPackageManager.unsupportedPackageManager !== undefined
-      ? { unsupportedPackageManager: normalizedPackageManager.unsupportedPackageManager }
+      ? {
+          unsupportedPackageManager:
+            normalizedPackageManager.unsupportedPackageManager,
+        }
       : {}),
   };
 }
@@ -496,7 +565,10 @@ export class DesktopProjectRunRegistry {
     if (this.options.ledger === undefined) {
       return;
     }
-    this.recentRuns = (await this.options.ledger.readRuns()).slice(0, RECENT_RUN_LIMIT);
+    this.recentRuns = (await this.options.ledger.readRuns()).slice(
+      0,
+      RECENT_RUN_LIMIT,
+    );
     void this.emitChange({ immediate: true });
   }
 
@@ -508,38 +580,38 @@ export class DesktopProjectRunRegistry {
     return [...this.runningById.values()].some((run) => run.settled === false);
   }
 
-  resolvePreviewUrl(input: {
-    runId: string;
-    url?: string | undefined;
-  }): {
+  resolvePreviewUrl(input: { runId: string; urlId: string }): {
     run: DesktopManagedProjectRun;
     url: string;
   } {
-    const run = this.findRun(input.runId);
-    if (run === undefined) {
+    const running = this.runningById.get(input.runId);
+    const run = running?.snapshot;
+    if (
+      running === undefined ||
+      running.settled ||
+      run === undefined ||
+      run.status !== "running"
+    ) {
       throw createDesktopError({
-        code: "desktop.project_run_not_found",
-        message: "The selected project run no longer exists.",
+        code: "desktop.project_run_not_running",
+        message: "The selected Project run is no longer running.",
       });
     }
-    const requestedUrl = input.url ?? run.primaryPreviewUrl;
-    if (typeof requestedUrl !== "string" || requestedUrl.trim().length === 0) {
+    const urlId = input.urlId.trim();
+    if (urlId.length === 0) {
       throw createDesktopError({
         code: "desktop.project_run_preview_url_missing",
-        message: "The selected project run has not emitted a preview URL.",
+        message: "The selected Project run preview identity is missing.",
       });
     }
-    if (isPreviewableHttpUrl(requestedUrl) === false) {
-      throw createDesktopError({
-        code: "desktop.invalid_project_run_preview_url",
-        message: "Project run previews require an http(s) URL without embedded credentials.",
-      });
-    }
-    const matchedUrl = run.previewUrls?.find((entry) => entry.url === requestedUrl)?.url;
+    const matchedUrl = run.previewUrls?.find(
+      (entry) => entry.urlId === urlId,
+    )?.url;
     if (matchedUrl === undefined) {
       throw createDesktopError({
         code: "desktop.project_run_preview_url_not_recorded",
-        message: "Project run previews can only open URLs emitted by that managed run.",
+        message:
+          "Project run previews can only open URLs emitted by that managed run.",
       });
     }
     return {
@@ -575,7 +647,9 @@ export class DesktopProjectRunRegistry {
         message: "Choose npm or pnpm before running this script.",
       });
     }
-    const script = descriptor.scripts.find((entry) => entry.name === input.scriptName);
+    const script = descriptor.scripts.find(
+      (entry) => entry.name === input.scriptName,
+    );
     if (script === undefined) {
       throw createDesktopError({
         code: "desktop.script_not_found",
@@ -596,10 +670,12 @@ export class DesktopProjectRunRegistry {
       resolvePackageManagerCommand(descriptor.packageManager, this.platform()),
       ["run", script.name],
       {
-      cwd: descriptor.projectPath,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      ...(supportsDetachedProcessGroups(this.platform()) ? { detached: true } : {}),
+        cwd: descriptor.projectPath,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+        ...(supportsDetachedProcessGroups(this.platform())
+          ? { detached: true }
+          : {}),
       },
     );
     const settled = createSettledPromise();
@@ -621,8 +697,14 @@ export class DesktopProjectRunRegistry {
       liveKey,
       snapshot,
       child,
-      stdoutReader: readline.createInterface({ input: child.stdout, terminal: false }),
-      stderrReader: readline.createInterface({ input: child.stderr, terminal: false }),
+      stdoutReader: readline.createInterface({
+        input: child.stdout,
+        terminal: false,
+      }),
+      stderrReader: readline.createInterface({
+        input: child.stderr,
+        terminal: false,
+      }),
       settled: false,
       stopRequested: false,
       settlePromise: settled.promise,
@@ -683,7 +765,11 @@ export class DesktopProjectRunRegistry {
     });
     child.on("exit", (code, signal) => {
       void this.settleRun(runId, {
-        status: running.stopRequested ? "stopped" : code === 0 ? "completed" : "failed",
+        status: running.stopRequested
+          ? "stopped"
+          : code === 0
+            ? "completed"
+            : "failed",
         exitCode: typeof code === "number" ? code : undefined,
         stopSignal: signal ?? undefined,
       });
@@ -753,9 +839,11 @@ export class DesktopProjectRunRegistry {
 
   async stopAll(): Promise<void> {
     const runIds = [...this.runningById.keys()];
-    await Promise.all(runIds.map(async (runId) => {
-      await this.stopRun(runId);
-    }));
+    await Promise.all(
+      runIds.map(async (runId) => {
+        await this.stopRun(runId);
+      }),
+    );
     await this.flushNow();
   }
 
@@ -786,14 +874,18 @@ export class DesktopProjectRunRegistry {
       completedAt,
       pendingAction: undefined,
       ...(input.exitCode !== undefined ? { exitCode: input.exitCode } : {}),
-      ...(input.stopSignal !== undefined ? { stopSignal: input.stopSignal } : {}),
+      ...(input.stopSignal !== undefined
+        ? { stopSignal: input.stopSignal }
+        : {}),
     };
     running.snapshot = nextSnapshot;
     this.runningById.delete(runId);
     if (this.liveRunIdByKey.get(running.liveKey) === runId) {
       this.liveRunIdByKey.delete(running.liveKey);
     }
-    this.recentRuns = this.recentRuns.map((entry) => entry.runId === runId ? nextSnapshot : entry);
+    this.recentRuns = this.recentRuns.map((entry) =>
+      entry.runId === runId ? nextSnapshot : entry,
+    );
     await this.emitChange({ immediate: true });
     running.settle(nextSnapshot);
   }
@@ -807,7 +899,9 @@ export class DesktopProjectRunRegistry {
       return;
     }
     running.snapshot = mutate(running.snapshot);
-    this.recentRuns = this.recentRuns.map((entry) => entry.runId === runId ? running.snapshot : entry);
+    this.recentRuns = this.recentRuns.map((entry) =>
+      entry.runId === runId ? running.snapshot : entry,
+    );
     void this.emitChange();
   }
 
@@ -826,7 +920,9 @@ export class DesktopProjectRunRegistry {
     return this.recentRuns.find((entry) => entry.runId === runId);
   }
 
-  private async emitChange(input: { immediate?: boolean | undefined } = {}): Promise<void> {
+  private async emitChange(
+    input: { immediate?: boolean | undefined } = {},
+  ): Promise<void> {
     this.flushPending = true;
     if (input.immediate === true) {
       await this.flushNow();
@@ -854,7 +950,8 @@ export class DesktopProjectRunRegistry {
     const snapshot = this.snapshotRuns();
     this.options.onRunsChanged?.(snapshot);
     if (this.options.ledger !== undefined) {
-      const writePromise = this.options.ledger.writeRuns(snapshot)
+      const writePromise = this.options.ledger
+        .writeRuns(snapshot)
         .catch(() => {})
         .finally(() => {
           this.ledgerWrites.delete(writePromise);
@@ -874,12 +971,12 @@ export class DesktopProjectRunRegistry {
   private findActiveRunByKey(liveKey: string): RunningProjectRun | undefined {
     const runId = this.liveRunIdByKey.get(liveKey);
     if (runId === undefined) {
-      return ;
+      return;
     }
     const running = this.runningById.get(runId);
     if (running === undefined || running.settled) {
       this.liveRunIdByKey.delete(liveKey);
-      return ;
+      return;
     }
     return running;
   }
@@ -910,12 +1007,22 @@ export class DesktopProjectRunRegistry {
         pendingAction,
         updatedAt: this.now().toISOString(),
       };
-      this.recentRuns = this.recentRuns.map((entry) => entry.runId === runId ? running.snapshot : entry);
+      this.recentRuns = this.recentRuns.map((entry) =>
+        entry.runId === runId ? running.snapshot : entry,
+      );
       void this.emitChange({ immediate: true });
-      this.trySignalRunning(running, "SIGTERM", "Failed to stop managed project run");
+      this.trySignalRunning(
+        running,
+        "SIGTERM",
+        "Failed to stop managed project run",
+      );
       running.forceKillTimer = setTimeout(() => {
         if (running.settled === false) {
-          this.trySignalRunning(running, "SIGKILL", "Failed to force kill managed project run");
+          this.trySignalRunning(
+            running,
+            "SIGKILL",
+            "Failed to force kill managed project run",
+          );
         }
       }, this.options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS);
     }
@@ -928,7 +1035,11 @@ export class DesktopProjectRunRegistry {
     failurePrefix: string,
   ): void {
     const childPid = running.child.pid;
-    if (supportsDetachedProcessGroups(this.platform()) && typeof childPid === "number" && childPid > 0) {
+    if (
+      supportsDetachedProcessGroups(this.platform()) &&
+      typeof childPid === "number" &&
+      childPid > 0
+    ) {
       try {
         (this.options.killProcessImpl ?? process.kill)(-childPid, signal);
         return;
@@ -988,4 +1099,11 @@ export class DesktopProjectRunRegistry {
   private platform(): NodeJS.Platform {
     return this.options.platform ?? process.platform;
   }
+}
+
+export function desktopProjectRunPreviewUrlId(url: string): string {
+  if (!isPreviewableHttpUrl(url)) {
+    throw new Error("Desktop Project run preview URL is invalid.");
+  }
+  return `preview-${createHash("sha256").update(new URL(url).href).digest("hex").slice(0, 32)}`;
 }

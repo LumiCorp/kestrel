@@ -149,6 +149,16 @@ export function selectOrphanVolumeIds(input: {
     .sort();
 }
 
+export function selectOrphanMachineIds(input: {
+  inventory: EnvironmentProviderInventory;
+  activeMachineIds: Set<string>;
+}): string[] {
+  return input.inventory.machines
+    .filter((machine) => !input.activeMachineIds.has(machine.id))
+    .map((machine) => machine.id)
+    .sort();
+}
+
 export function retainedFailedRestoreResourceIds(
   results: readonly unknown[]
 ): { machineIds: Set<string>; volumeIds: Set<string> } {

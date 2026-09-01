@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { HOSTED_BROWSER_WORKER_IMAGE_REPOSITORY } from "../src/browser/runtimeReleaseManifest.js";
+
 export const PUBLIC_PACKAGES = [
   "@kestrel-agents/protocol",
   "@kestrel-agents/conversation",
@@ -27,6 +29,7 @@ const FLY_ROLES = [
   "turn-worker",
   "control-worker",
   "runpod-worker",
+  "browser-worker",
 ] as const;
 const DESKTOP_OTA_FROM_VERSIONS = ["0.7.0", "0.8.0"] as const;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/u;
@@ -509,23 +512,28 @@ function parseProduction(value: unknown): ProductionEvidence {
       [],
       "production image role",
     );
+    const role = asString(component.role, "production image role name");
+    const image = asString(component.image, `${role} image`);
     assert.match(
-      asString(component.image, `${String(component.role)} image`),
+      image,
       IMMUTABLE_PRODUCTION_IMAGE_PATTERN,
-      `${String(component.role)} image is mutable`,
+      `${role} image is mutable`,
     );
-    assertRecord(component.smoke, `${String(component.role)} smoke`);
+    if (role === "browser-worker") {
+      assert.ok(
+        image.startsWith(`${HOSTED_BROWSER_WORKER_IMAGE_REPOSITORY}@sha256:`),
+        `browser-worker image must use ${HOSTED_BROWSER_WORKER_IMAGE_REPOSITORY}`,
+      );
+    }
+    assertRecord(component.smoke, `${role} smoke`);
     assertExactKeys(
       component.smoke,
       ["status", "completedAt"],
       [],
-      `${String(component.role)} smoke`,
+      `${role} smoke`,
     );
-    assertPassed(component.smoke.status, `${String(component.role)} smoke`);
-    assertTimestamp(
-      component.smoke.completedAt,
-      `${String(component.role)} smoke`,
-    );
+    assertPassed(component.smoke.status, `${role} smoke`);
+    assertTimestamp(component.smoke.completedAt, `${role} smoke`);
   }
 
   assert.ok(
@@ -547,6 +555,10 @@ function parseProduction(value: unknown): ProductionEvidence {
     assertPassed(canary.status, `canary ${name}`);
     assertTimestamp(canary.completedAt, `canary ${name}`);
   }
+  assert.ok(
+    canaryNames.has("browser-worker-session"),
+    "Browser worker session canary evidence is required",
+  );
   return value as unknown as ProductionEvidence;
 }
 

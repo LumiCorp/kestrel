@@ -1260,6 +1260,76 @@ test("Kestrel agent context builder owns tool-result summaries and model context
   assert.equal(genericContext.text.match(/- status:/gu)?.length, 1);
 });
 
+test("Browser open results keep continuation authority model-visible", () => {
+  const context = buildKestrelAgentToolModelContext({
+    toolName: "browser.open",
+    toolInput: {
+      mode: "qa",
+      target: {
+        kind: "desktop_project_run",
+        projectId: "project-1",
+        runId: "run-1",
+        urlId: "preview-1",
+      },
+    },
+    toolOutput: {
+      version: "browser_tool_result_v1",
+      operation: "browser.open",
+      outcome: "opened",
+      session: {
+        sessionId: "browser-session-1",
+        generation: 7,
+        state: "ready",
+        mode: "qa",
+        expiresAt: "2026-09-01T14:00:00.000Z",
+      },
+    },
+    rawOutputRef: "tool-output:browser-open",
+    status: "OK",
+  });
+
+  assert.match(context.text, /Tool result: browser\.open/u);
+  assert.match(context.text, /- sessionId: browser-session-1/u);
+  assert.match(context.text, /- generation: 7/u);
+  assert.match(context.text, /- state: ready/u);
+  assert.match(context.text, /- mode: qa/u);
+});
+
+test("Browser capture results keep screenshot evidence model-visible", () => {
+  const context = buildKestrelAgentToolModelContext({
+    toolName: "browser.capture",
+    toolInput: {
+      sessionId: "browser-session-1",
+      generation: 7,
+      kind: "screenshot",
+    },
+    toolOutput: {
+      version: "browser_tool_result_v1",
+      operation: "browser.capture",
+      sessionId: "browser-session-1",
+      generation: 7,
+      artifact: {
+        id: "file-browser-screenshot",
+        kind: "browser-screenshot",
+        mediaType: "image/png",
+        bytes: 128,
+        sha256: "a".repeat(64),
+      },
+      normalizedOrigin: "http://127.0.0.1:4317",
+      capturedAt: "2026-09-01T14:00:00.000Z",
+      boundary: "untrusted_browser_content",
+    },
+    rawOutputRef: "tool-output:browser-capture",
+    status: "OK",
+  });
+
+  assert.match(context.text, /- sessionId: browser-session-1/u);
+  assert.match(context.text, /- generation: 7/u);
+  assert.match(context.text, /- artifactId: file-browser-screenshot/u);
+  assert.match(context.text, /- artifactKind: browser-screenshot/u);
+  assert.match(context.text, /- artifactMediaType: image\/png/u);
+});
+
 test("shared filesystem evidence contract requires exact-path inspection", () => {
   assert.match(SHARED_DELIBERATOR_PROMPT, /inspect a user-named workspace path directly/u);
   assert.match(SHARED_DELIBERATOR_PROMPT, /before claiming absence or requesting a copy/u);

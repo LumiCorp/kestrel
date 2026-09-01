@@ -46,6 +46,18 @@ test("Desktop renderer settings never project persisted credentials", () => {
   assert.equal(settings.projects[0]?.label, "kestrel");
 });
 
+test("Desktop renderer projects the disabled Browser App and its stable tools", () => {
+  const projected = toDesktopRendererSettings(createDefaultDesktopSettings());
+  const browser = projected.apps.find((app) => app.id === "built_in.browser");
+  assert.ok(browser);
+  assert.deepEqual(browser.toolNames, [
+    "browser.open", "browser.request_grant", "browser.snapshot", "browser.inspect",
+    "browser.navigate", "browser.interact", "browser.tabs", "browser.capture",
+    "browser.upload", "browser.download", "browser.request_takeover", "browser.close",
+  ]);
+  assert.equal(projected.defaultEnabledBuiltInAppIds.includes("built_in.browser"), false);
+});
+
 test("Desktop renderer settings project the completed onboarding project as the default", () => {
   const settings = {
     ...createDefaultDesktopSettings(),

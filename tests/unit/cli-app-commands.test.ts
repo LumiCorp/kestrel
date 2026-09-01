@@ -2376,9 +2376,13 @@ test("same-child task and history updates merge after queued commit settlement",
       const saveStarted = new Promise<void>((resolve) => { saveStartedResolve = resolve; });
       const saveRelease = new Promise<void>((resolve) => { releaseSave = resolve; });
       let saveCount = 0;
+      let queuedStartUpdatedAt: string | undefined;
       sessionStore.save = async (file) => {
         saveCount += 1;
         if (saveCount === 1) {
+          queuedStartUpdatedAt = file.sessions.find(
+            (session) => session.sessionId === queued.sessionId,
+          )?.delegation?.updatedAt;
           saveStartedResolve?.();
           await saveRelease;
           if (failureMode !== "before-write") await originalSave(file);
@@ -2399,12 +2403,13 @@ test("same-child task and history updates merge after queued commit settlement",
         messageId: "message-q1",
       });
       await saveStarted;
+      assert.ok(queuedStartUpdatedAt !== undefined);
       const taskUpdate = (appState.updateTaskSessionFromMeta as (
         task: NonNullable<TuiSessionMeta["delegation"]>,
       ) => Promise<void>)({
         ...child.delegation,
         status: "WAITING",
-        updatedAt: "2026-08-30T00:00:00.000Z",
+        updatedAt: new Date(Date.parse(queuedStartUpdatedAt) + 1).toISOString(),
       });
       const historyUpdate = (appState.appendSessionHistoryLine as (
         session: TuiSessionMeta,

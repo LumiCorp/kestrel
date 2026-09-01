@@ -42,6 +42,11 @@ import {
   DESKTOP_UI_STATE_VERSION,
   parseDesktopLegacyUiStateEntries,
   parseDesktopCapabilityConfigurationInput,
+  parseDesktopBrowserPersonalDomainListRequest,
+  parseDesktopBrowserPersonalDomainRevokeRequest,
+  parseDesktopBrowserViewerBinding,
+  parseDesktopBrowserViewerInputRequest,
+  parseDesktopBrowserViewerLeaseRequest,
   parseDesktopProviderModelCatalogRequest,
   parseDesktopMcpServerMutationInput,
   parseDesktopRendererSettingsUpdate,
@@ -113,9 +118,18 @@ import {
   LinkPreviewService,
   parseDesktopLinkPreviewInput,
 } from "./linkPreview.js";
+import {
+  DesktopBrowserViewerAuthorityCoordinator,
+  sameDesktopBrowserViewerPrincipal,
+  type DesktopBrowserViewerAuthorityLossReason,
+  type DesktopBrowserViewerPrincipal,
+} from "./browserViewerAuthority.js";
+import { DesktopBrowserViewerAuthorityJournal } from "./browserViewerAuthorityJournal.js";
 import type { DatabaseUrlSource } from "../../../src/runtime/databasePreflight.js";
 import type {
   DesktopBootState,
+  DesktopBrowserViewerBindingV1,
+  DesktopBrowserViewerStateV1,
   DesktopLaunchState,
   DesktopOnboardingDraftInput,
   DesktopOnboardingProviderInput,
@@ -207,6 +221,10 @@ import {
   normalizeDesktopSettings,
   preserveDesktopProjectRegistrationIds,
 } from "./settingsStore.js";
+import {
+  DesktopBrowserPersonalDomainService,
+  type DesktopBrowserPersonalRevisionAdoptionCoordinator,
+} from "./browserPersonalDomainService.js";
 import {
   createCoreOwnedDesktopDatabaseController,
   type DesktopDatabaseController,
@@ -401,6 +419,21 @@ let databaseStatus: DesktopDatabaseStatus = {
   running: false,
 };
 let desktopSettings: DesktopSettings = createDefaultDesktopSettings();
+let browserPersonalDomainService:
+  | DesktopBrowserPersonalDomainService
+  | undefined;
+let desktopBrowserViewerAuthority:
+  | DesktopBrowserViewerAuthorityCoordinator
+  | undefined;
+const desktopBrowserPersonalRevisionAdoptionCoordinator: DesktopBrowserPersonalRevisionAdoptionCoordinator =
+  {
+    async adoptPersonalRevision(input) {
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.adoptDesktopBrowserPersonalRevision(input),
+      );
+    },
+  };
 const linkPreviewService = new LinkPreviewService();
 
 function resolveAuthoritativeDesktopExecutionSelection(
@@ -532,6 +565,23 @@ async function main(): Promise<void> {
     localCoreHomePath: localCoreHome.homePath,
     isPackaged: app.isPackaged,
   });
+  desktopBrowserViewerAuthority = new DesktopBrowserViewerAuthorityCoordinator({
+    journal: new DesktopBrowserViewerAuthorityJournal(
+      path.join(
+        desktopConfig.runtimeHomePath,
+        "desktop-private",
+        "browser-viewer-authority.json",
+      ),
+    ),
+    async loseAuthority(principal) {
+      await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.loseDesktopBrowserViewerAuthority(
+            localCoreDesktopBrowserViewerIdentity(principal),
+          ),
+      );
+    },
+  });
   if (app.isPackaged === false && process.platform === "darwin") {
     app.dock?.setIcon(desktopConfig.iconPath);
   }
@@ -603,12 +653,19 @@ async function startDesktopServices(): Promise<void> {
       localCoreStatus = connection.status;
       currentDatabaseUrl = connection.status.databaseUrl;
       subscribeToCoreProjectRuns(connection.client);
+      void requireDesktopBrowserViewerAuthority()
+        .retryPending()
+        .catch(() => {
+          // The exact pending viewer loss remains retained for the next Local
+          // Core recovery or Desktop cleanup pass.
+        });
     },
     onStateChanged(state) {
       localCoreConnectionState = state;
       publishDesktopRuntimeHealth();
     },
   });
+  await requireDesktopBrowserViewerAuthority().retryPending();
   updateBootState(
     {
       phase: "starting_runtime",
@@ -814,6 +871,11 @@ function createMainDesktopShutdownPreparation(): DesktopShutdownPreparation {
   return createDesktopShutdownPreparation({
     stopProjectRuns: stopCoreProjectRuns,
     closeAdapters: async () => {
+      await loseCurrentDesktopBrowserViewerAuthority(
+        "desktop_stopped",
+        undefined,
+        false,
+      );
       unsubscribeProjectRunEvents?.();
       await Promise.all(
         [...desktopRunnerAdapters.values()].map(
@@ -901,6 +963,16 @@ function requireDesktopConfig(): ReturnType<typeof resolveDesktopPathConfig> {
   return desktopConfig;
 }
 
+function requireDesktopBrowserViewerAuthority(): DesktopBrowserViewerAuthorityCoordinator {
+  if (desktopBrowserViewerAuthority === undefined) {
+    throw createDesktopError({
+      code: "desktop.browser_viewer_authority_unavailable",
+      message: "Desktop Browser viewer authority is unavailable.",
+    });
+  }
+  return desktopBrowserViewerAuthority;
+}
+
 function requireDesktopUpdateCoordinator(): DesktopUpdateCoordinator {
   if (desktopUpdateCoordinator === undefined) {
     throw createDesktopError({
@@ -973,6 +1045,7 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
       webviewTag: true,
     },
   });
+  const rendererWebContentsId = window.webContents.id;
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => {
     if (event.url !== window.webContents.getURL()) {
@@ -999,6 +1072,10 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
   );
   ensureMediaPermissionHandler(window);
   window.on("closed", () => {
+    void loseCurrentDesktopBrowserViewerAuthority(
+      "window_closed",
+      rendererWebContentsId,
+    );
     clearDesktopRendererBootstrapTimeout();
     if (mainWindow === window) {
       mainWindow = undefined;
@@ -1014,6 +1091,10 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
     },
   );
   window.webContents.on("render-process-gone", () => {
+    void loseCurrentDesktopBrowserViewerAuthority(
+      "renderer_crashed",
+      rendererWebContentsId,
+    );
     if (desktopAppQuitting || rendererFallbackActive) {
       return;
     }
@@ -1028,6 +1109,10 @@ async function loadDesktopRenderer(
   window: BrowserWindow,
   config: ReturnType<typeof resolveDesktopPathConfig>,
 ): Promise<void> {
+  await loseCurrentDesktopBrowserViewerAuthority(
+    "renderer_restarted",
+    window.webContents.id,
+  );
   rendererBootstrapGeneration += 1;
   const generation = rendererBootstrapGeneration;
   rendererFallbackActive = false;
@@ -1356,6 +1441,131 @@ function requireCurrentMainWindowIpcSender(
   return window;
 }
 
+function desktopBrowserViewerPrincipalId(senderId: number): string {
+  return `desktop-main-${senderId}-${rendererBootstrapGeneration}`;
+}
+
+function exactDesktopBrowserViewerBinding(
+  request: DesktopBrowserViewerBindingV1,
+): asserts request is DesktopBrowserViewerBindingV1 & {
+  sessionId: string;
+  generation: number;
+  connectionId: string;
+} {
+  if (
+    request.sessionId === undefined ||
+    request.generation === undefined ||
+    request.connectionId === undefined
+  ) {
+    throw createDesktopError({
+      code: "desktop.browser_viewer_identity_invalid",
+      message: "The Browser viewer identity is incomplete.",
+    });
+  }
+}
+
+function requireCurrentDesktopBrowserViewerPrincipal(
+  event: IpcMainInvokeEvent,
+  request: DesktopBrowserViewerBindingV1,
+): DesktopBrowserViewerPrincipal {
+  requireCurrentMainWindowIpcSender(event);
+  assertDesktopBrowserViewerAppEnabled();
+  exactDesktopBrowserViewerBinding(request);
+  const principal = requireDesktopBrowserViewerAuthority().current();
+  if (
+    principal === undefined ||
+    principal.senderId !== event.sender.id ||
+    principal.principalId !==
+      desktopBrowserViewerPrincipalId(event.sender.id) ||
+    principal.threadId !== request.threadId ||
+    principal.projectId !== request.projectId ||
+    principal.sessionId !== request.sessionId ||
+    principal.generation !== request.generation ||
+    principal.connectionId !== request.connectionId
+  ) {
+    throw createDesktopError({
+      code: "desktop.browser_viewer_unauthorized",
+      message: "The Browser viewer is not authorized for this window.",
+    });
+  }
+  return principal;
+}
+
+function assertDesktopBrowserViewerAppEnabled(): void {
+  if (
+    !getEffectiveDesktopEnabledAppIds(desktopSettings).includes(
+      "built_in.browser",
+    )
+  ) {
+    void loseCurrentDesktopBrowserViewerAuthority("app_disabled");
+    throw createDesktopError({
+      code: "desktop.browser_viewer_app_disabled",
+      message: "The Browser App is disabled.",
+    });
+  }
+}
+
+function localCoreDesktopBrowserViewerIdentity(
+  principal: DesktopBrowserViewerPrincipal,
+) {
+  return {
+    principalId: principal.principalId,
+    threadId: principal.threadId,
+    projectId: principal.projectId,
+    sessionId: principal.sessionId,
+    generation: principal.generation,
+    connectionId: principal.connectionId,
+  };
+}
+
+async function loseCurrentDesktopBrowserViewerAuthority(
+  reason: DesktopBrowserViewerAuthorityLossReason,
+  expectedSenderId?: number,
+  bestEffort = true,
+): Promise<void> {
+  await requireDesktopBrowserViewerAuthority().loseCurrent({
+    reason,
+    ...(expectedSenderId === undefined ? {} : { expectedSenderId }),
+    bestEffort,
+  });
+}
+
+function desktopBrowserViewerLeaseId(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 512 ||
+    value !== value.trim()
+  ) {
+    throw createDesktopError({
+      code: "desktop.browser_viewer_lease_invalid",
+      message: "The Browser input lease is invalid.",
+    });
+  }
+  return value;
+}
+
+async function requireAvailableDesktopBrowserViewerThread(
+  runnerTransport: DesktopRunnerControlTransport,
+  threadId: string,
+): Promise<void> {
+  const authority = await inspectDesktopThreadAuthority({
+    inspect: async () =>
+      await getDesktopOperatorThread({
+        adapter: requireDesktopRunnerAdapter(runnerTransport),
+        threadId,
+        context: DESKTOP_RUNNER_REQUEST_CONTEXT,
+      }),
+  });
+  if (authority.status === "missing") {
+    await loseCurrentDesktopBrowserViewerAuthority("thread_unavailable");
+    throw createDesktopError({
+      code: "desktop.browser_viewer_thread_unavailable",
+      message: "The Browser viewer Thread is unavailable.",
+    });
+  }
+}
+
 function registerBootIpcHandlers(): void {
   ipcMain.handle("desktop:get-bridge-info", () => ({
     connected: true,
@@ -1665,6 +1875,22 @@ async function buildCurrentDesktopSupportBundle() {
 function registerIpcHandlers(
   runnerTransport: DesktopRunnerControlTransport,
 ): void {
+  browserPersonalDomainService ??= new DesktopBrowserPersonalDomainService({
+    resolveAccount: async () =>
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.kestrelOneAccount(),
+      ),
+    readSettings: async () => await refreshDesktopCoreSettingsSnapshot(),
+    persistSettings: async (settings) => {
+      await saveDesktopCoreSettings(
+        {
+          browserPersonalDomains: settings.browserPersonalDomains,
+        },
+        { persistBrowserPersonalDomains: true },
+      );
+    },
+    adoptionCoordinator: desktopBrowserPersonalRevisionAdoptionCoordinator,
+  });
   ipcMain.handle(
     "desktop:get-settings",
     async () => await readDesktopRendererSettings(),
@@ -1675,6 +1901,242 @@ function registerIpcHandlers(
       await requireLocalCoreConnectionManager().executeIdempotent(
         async (client) => await client.kestrelOneAccount(),
       ),
+  );
+  ipcMain.handle(
+    "desktop:list-browser-personal-domains",
+    async (_event, input: unknown) => {
+      const request = parseDesktopBrowserPersonalDomainListRequest(input);
+      return await requireBrowserPersonalDomainService().list(
+        request.environmentId,
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:revoke-browser-personal-domain",
+    async (_event, input: unknown) => {
+      const request = parseDesktopBrowserPersonalDomainRevokeRequest(input);
+      return await requireBrowserPersonalDomainService().revoke(request);
+    },
+  );
+  ipcMain.handle(
+    "desktop:browser-viewer-connect",
+    async (event, input: unknown) => {
+      requireCurrentMainWindowIpcSender(event);
+      assertDesktopBrowserViewerAppEnabled();
+      const request = parseDesktopBrowserViewerBinding(input);
+      const reconnecting =
+        request.sessionId !== undefined ||
+        request.generation !== undefined ||
+        request.connectionId !== undefined;
+      let reconnectIdentity:
+        | (DesktopBrowserViewerBindingV1 & {
+            sessionId: string;
+            generation: number;
+            connectionId: string;
+          })
+        | undefined;
+      if (reconnecting) {
+        exactDesktopBrowserViewerBinding(request);
+        reconnectIdentity = request;
+      }
+      const principalId = desktopBrowserViewerPrincipalId(event.sender.id);
+      return await requireDesktopBrowserViewerAuthority().connect({
+        senderId: event.sender.id,
+        principalId,
+        threadId: request.threadId,
+        projectId: request.projectId,
+        connect: async (expected) => {
+          if (
+            reconnectIdentity !== undefined &&
+            !sameDesktopBrowserViewerPrincipal(expected, {
+              senderId: event.sender.id,
+              principalId,
+              threadId: request.threadId,
+              projectId: request.projectId,
+              sessionId: reconnectIdentity.sessionId,
+              generation: reconnectIdentity.generation,
+              connectionId: reconnectIdentity.connectionId,
+            })
+          ) {
+            throw createDesktopError({
+              code: "desktop.browser_viewer_unauthorized",
+              message: "The Browser viewer is not authorized for this window.",
+            });
+          }
+          const viewer = await requireLocalCoreConnectionManager().executeOnce(
+            async (client) =>
+              await client.connectDesktopBrowserViewer({
+                principalId,
+                threadId: request.threadId,
+                projectId: request.projectId,
+                ...(expected === undefined
+                  ? {}
+                  : {
+                      sessionId: expected.sessionId,
+                      generation: expected.generation,
+                      connectionId: expected.connectionId,
+                    }),
+              }),
+          );
+          return {
+            value: viewer,
+            previousSessionTerminal: viewer.available === false,
+            ...(viewer.available &&
+            viewer.sessionId !== undefined &&
+            viewer.generation !== undefined &&
+            viewer.connectionId !== undefined
+              ? {
+                  principal: {
+                    senderId: event.sender.id,
+                    principalId,
+                    threadId: request.threadId,
+                    projectId: request.projectId,
+                    sessionId: viewer.sessionId,
+                    generation: viewer.generation,
+                    connectionId: viewer.connectionId,
+                  },
+                }
+              : {}),
+          };
+        },
+      });
+    },
+  );
+  ipcMain.handle(
+    "desktop:browser-viewer-frame",
+    async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerBinding(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.readDesktopBrowserViewerFrame(
+            localCoreDesktopBrowserViewerIdentity(principal),
+          ),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:browser-viewer-accept",
+    async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerBinding(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.acceptDesktopBrowserTakeover(
+            localCoreDesktopBrowserViewerIdentity(principal),
+          ),
+      );
+    },
+  );
+  for (const [channel, action] of [
+    ["desktop:browser-viewer-renew", "renew"],
+    ["desktop:browser-viewer-return", "return"],
+  ] as const) {
+    ipcMain.handle(channel, async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerLeaseRequest(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      const exact = {
+        ...localCoreDesktopBrowserViewerIdentity(principal),
+        leaseId: desktopBrowserViewerLeaseId(request.leaseId),
+      };
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          action === "renew"
+            ? await client.renewDesktopBrowserInputLease(exact)
+            : await client.returnDesktopBrowserControl(exact),
+      );
+    });
+  }
+  ipcMain.handle(
+    "desktop:browser-viewer-input",
+    async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerInputRequest(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      return await requireLocalCoreConnectionManager().executeOnce(
+        async (client) =>
+          await client.sendDesktopBrowserViewerInput({
+            ...localCoreDesktopBrowserViewerIdentity(principal),
+            leaseId: request.leaseId,
+            viewerInput: request.input,
+          }),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:browser-viewer-disconnect",
+    async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerBinding(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      await requireDesktopBrowserViewerAuthority().releaseCurrent(
+        principal,
+        async () =>
+          await requireLocalCoreConnectionManager().executeOnce(
+            async (client) =>
+              await client.disconnectDesktopBrowserViewer(
+                localCoreDesktopBrowserViewerIdentity(principal),
+              ),
+          ),
+      );
+    },
+  );
+  ipcMain.handle(
+    "desktop:browser-viewer-close",
+    async (event, input: unknown) => {
+      const request = parseDesktopBrowserViewerBinding(input);
+      const principal = requireCurrentDesktopBrowserViewerPrincipal(
+        event,
+        request,
+      );
+      await requireAvailableDesktopBrowserViewerThread(
+        runnerTransport,
+        request.threadId,
+      );
+      await requireDesktopBrowserViewerAuthority().releaseCurrent(
+        principal,
+        async () =>
+          await requireLocalCoreConnectionManager().executeOnce(
+            async (client) =>
+              await client.closeDesktopBrowserViewerSession(
+                localCoreDesktopBrowserViewerIdentity(principal),
+              ),
+          ),
+      );
+    },
   );
   ipcMain.handle(
     "desktop:start-kestrel-one-authorization",
@@ -1704,8 +2166,11 @@ function registerIpcHandlers(
   ipcMain.handle(
     "desktop:sign-out-kestrel-one-account",
     async () =>
-      await requireLocalCoreConnectionManager().executeOnce(
-        async (client) => await client.signOutKestrelOneAccount(),
+      await requireBrowserPersonalDomainService().signOut(
+        async () =>
+          await requireLocalCoreConnectionManager().executeOnce(
+            async (client) => await client.signOutKestrelOneAccount(),
+          ),
       ),
   );
   ipcMain.handle(
@@ -4381,6 +4846,13 @@ function registerIpcHandlers(
     );
 }
 
+function requireBrowserPersonalDomainService(): DesktopBrowserPersonalDomainService {
+  if (browserPersonalDomainService === undefined) {
+    throw new Error("Desktop Browser personal-domain service is unavailable.");
+  }
+  return browserPersonalDomainService;
+}
+
 async function openProjectRunPreviewWindow(
   run: DesktopManagedProjectRun,
   url: string,
@@ -6094,9 +6566,11 @@ async function refreshDesktopCoreState(): Promise<void> {
   const response = await requireLocalCoreConnectionManager().executeIdempotent(
     async (client) => await client.desktopSettings<Partial<DesktopSettings>>(),
   );
-  desktopSettings = normalizeDesktopSettings(response.settings, {
-    fallbackModelPolicy: response.modelPolicy,
-  });
+  adoptDesktopSettings(
+    normalizeDesktopSettings(response.settings, {
+      fallbackModelPolicy: response.modelPolicy,
+    }),
+  );
   desktopModelPolicy = response.modelPolicy;
   projectFileIndex.retainRoots(
     desktopSettings.projects.map((project) => project.path),
@@ -6167,26 +6641,76 @@ async function migrateDesktopCredentialsToLocalCore(): Promise<void> {
 
 async function saveDesktopCoreSettings(
   settings: Partial<DesktopSettings> & { modelPolicy?: unknown | undefined },
+  options: { persistBrowserPersonalDomains?: boolean | undefined } = {},
 ): Promise<void> {
-  const normalized = normalizeDesktopSettings(settings, {
-    fallbackModelPolicy: desktopModelPolicy,
-  });
   const response = await requireLocalCoreConnectionManager().executeIdempotent(
-    async (client) =>
-      await client.patchDesktopSettings<Partial<DesktopSettings>>({
-        ...normalized,
+    async (client) => {
+      const current = await client.desktopSettings<Partial<DesktopSettings>>();
+      const normalized = normalizeDesktopSettings(
+        {
+          ...current.settings,
+          ...settings,
+          ...(options.persistBrowserPersonalDomains === true
+            ? {}
+            : {
+                browserPersonalDomains: current.settings.browserPersonalDomains,
+              }),
+        },
+        { fallbackModelPolicy: current.modelPolicy },
+      );
+      const localSettingsPatch: Partial<DesktopSettings> = { ...normalized };
+      if (options.persistBrowserPersonalDomains !== true) {
+        delete localSettingsPatch.browserPersonalDomains;
+      }
+      return await client.patchDesktopSettings<Partial<DesktopSettings>>({
+        ...localSettingsPatch,
         ...(settings.modelPolicy !== undefined
           ? { modelPolicy: settings.modelPolicy }
           : {}),
-      }),
+      });
+    },
   );
-  desktopSettings = normalizeDesktopSettings(response.settings, {
-    fallbackModelPolicy: response.modelPolicy,
-  });
+  adoptDesktopSettings(
+    normalizeDesktopSettings(response.settings, {
+      fallbackModelPolicy: response.modelPolicy,
+    }),
+  );
   desktopModelPolicy = response.modelPolicy;
   projectFileIndex.retainRoots(
     desktopSettings.projects.map((project) => project.path),
   );
+}
+
+async function refreshDesktopCoreSettingsSnapshot(): Promise<DesktopSettings> {
+  const response = await requireLocalCoreConnectionManager().executeIdempotent(
+    async (client) => await client.desktopSettings<Partial<DesktopSettings>>(),
+  );
+  adoptDesktopSettings(
+    normalizeDesktopSettings(response.settings, {
+      fallbackModelPolicy: response.modelPolicy,
+    }),
+  );
+  desktopModelPolicy = response.modelPolicy;
+  projectFileIndex.retainRoots(
+    desktopSettings.projects.map((project) => project.path),
+  );
+  return desktopSettings;
+}
+
+function adoptDesktopSettings(settings: DesktopSettings): void {
+  const browserWasEnabled =
+    getEffectiveDesktopEnabledAppIds(desktopSettings).includes(
+      "built_in.browser",
+    );
+  desktopSettings = settings;
+  if (
+    browserWasEnabled &&
+    !getEffectiveDesktopEnabledAppIds(desktopSettings).includes(
+      "built_in.browser",
+    )
+  ) {
+    void loseCurrentDesktopBrowserViewerAuthority("app_disabled");
+  }
 }
 
 async function applyDesktopModelCapabilityConfiguration(
@@ -7064,6 +7588,7 @@ async function persistDesktopRendererConfiguration(
 }
 
 async function readDesktopRendererSettings(): Promise<DesktopRendererSettings> {
+  await refreshDesktopCoreSettingsSnapshot();
   const selectedProvider = desktopSettings.selectedProvider;
   if (selectedProvider === "ollama" || selectedProvider === "lmstudio") {
     return toDesktopRendererSettings(

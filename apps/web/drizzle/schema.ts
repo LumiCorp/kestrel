@@ -971,6 +971,52 @@ export const fileScopeGrants = pgTable(
   ],
 );
 
+export const browserDownloadPromotions = pgTable(
+  "browser_download_promotions",
+  {
+    operationId: text("operation_id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull(),
+    generation: integer("generation").notNull(),
+    pendingDownloadId: text("pending_download_id").notNull(),
+    sha256: text("sha256").notNull(),
+    effectRevision: text("effect_revision").notNull(),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => kestrelFiles.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("browser_download_promotions_file_idx").on(table.fileId),
+    uniqueIndex("browser_download_promotions_quarantine_idx").on(
+      table.organizationId,
+      table.sessionId,
+      table.generation,
+      table.pendingDownloadId,
+    ),
+    index("browser_download_promotions_thread_idx").on(table.threadId),
+    check(
+      "browser_download_promotions_generation_check",
+      sql`${table.generation} > 0`,
+    ),
+    check(
+      "browser_download_promotions_sha256_check",
+      sql`${table.sha256} ~ '^[a-f0-9]{64}$'`,
+    ),
+    check(
+      "browser_download_promotions_effect_revision_check",
+      sql`${table.effectRevision} ~ '^[a-f0-9]{64}$'`,
+    ),
+  ],
+);
+
 export const fileRepresentations = pgTable(
   "file_representations",
   {
@@ -5379,6 +5425,264 @@ export const rememberedToolApprovals = pgTable(
     check(
       "remembered_tool_approvals_version_check",
       sql`${table.version} = 'remembered_tool_approval_v1'`,
+    ),
+  ],
+);
+
+/** Monotonic personal Browser policy revision scoped to one user and Environment. */
+export const browserPersonalDomainRevisionSets = pgTable(
+  "browser_personal_domain_revision_sets",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.organizationId, table.environmentId, table.userId],
+      name: "browser_personal_domain_revision_sets_pk",
+    }),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "browser_personal_domain_revision_sets_environment_fk",
+    }).onDelete("cascade"),
+    check(
+      "browser_personal_domain_revision_sets_revision_check",
+      sql`${table.revision} >= 0`,
+    ),
+  ],
+);
+
+/** Current allow-or-revoke state for one person's canonical public Browser domain. */
+export const browserPersonalDomains = pgTable(
+  "browser_personal_domains",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    canonicalDomain: text("canonical_domain").notNull(),
+    scheme: text("scheme", { enum: ["https"] })
+      .notNull()
+      .default("https"),
+    includeSubdomains: boolean("include_subdomains").notNull().default(true),
+    port: integer("port").notNull().default(443),
+    status: text("status", { enum: ["active", "revoked"] })
+      .notNull()
+      .default("active"),
+    personalRevision: integer("personal_revision").notNull(),
+    approvalId: text("approval_id").notNull(),
+    sourceInteractionId: text("source_interaction_id").references(
+      () => threadInteractions.id,
+      { onDelete: "set null" },
+    ),
+    sourcePreparedInvocationId: text("source_prepared_invocation_id").notNull(),
+    approvalAuthorityRevision: text("approval_authority_revision").notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedByUserId: text("revoked_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("browser_personal_domains_identity_idx").on(
+      table.organizationId,
+      table.environmentId,
+      table.userId,
+      table.canonicalDomain,
+    ),
+    index("browser_personal_domains_active_lookup_idx").on(
+      table.organizationId,
+      table.environmentId,
+      table.userId,
+      table.status,
+      table.canonicalDomain,
+    ),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId],
+      foreignColumns: [environments.organizationId, environments.id],
+      name: "browser_personal_domains_environment_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.organizationId, table.environmentId, table.userId],
+      foreignColumns: [
+        browserPersonalDomainRevisionSets.organizationId,
+        browserPersonalDomainRevisionSets.environmentId,
+        browserPersonalDomainRevisionSets.userId,
+      ],
+      name: "browser_personal_domains_revision_set_fk",
+    }).onDelete("cascade"),
+    check(
+      "browser_personal_domains_canonical_domain_check",
+      sql`${table.canonicalDomain} <> ''
+        and ${table.canonicalDomain} = btrim(${table.canonicalDomain})
+        and ${table.canonicalDomain} = lower(${table.canonicalDomain})
+        and left(${table.canonicalDomain}, 1) <> '.'
+        and right(${table.canonicalDomain}, 1) <> '.'
+        and ${table.canonicalDomain} !~ '[/:*[:space:]]'`,
+    ),
+    check(
+      "browser_personal_domains_public_authority_check",
+      sql`${table.scheme} = 'https'
+        and ${table.includeSubdomains} = true
+        and ${table.port} = 443`,
+    ),
+    check(
+      "browser_personal_domains_revision_check",
+      sql`${table.personalRevision} > 0`,
+    ),
+    check(
+      "browser_personal_domains_lifecycle_check",
+      sql`(
+        (${table.status} = 'active' and ${table.revokedAt} is null and ${table.revokedByUserId} is null)
+        or
+        (${table.status} = 'revoked' and ${table.revokedAt} is not null)
+      )`,
+    ),
+  ],
+);
+
+/** Hosted BrowserSessionV1 state. Tenant and actor identity resolve through the originating turn. */
+export const browserSessions = pgTable(
+  "browser_sessions",
+  {
+    sessionId: text("session_id").primaryKey(),
+    version: text("version").notNull().default("browser_session_v1"),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "restrict" }),
+    mode: text("mode", { enum: ["qa", "operator"] }).notNull(),
+    state: text("state", {
+      enum: [
+        "opening",
+        "ready",
+        "human_control",
+        "closing",
+        "closed",
+        "expired",
+        "lost",
+        "failed",
+      ],
+    }).notNull(),
+    engineRevision: text("engine_revision").notNull(),
+    generation: integer("generation").notNull(),
+    effectiveAllowlistRevision: text("effective_allowlist_revision").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull(),
+    idleExpiresAt: timestamp("idle_expires_at", { withTimezone: true }).notNull(),
+    hardExpiresAt: timestamp("hard_expires_at", { withTimezone: true }).notNull(),
+    terminalReason: text("terminal_reason"),
+  },
+  (table) => [
+    uniqueIndex("browser_sessions_one_nonterminal_per_thread_idx")
+      .on(table.threadId)
+      .where(
+        sql`${table.state} in ('opening', 'ready', 'human_control', 'closing')`,
+      ),
+    index("browser_sessions_expiry_idx").on(table.state, table.idleExpiresAt),
+    check(
+      "browser_sessions_version_check",
+      sql`${table.version} = 'browser_session_v1'`,
+    ),
+    check("browser_sessions_generation_check", sql`${table.generation} > 0`),
+    check(
+      "browser_sessions_expiry_check",
+      sql`${table.createdAt} <= ${table.lastActivityAt}
+        and ${table.lastActivityAt} <= ${table.updatedAt}
+        and ${table.lastActivityAt} < ${table.idleExpiresAt}
+        and ${table.idleExpiresAt} <= ${table.hardExpiresAt}`,
+    ),
+    check(
+      "browser_sessions_terminal_reason_check",
+      sql`(
+        ${table.state} in ('opening', 'ready', 'human_control', 'closing')
+        and ${table.terminalReason} is null
+      ) or (
+        ${table.state} in ('closed', 'expired', 'lost', 'failed')
+        and ${table.terminalReason} is not null
+      )`,
+    ),
+  ],
+);
+
+/** Host-only execution binding; never projected into BrowserSessionV1 or model output. */
+export const browserSessionResources = pgTable(
+  "browser_session_resources",
+  {
+    sessionId: text("session_id")
+      .primaryKey()
+      .references(() => browserSessions.sessionId, { onDelete: "cascade" }),
+    originatingTurnId: text("originating_turn_id")
+      .notNull()
+      .references(() => threadTurns.id, { onDelete: "restrict" }),
+    previewLeaseId: text("preview_lease_id").references(
+      () => workspacePreviewLeases.id,
+      { onDelete: "restrict" },
+    ),
+    machineId: text("machine_id").notNull().unique(),
+    machineGeneration: integer("machine_generation").notNull(),
+    workerImageDigest: text("worker_image_digest").notNull(),
+    proxyAuthorityRevision: text("proxy_authority_revision").notNull(),
+    cleanupRequestedAt: timestamp("cleanup_requested_at", {
+      withTimezone: true,
+    }),
+    cleanupConfirmedAt: timestamp("cleanup_confirmed_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("browser_session_resources_turn_idx").on(table.originatingTurnId),
+    index("browser_session_resources_preview_idx").on(table.previewLeaseId),
+    check(
+      "browser_session_resources_generation_check",
+      sql`${table.machineGeneration} > 0`,
+    ),
+    check(
+      "browser_session_resources_image_digest_check",
+      sql`${table.workerImageDigest} ~ '@sha256:[a-f0-9]{64}$'`,
+    ),
+    check(
+      "browser_session_resources_cleanup_check",
+      sql`${table.cleanupConfirmedAt} is null
+        or (${table.cleanupRequestedAt} is not null
+          and ${table.cleanupConfirmedAt} >= ${table.cleanupRequestedAt})`,
     ),
   ],
 );

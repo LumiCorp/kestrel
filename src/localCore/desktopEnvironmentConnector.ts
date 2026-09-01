@@ -154,6 +154,11 @@ export class LocalCoreDesktopEnvironmentManager {
   readonly #configStore: LocalCoreDesktopEnvironmentConfigStore;
   readonly #journalStore: DesktopEnvironmentJournalStore;
   readonly #coreVersion: string;
+  readonly #beforeAuthorityRemoval: (input: {
+    environmentId?: string | undefined;
+    projectIds?: readonly string[] | undefined;
+  }) => Promise<void>;
+  readonly #withAuthorityMutation: <T>(action: () => Promise<T>) => Promise<T>;
   #client: LocalCoreClient | undefined;
   #projects: DesktopProjectRegistration[] = [];
   #capacity = 1;
@@ -170,6 +175,15 @@ export class LocalCoreDesktopEnvironmentManager {
     homePath: string;
     credentialStore: LocalCoreCredentialStore;
     coreVersion: string;
+    beforeAuthorityRemoval?:
+      | ((input: {
+          environmentId?: string | undefined;
+          projectIds?: readonly string[] | undefined;
+        }) => Promise<void>)
+      | undefined;
+    withAuthorityMutation?:
+      | (<T>(action: () => Promise<T>) => Promise<T>)
+      | undefined;
   }) {
     this.#credentialStore = input.credentialStore;
     this.#configStore = new LocalCoreDesktopEnvironmentConfigStore(
@@ -177,6 +191,10 @@ export class LocalCoreDesktopEnvironmentManager {
     );
     this.#journalStore = new DesktopEnvironmentJournalStore(input.homePath);
     this.#coreVersion = input.coreVersion;
+    this.#beforeAuthorityRemoval =
+      input.beforeAuthorityRemoval ?? (async () => undefined);
+    this.#withAuthorityMutation =
+      input.withAuthorityMutation ?? (async (action) => await action());
   }
 
   async start(client: LocalCoreClient): Promise<void> {
@@ -424,30 +442,51 @@ export class LocalCoreDesktopEnvironmentManager {
   async setProjects(
     projects: DesktopProjectRegistration[],
   ): Promise<DesktopEnvironmentStatusProjection> {
-    this.#projects = projects.map(normalizeProject);
-    const config = await this.#configStore.read();
-    for (const environment of config.environments) {
-      const secret = await this.#readEnvironmentSecret(
-        environment.connectionId,
-      );
-      const workspaces = await this.#workspaceMappings({
-        connectionId: environment.connectionId,
-        privateKey: secret.privateKey,
-      });
-      await this.#configStore.update((current) => ({
-        ...current,
-        environments: current.environments.map((candidate) =>
-          candidate.connectionId === environment.connectionId
-            ? {
-                ...candidate,
-                workspaces,
-              }
-            : candidate,
+    return await this.#withAuthorityMutation(async () => {
+      const nextProjects = projects.map(normalizeProject);
+      const nextById = new Map(
+        nextProjects.flatMap((project) =>
+          project.id === undefined ? [] : [[project.id, project] as const],
         ),
-      }));
-    }
-    await this.#synchronizeAll();
-    return this.snapshot();
+      );
+      const removedOrReplacedProjectIds = this.#projects.flatMap((project) => {
+        if (project.id === undefined) return [];
+        const next = nextById.get(project.id);
+        return next === undefined ||
+          path.resolve(next.path) !== path.resolve(project.path)
+          ? [project.id]
+          : [];
+      });
+      if (removedOrReplacedProjectIds.length > 0) {
+        await this.#beforeAuthorityRemoval({
+          projectIds: removedOrReplacedProjectIds,
+        });
+      }
+      this.#projects = nextProjects;
+      const config = await this.#configStore.read();
+      for (const environment of config.environments) {
+        const secret = await this.#readEnvironmentSecret(
+          environment.connectionId,
+        );
+        const workspaces = await this.#workspaceMappings({
+          connectionId: environment.connectionId,
+          privateKey: secret.privateKey,
+        });
+        await this.#configStore.update((current) => ({
+          ...current,
+          environments: current.environments.map((candidate) =>
+            candidate.connectionId === environment.connectionId
+              ? {
+                  ...candidate,
+                  workspaces,
+                }
+              : candidate,
+          ),
+        }));
+      }
+      await this.#synchronizeAll();
+      return this.snapshot();
+    });
   }
 
   async setCapacity(
@@ -472,28 +511,33 @@ export class LocalCoreDesktopEnvironmentManager {
   async disconnect(
     connectionId: string,
   ): Promise<DesktopEnvironmentStatusProjection> {
-    const config = await this.#configStore.read();
-    const environment = config.environments.find(
-      (candidate) => candidate.connectionId === connectionId,
-    );
-    if (!environment) return this.snapshot();
-    await signedFetchJson({
-      environment,
-      secret: await this.#readEnvironmentSecret(connectionId),
-      pathname: `/api/runtime/desktop-environments/${encodeURIComponent(connectionId)}/disconnect`,
-      body: {},
-      method: "POST",
+    return await this.#withAuthorityMutation(async () => {
+      const config = await this.#configStore.read();
+      const environment = config.environments.find(
+        (candidate) => candidate.connectionId === connectionId,
+      );
+      if (!environment) return this.snapshot();
+      await this.#beforeAuthorityRemoval({
+        environmentId: environment.environmentId,
+      });
+      await signedFetchJson({
+        environment,
+        secret: await this.#readEnvironmentSecret(connectionId),
+        pathname: `/api/runtime/desktop-environments/${encodeURIComponent(connectionId)}/disconnect`,
+        body: {},
+        method: "POST",
+      });
+      await this.#credentialStore.delete(
+        `kestrel_one.environment.${connectionId}`,
+      );
+      await this.#configStore.update((current) => ({
+        ...current,
+        environments: current.environments.filter(
+          (candidate) => candidate.connectionId !== connectionId,
+        ),
+      }));
+      return this.snapshot();
     });
-    await this.#credentialStore.delete(
-      `kestrel_one.environment.${connectionId}`,
-    );
-    await this.#configStore.update((current) => ({
-      ...current,
-      environments: current.environments.filter(
-        (candidate) => candidate.connectionId !== connectionId,
-      ),
-    }));
-    return this.snapshot();
   }
 
   async #workspaceMappings(input: {

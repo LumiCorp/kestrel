@@ -35,7 +35,28 @@ test("hosted runtime tools resolve to the existing App capability owner", () => 
     appKey: "built_in.weather",
     capabilityKey: "getWeather",
   });
+  assert.deepEqual(resolveKestrelOneToolCapability("browser.navigate"), {
+    appKey: "built_in.browser",
+    capabilityKey: "navigate",
+  });
   assert.equal(resolveKestrelOneToolCapability("unknown.tool"), null);
+});
+
+test("hosted Browser profile exposes only enabled capabilities and preserves approval semantics", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile: { ...profile, toolAllowlist: ["browser.snapshot", "browser.navigate", "browser.upload", "browser.download"] },
+    effectiveCapabilities: [
+      "app:built_in.browser.snapshot:auto",
+      "app:built_in.browser.navigate:auto",
+      "app:built_in.browser.upload:auto",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, ["browser.snapshot", "browser.navigate", "browser.upload"]);
+  assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    "browser.snapshot": "auto",
+    "browser.navigate": "auto",
+    "browser.upload": "ask",
+  });
 });
 
 test("hosted command visibility and approval follow effective App policy", () => {

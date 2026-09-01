@@ -412,9 +412,8 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
     }
     const hasHostedApprovalV2Evidence =
       pendingApproval?.version === "hosted_tool_approval_v2" ||
-      pendingApproval?.preparedInvocationId !== undefined ||
-      pendingApproval?.preparedToolCall !== undefined ||
-      waitMetadata?.preparedToolCall !== undefined ||
+      asRecord(asRecord(waitMetadata?.preparedToolCall)?.stableAuthority) !==
+        undefined ||
       asRecord(pendingApproval?.externalApprovalBinding)?.version ===
         "runner_external_approval_binding_v2" ||
       asRecord(waitMetadata?.externalApprovalBinding)?.version ===
@@ -478,6 +477,29 @@ export function validateRuntimeSessionState(state: Record<string, unknown>): Run
           throw new Error(
             "local tool approval must preserve one exact pending action",
           );
+        }
+        if (waitMetadata?.preparedToolCall !== undefined) {
+          const prepared = parseDurablePreparedToolCallV1(
+            waitMetadata.preparedToolCall,
+          );
+          if (
+            prepared.stableAuthority !== undefined ||
+            pendingApproval.preparedInvocationId !== prepared.callId ||
+            pendingApproval.approvalId !== prepared.approval?.approvalId ||
+            typeof pendingApproval.approvalAuthorityRevision !== "string" ||
+            pendingApproval.approvalAuthorityRevision !==
+              waitMetadata.approvalAuthorityRevision ||
+            pendingApproval.toolName !==
+              prepared.activation.descriptor.toolId ||
+            canonicalJsonValuesEqual(
+              prepared.approval?.externalApprovalBinding,
+              pendingExternalApprovalBinding,
+            ) === false
+          ) {
+            throw new Error(
+              "local tool approval must preserve one canonical prepared invocation",
+            );
+          }
         }
         const projectedInteraction = projectLocalToolApprovalInteractionV1({
           metadata: waitMetadata,

@@ -580,6 +580,8 @@ export interface RunTurnAttachment {
   attachmentId: string;
   threadId?: string | undefined;
   filename: string;
+  declaredMediaType?: string | undefined;
+  detectedMediaType?: string | undefined;
   mimeType: string;
   sizeBytes: number;
   sha256: string;

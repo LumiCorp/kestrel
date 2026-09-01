@@ -40,6 +40,8 @@ test("Desktop members see read-only receiving status and stale tenant responses 
       getKestrelOneAccount: async () => signedInAccount(),
       getPendingUninstallResult: async () => undefined,
       getModelCatalog: async () => ({ models: [] }),
+      listBrowserPersonalDomains: async (input: { environmentId: string }) =>
+        emptyBrowserDomainProjection(input.environmentId),
       getKestrelOneReceivingConnection: async (organizationId: string) => {
         receivingReads.push(organizationId);
         return organizationId === "organization-a"
@@ -416,6 +418,8 @@ async function mountReceivingSettings(input: {
       getKestrelOneAccount: input.getAccount,
       getPendingUninstallResult: async () => undefined,
       getModelCatalog: async () => ({ models: [] }),
+      listBrowserPersonalDomains: async (request: { environmentId: string }) =>
+        emptyBrowserDomainProjection(request.environmentId),
       getKestrelOneReceivingConnection: input.getReceiving,
       submitKestrelOneTurn:
         input.submitTurn ??
@@ -534,6 +538,22 @@ function signedInAccountWithThread(): KestrelOneAccountStatus {
         },
       ],
     },
+  };
+}
+
+function emptyBrowserDomainProjection(environmentId: string) {
+  return {
+    accountId: "member-user",
+    environmentId,
+    revision: 0,
+    authority: {
+      version: "browser_personal_domain_authority_v1" as const,
+      userId: "member-user",
+      environmentId,
+      revision: "0",
+      activeDomains: [],
+    },
+    domains: [],
   };
 }
 

@@ -102,13 +102,16 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
       { eventType: waitFor.eventType, reason: authoredStructuredReview.reason },
     );
   }
+  const preparedApproval = metadata?.preparedToolCall === undefined
+    ? undefined
+    : parsePreparedToolCallV1(metadata.preparedToolCall);
   const preparedApprovalInteraction = waitFor.kind === "approval"
-    ? metadata?.preparedToolCall === undefined
+    ? preparedApproval?.stableAuthority === undefined
       ? projectLocalToolApprovalInteractionV1({ metadata, requestId })
       : projectHostedToolApprovalInteractionV4({
-          preparedToolCall: metadata.preparedToolCall,
+          preparedToolCall: preparedApproval,
           requestId,
-          reasonCode: metadata.reasonCode,
+          reasonCode: metadata?.reasonCode,
         })
     : undefined;
   const interaction: RuntimeInteractionRequest =
@@ -342,6 +345,11 @@ export function projectHostedToolApprovalInteractionV4(input: {
   const presentation = buildToolApprovalPresentation({
     toolName: prepared.activation.descriptor.toolId,
     effectiveInput: prepared.effectiveInput,
+    inputAdapters: prepared.inputAdapters,
+    hostedApprovalScope: {
+      requestingActorId: binding.requestingActor.actorId,
+      environmentId: prepared.stableAuthority.environmentId,
+    },
     disposition: {
       mode: "ask",
       reasonCode,

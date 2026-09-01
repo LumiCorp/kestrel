@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, stat, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
@@ -206,6 +206,10 @@ function parseLedgerPreviewUrl(value: unknown): DesktopManagedProjectRunPreviewU
     return ;
   }
   return {
+    urlId:
+      typeof record.urlId === "string" && /^preview-[a-f0-9]{32}$/u.test(record.urlId)
+        ? record.urlId
+        : desktopProjectRunPreviewUrlId(record.url),
     url: record.url,
     source: record.source,
     firstSeenAt: record.firstSeenAt,
@@ -330,6 +334,7 @@ function appendPreviewUrls(
     const existingIndex = next.findIndex((entry) => entry.url === url);
     if (existingIndex === -1) {
       next.push({
+        urlId: desktopProjectRunPreviewUrlId(url),
         url,
         source: input.source,
         firstSeenAt: input.observedAt,
@@ -352,6 +357,10 @@ function appendPreviewUrls(
     previewUrls: next,
     ...(primaryPreviewUrl !== undefined ? { primaryPreviewUrl } : {}),
   };
+}
+
+function desktopProjectRunPreviewUrlId(url: string): string {
+  return `preview-${createHash("sha256").update(new URL(url).href).digest("hex").slice(0, 32)}`;
 }
 
 function compareRunsByStartDesc(left: DesktopManagedProjectRun, right: DesktopManagedProjectRun): number {
