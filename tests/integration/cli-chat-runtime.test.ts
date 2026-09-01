@@ -1857,6 +1857,17 @@ test("KestrelChatRuntime does not persist a rejected mode reply", async () => {
           }],
         }),
         subscribe: () => ({ unsubscribe() {} }),
+        getOperatorThreadView: async () => ({
+          thread: {
+            threadId: "thread-mode-rejected",
+            sessionId: "session-mode-rejected",
+            title: "Rejected mode reply",
+            status: "WAITING" as const,
+            createdAt: now,
+            updatedAt: now,
+          },
+          childThreads: [],
+        }),
         replyToRequest: async () => {
           throw new Error("THREAD_RUN_ALREADY_ACTIVE");
         },
