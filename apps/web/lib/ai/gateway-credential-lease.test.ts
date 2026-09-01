@@ -91,6 +91,33 @@ test("gateway leases expire after exactly five minutes", () => {
   assert.equal(lease.apiKey, "provider-secret");
 });
 
+test("gateway leases reject a persisted route binding for another provider", () => {
+  assert.throws(
+    () =>
+      buildGatewayCredentialLease({
+        organizationId: "org-1",
+        environmentId: "env-1",
+        gateway: {
+          id: "gateway-openrouter",
+          provider: "openrouter",
+          baseUrl: "https://openrouter.ai/api/v1",
+        },
+        model: { rawModelId: "openai/gpt-5.4", metadata: null },
+        routeBinding: {
+          version: "model_credential_route_binding_v2",
+          status: "legacy_unqualified",
+          provider: "openai",
+          rawModelId: "openai/gpt-5.4",
+        },
+        apiKey: "provider-secret",
+        now: new Date("2026-07-11T12:00:00.000Z"),
+      }),
+    (error: unknown) =>
+      error instanceof GatewayCredentialLeaseError &&
+      error.code === "GATEWAY_CREDENTIAL_ROUTE_MISMATCH",
+  );
+});
+
 test("Lumi leases preserve their configured language protocol", () => {
   const lease = buildGatewayCredentialLease({
     organizationId: "org-1",

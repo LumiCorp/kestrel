@@ -168,6 +168,160 @@ test("RemoteRunnerTransport preserves streamed runner events over SSE", async ()
   await client.close();
 });
 
+test("RemoteRunnerTransport keeps conversation streams open through the routing envelope", async (t) => {
+  const transport = new RemoteRunnerTransport({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (_input, init) => {
+      const command = JSON.parse(String(init?.body)) as RunnerCommand;
+      const completed = {
+        id: "evt-conversation-completed",
+        type: "run.completed",
+        ts: new Date().toISOString(),
+        commandId: command.id,
+        runId: "run-conversation",
+        sessionId: "session-conversation",
+        payload: {
+          result: {
+            assistantText: "Conversation completed.",
+            output: {
+              status: "COMPLETED",
+              sessionId: "session-conversation",
+              runId: "run-conversation",
+              errors: [],
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 1,
+                durationMs: 1,
+              },
+            },
+          },
+        },
+      };
+      const routed = {
+        id: "evt-conversation-routed",
+        type: "conversation.message.routed",
+        ts: new Date().toISOString(),
+        commandId: command.id,
+        runId: "run-conversation",
+        sessionId: "session-conversation",
+        threadId: "thread-main:session-conversation",
+        payload: {
+          threadId: "thread-main:session-conversation",
+          sessionId: "session-conversation",
+          messageId: "message-conversation",
+          disposition: "started",
+          runId: "run-conversation",
+          view: {},
+        },
+      };
+      return new Response(
+        `event: run.completed\ndata: ${JSON.stringify(completed)}\n\n` +
+          `event: conversation.message.routed\ndata: ${JSON.stringify(routed)}\n\n`,
+        {
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        },
+      );
+    },
+  });
+  const client = new ProtocolClient(transport);
+  t.after(async () => client.close());
+  const seen: string[] = [];
+  client.onEvent((event) => seen.push(event.type));
+
+  const response = await withTimeout(
+    client.sendCommandWithId(
+      "cmd-conversation-stream",
+      "conversation.message.submit",
+      {
+        profileId: "kestrel",
+        threadId: "thread-main:session-conversation",
+        messageId: "message-conversation",
+        turn: {
+          sessionId: "session-conversation",
+          message: "hello",
+        },
+      },
+    ),
+    1_000,
+    "Conversation stream did not reach the routing envelope.",
+  );
+
+  assert.equal(response.type, "conversation.message.routed");
+  assert.deepEqual(seen, ["run.completed", "conversation.message.routed"]);
+});
+
+test("RemoteRunnerTransport rejects a conversation stream that ends before routing", async (t) => {
+  const transport = new RemoteRunnerTransport({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (_input, init) => {
+      const command = JSON.parse(String(init?.body)) as RunnerCommand;
+      return new Response(
+        `event: run.completed\ndata: ${JSON.stringify({
+          id: "evt-conversation-truncated",
+          type: "run.completed",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          runId: "run-conversation-truncated",
+          sessionId: "session-conversation-truncated",
+          payload: {
+            result: {
+              assistantText: "Completed without routing.",
+              output: {
+                status: "COMPLETED",
+                sessionId: "session-conversation-truncated",
+                runId: "run-conversation-truncated",
+                errors: [],
+                telemetry: {
+                  stepsExecuted: 1,
+                  toolCalls: 0,
+                  modelCalls: 1,
+                  durationMs: 1,
+                },
+              },
+            },
+          },
+        })}\n\n`,
+        {
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        },
+      );
+    },
+  });
+  const client = new ProtocolClient(transport);
+  t.after(async () => client.close());
+
+  await assert.rejects(
+    withTimeout(
+      client.sendCommandWithId(
+        "cmd-conversation-truncated",
+        "conversation.message.submit",
+        {
+          profileId: "kestrel",
+          threadId: "thread-main:session-conversation-truncated",
+          messageId: "message-conversation-truncated",
+          turn: {
+            sessionId: "session-conversation-truncated",
+            message: "hello",
+          },
+        },
+      ),
+      1_000,
+      "Truncated conversation stream did not settle.",
+    ),
+    (error: unknown) =>
+      error instanceof Error
+      && "code" in error
+      && error.code === "RUNNER_TRANSPORT_INTERRUPTED",
+  );
+});
+
 test("RemoteRunnerTransport rejects nonterminal SSE events for another command", async () => {
   const transport = new RemoteRunnerTransport({
     baseUrl: "http://runner.internal",
@@ -480,3 +634,15 @@ test("RemoteRunnerTransport stop aborts inflight requests and releases handlers"
   assert.equal(((transport as unknown as { controllers: Map<string, AbortController> }).controllers).size, 0);
   assert.equal(((transport as unknown as { handlers?: unknown }).handlers), undefined);
 });
+
+async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), milliseconds);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}

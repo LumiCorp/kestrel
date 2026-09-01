@@ -21,7 +21,13 @@ const paramsSchema = z.object({
   checkpointId: routeIdSchema,
 });
 const bodySchema = z.object({
-  decision: z.enum(["approve", "deny"]).optional(),
+  decision: z.enum([
+    "approve",
+    "deny",
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ]).optional(),
   recoveryOptionId: z.string().trim().min(1).max(256).optional(),
   content: z
     .record(
@@ -64,8 +70,23 @@ export async function POST(
       const answer = typeof body.content?.answer === "string"
         ? body.content.answer.trim() || undefined
         : undefined;
+      const hostedV4Approval =
+        pending.kind === "approval" &&
+        pending.requestEnvelope.version ===
+          "runner_hosted_tool_approval_interaction_v4";
+      if (pending.kind === "approval" && !hostedV4Approval) {
+        throw new Error("Legacy approval interactions are not supported.");
+      }
       if (pending.kind === "approval" && body.decision === undefined) {
         throw new Error("An approval interaction requires a decision.");
+      }
+      if (
+        pending.kind === "approval" &&
+        (body.decision !== "decline" &&
+            body.decision !== "approve_once" &&
+            body.decision !== "remember_approval")
+      ) {
+        throw new Error("The approval decision does not match its version.");
       }
       if (
         recoveryReviewDeclared &&
@@ -103,9 +124,11 @@ export async function POST(
           ? recoveryOptionLabel(body.recoveryOptionId)
           : body.message ??
         (pending.kind === "approval"
-          ? body.decision === "approve"
-            ? "Approved"
-            : "Denied"
+          ? body.decision === "remember_approval"
+              ? "Remember approval"
+              : body.decision === "approve_once"
+                ? "Approve once"
+                : "Decline"
           : answer !== undefined
             ? answer
             : JSON.stringify(body.content ?? {}));
@@ -116,9 +139,14 @@ export async function POST(
         requestId: pending.requestId,
         eventType: pending.eventType,
         turnId: pending.turnId,
-        message,
+        ...(pending.kind === "approval" ? {} : { message }),
         ...(pending.kind === "approval"
-          ? { approved: body.decision === "approve" }
+          ? {
+              decision: body.decision as
+                | "decline"
+                | "approve_once"
+                | "remember_approval",
+            }
           : {}),
         ...(body.recoveryOptionId !== undefined
           ? { recoveryOptionId: body.recoveryOptionId }
@@ -135,6 +163,9 @@ export async function POST(
       }
       if (body.decision === undefined) {
         throw new Error("An App interaction requires a decision.");
+      }
+      if (body.decision !== "approve" && body.decision !== "deny") {
+        throw new Error("An App interaction requires approve or deny.");
       }
       await resolveMcpInteraction({
         organizationId,

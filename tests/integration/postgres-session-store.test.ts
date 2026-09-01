@@ -8,7 +8,238 @@ import {
 } from "../../src/store/PostgresSessionStore.js";
 import { ScriptedSqlExecutor } from "../helpers/ScriptedSqlExecutor.js";
 import { createEmptyProjectSnapshot } from "../../src/project/state.js";
+import type { ModelCallProofV1 } from "../../src/kestrel/contracts/orchestration.js";
 import { encodeConversationMessageCursor } from "@kestrel-agents/protocol";
+
+test("effect execution claim atomically fences PENDING ownership before invocation", async () => {
+  const sql = new ScriptedSqlExecutor([
+    { match: /^BEGIN/u },
+    {
+      match: /FROM effects WHERE idempotency_key = \$1 FOR UPDATE/u,
+      rows: [{
+        run_id: "run-claim",
+        session_id: "session-claim",
+        status: "PENDING",
+        tenant_id: null,
+        tenant_ownership_state: "explicit_unbound",
+        effect_type: "test.claimed",
+        payload_json: {},
+        step_index: 0,
+        failure_policy: "STOP",
+        created_at: "2026-08-26T00:00:00.000Z",
+      }],
+    },
+    {
+      match: /UPDATE effects SET status = 'CLAIMED'[\s\S]*status = 'PENDING'/u,
+      rowCount: 1,
+    },
+    { match: /^COMMIT/u },
+  ]);
+  const store = new PostgresSessionStore(sql);
+
+  assert.equal(await store.claimEffectExecution("claim-1", {
+    runId: "run-claim",
+    sessionId: "session-claim",
+  }), "claimed");
+  assert.deepEqual(sql.queries[2]?.values, ["claim-1", "run-claim", "session-claim"]);
+  sql.assertExhausted();
+});
+
+test("effect dispatch acknowledgement atomically advances claimed ownership", async () => {
+  const sql = new ScriptedSqlExecutor([
+    { match: /^BEGIN/u },
+    {
+      match: /SELECT run_id, session_id, status[\s\S]*FROM effects WHERE idempotency_key = \$1 FOR UPDATE/u,
+      rows: [{
+        run_id: "run-dispatch",
+        session_id: "session-dispatch",
+        status: "CLAIMED",
+      }],
+    },
+    {
+      match: /UPDATE effects SET status = 'DISPATCHED'[\s\S]*status = 'CLAIMED'/u,
+      rowCount: 1,
+    },
+    { match: /^COMMIT/u },
+  ]);
+  const store = new PostgresSessionStore(sql);
+
+  assert.equal(await store.markEffectDispatched("dispatch-1", {
+    runId: "run-dispatch",
+    sessionId: "session-dispatch",
+  }), "dispatched");
+  assert.deepEqual(sql.queries[2]?.values, [
+    "dispatch-1",
+    "run-dispatch",
+    "session-dispatch",
+  ]);
+  sql.assertExhausted();
+});
+
+test("effect execution claim preserves durable dispatched recovery state", async () => {
+  const sql = new ScriptedSqlExecutor([
+    { match: /^BEGIN/u },
+    {
+      match: /FROM effects WHERE idempotency_key = \$1 FOR UPDATE/u,
+      rows: [{
+        run_id: "run-dispatched",
+        session_id: "session-dispatched",
+        status: "DISPATCHED",
+        tenant_id: null,
+        tenant_ownership_state: "explicit_unbound",
+        effect_type: "test.dispatched",
+        payload_json: {},
+        step_index: 0,
+        failure_policy: "STOP",
+        created_at: "2026-08-29T00:00:00.000Z",
+      }],
+    },
+    { match: /^COMMIT/u },
+  ]);
+  const store = new PostgresSessionStore(sql);
+
+  assert.equal(await store.claimEffectExecution("dispatch-2", {
+    runId: "run-dispatched",
+    sessionId: "session-dispatched",
+  }), "already_dispatched");
+  sql.assertExhausted();
+});
+
+test("PostgresSessionStore persists model-call proof and marks older rows legacy", async () => {
+  const sql = new ScriptedSqlExecutor([
+    { match: /INSERT INTO model_call_provenance[\s\S]*proof_json/u, rowCount: 1 },
+    { match: /UPDATE model_call_provenance[\s\S]*proof_json/u, rowCount: 1 },
+    {
+      match: /SELECT call_id[\s\S]*proof_json[\s\S]*FROM model_call_provenance/u,
+      rows: [{
+        call_id: "call-proof",
+        run_id: "run-proof",
+        session_id: "session-proof",
+        thread_id: null,
+        turn_id: null,
+        step_index: null,
+        step_agent: null,
+        phase: null,
+        model: "gpt-5",
+        provider: "openai",
+        response_format: "json",
+        schema_name: null,
+        provider_payload_hash: "payload-hash",
+        component_hash: "component-hash",
+        template_ids_json: null,
+        tool_manifest_hash: null,
+        assembly_id: null,
+        source_bucket_hashes_json: null,
+        proof_json: {
+          version: "model_call_proof_v1",
+          evidence: "captured",
+          admission: "admitted",
+          capabilities: ["structured_output", "strict_schema"],
+          terminal: "completed",
+          validation: "passed",
+          providerRequestId: "req-123",
+        },
+        metadata_json: null,
+        status: "COMPLETED",
+        latency_ms: 42,
+        created_at: "2026-08-26T12:00:00.000Z",
+        completed_at: "2026-08-26T12:00:00.042Z",
+      }],
+      rowCount: 1,
+    },
+  ]);
+  const store = new PostgresSessionStore(sql);
+  const proof: ModelCallProofV1 = {
+    version: "model_call_proof_v1" as const,
+    evidence: "captured" as const,
+    admission: "admitted" as const,
+    capabilities: ["structured_output", "strict_schema"],
+    terminal: "pending" as const,
+    validation: "not_requested" as const,
+  };
+  const untrustedProof = {
+    ...proof,
+    prompt: "prompt-content-must-not-persist",
+    schema: "schema-content-must-not-persist",
+    toolArguments: { path: "/secret" },
+    credential: "credential-must-not-persist",
+    providerPayload: "payload-must-not-persist",
+  } as unknown as ModelCallProofV1;
+  await store.appendModelCallProvenance({
+    callId: "call-proof",
+    runId: "run-proof",
+    sessionId: "session-proof",
+    model: "gpt-5",
+    provider: "openai",
+    responseFormat: "json",
+    providerPayloadHash: "candidate-payload-hash",
+    componentHash: "component-hash",
+    proof: untrustedProof,
+    createdAt: "2026-08-26T12:00:00.000Z",
+    status: "REQUESTED",
+  });
+  await store.updateModelCallProvenance({
+    callId: "call-proof",
+    status: "COMPLETED",
+    completedAt: "2026-08-26T12:00:00.042Z",
+    latencyMs: 42,
+    providerPayloadHash: "payload-hash",
+    proof: { ...proof, terminal: "completed", validation: "passed", providerRequestId: "req-123" },
+  });
+
+  const calls = await store.listModelCallProvenance({ runId: "run-proof" });
+  assert.equal(calls[0]?.proof.admission, "admitted");
+  assert.equal(calls[0]?.proof.terminal, "completed");
+  assert.equal(calls[0]?.proof.providerRequestId, "req-123");
+  assert.equal(sql.queries[0]?.values?.[18], JSON.stringify(proof));
+  assert.equal(sql.queries[0]?.values?.length, 24);
+  assert.equal(sql.queries[0]?.values?.[20], "REQUESTED");
+  assert.equal(JSON.stringify(sql.queries[0]?.values?.[18]).includes("must-not-persist"), false);
+  sql.assertExhausted();
+});
+
+test("PostgresSessionStore reads pre-proof model-call rows as explicit legacy evidence", async () => {
+  const sql = new ScriptedSqlExecutor([{
+    match: /SELECT call_id[\s\S]*proof_json[\s\S]*FROM model_call_provenance/u,
+    rows: [{
+      call_id: "legacy-call",
+      run_id: "legacy-run",
+      session_id: "legacy-session",
+      thread_id: null,
+      turn_id: null,
+      step_index: null,
+      step_agent: null,
+      phase: null,
+      model: null,
+      provider: null,
+      response_format: null,
+      schema_name: null,
+      provider_payload_hash: "legacy-payload-hash",
+      component_hash: "legacy-component-hash",
+      template_ids_json: null,
+      tool_manifest_hash: null,
+      assembly_id: null,
+      source_bucket_hashes_json: null,
+      proof_json: null,
+      metadata_json: null,
+      status: "FAILED",
+      latency_ms: null,
+      created_at: "2026-08-26T12:00:00.000Z",
+      completed_at: "2026-08-26T12:00:01.000Z",
+    }],
+    rowCount: 1,
+  }]);
+  const calls = await new PostgresSessionStore(sql).listModelCallProvenance({ runId: "legacy-run" });
+  assert.deepEqual(calls[0]?.proof, {
+    version: "model_call_proof_v1",
+    evidence: "legacy",
+    admission: "unknown_legacy",
+    capabilities: [],
+    terminal: "unknown_legacy",
+    validation: "unknown_legacy",
+  });
+  sql.assertExhausted();
+});
 
 test("completed conversation message reads use durable handoff filters and cursor ordering", async () => {
   const startedAt = new Date("2026-07-31T10:00:00.000Z");

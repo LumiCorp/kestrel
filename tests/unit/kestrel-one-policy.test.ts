@@ -11,6 +11,7 @@ import {
   KESTREL_HARNESS_ECONOMICS,
   KESTREL_ONE_POLICY,
   KESTREL_POLICY_VERSION,
+  defaultApprovalPolicyPackForPreset,
 } from "../../src/profile/kestrelOnePolicy.js";
 
 const LUNA_ROUTE = {
@@ -50,7 +51,7 @@ test("canonical Kestrel policy composes parity across product environments", () 
     environmentPresetId: "workspace_hosted",
     overlay: LUNA_ROUTE,
   });
-  assert.equal(KESTREL_ONE_ENVIRONMENT_PRESETS.workspace_hosted.version, 2);
+  assert.equal(KESTREL_ONE_ENVIRONMENT_PRESETS.workspace_hosted.version, 4);
 
   for (const composed of [
     cliSafe,
@@ -61,7 +62,7 @@ test("canonical Kestrel policy composes parity across product environments", () 
   ]) {
     assert.equal(composed.profile.agentProfileId, "kestrel");
     assert.equal(composed.provenance.policyId, "kestrel");
-    assert.equal(composed.provenance.policyVersion, 4);
+    assert.equal(composed.provenance.policyVersion, 5);
     assert.equal(composed.provenance.policyVersion, KESTREL_POLICY_VERSION);
     assert.equal(composed.provenance.promptPolicyId, "kestrel");
     assert.equal(
@@ -100,6 +101,8 @@ test("canonical Kestrel policy composes parity across product environments", () 
   assert.deepEqual(cliDev.profile.devShell, hosted.profile.devShell);
   assert.equal(cliDev.profile.codeMode?.enabled, false);
   assert.equal(hosted.profile.codeMode?.enabled, true);
+  assert.equal(hosted.profile.approvalPolicyPackId, "hosted_workspace");
+  assert.equal(defaultApprovalPolicyPackForPreset("workspace_hosted"), "hosted_workspace");
   assert.equal(cliDev.profile.toolAllowlist?.includes("code.execute"), false);
   assert.equal(hosted.profile.toolAllowlist?.includes("code.execute"), true);
 
@@ -132,6 +135,20 @@ test("canonical Kestrel policy composes parity across product environments", () 
   );
 });
 
+test("hosted composition rejects a policy pack that denies required shell descriptors", () => {
+  assert.throws(
+    () => composeKestrelOneProfile({
+      environmentPresetId: "workspace_hosted",
+      overlay: {
+        ...LUNA_ROUTE,
+        approvalPolicyPackId: "ci_bot",
+        additionalToolNames: ["exec_command"],
+      },
+    }),
+    /does not authorize advertised tool 'exec_command' class 'external_side_effect'/u,
+  );
+});
+
 test("canonical Kestrel One policy and presets are immutable versioned definitions", () => {
   assert.equal(Object.isFrozen(KESTREL_ONE_POLICY), true);
   assert.equal(Object.isFrozen(KESTREL_ONE_POLICY.requiredModelToolNames), true);
@@ -140,12 +157,12 @@ test("canonical Kestrel One policy and presets are immutable versioned definitio
   assert.equal(
     Object.values(KESTREL_ONE_ENVIRONMENT_PRESETS).every((preset) =>
       Object.isFrozen(preset) && preset.version ===
-        (preset.id === "workspace_hosted" ? 2 : 1)
+        (preset.id === "workspace_hosted" ? 4 : 1)
     ),
     true,
   );
   assert.equal(KESTREL_ONE_POLICY.allowNestedCollaborators, false);
-  assert.equal(KESTREL_POLICY_VERSION, 4);
+  assert.equal(KESTREL_POLICY_VERSION, 5);
   assert.deepEqual(
     KESTREL_HARNESS_ECONOMICS.modelProfiles.find(
       (profile) =>
@@ -449,13 +466,22 @@ test("canonical Kestrel policy accepts explicit hosted capability tools", () => 
     environmentPresetId: "workspace_hosted",
     overlay: {
       ...LUNA_ROUTE,
-      additionalToolNames: ["kestrel_one.search_knowledge_documents"],
+      additionalToolNames: [
+        "kestrel_one.search_knowledge_documents",
+        "kestrel_one.google_calendar_create_event",
+      ],
     },
   });
 
   assert.equal(
     hosted.profile.toolAllowlist?.includes(
       "kestrel_one.search_knowledge_documents",
+    ),
+    true,
+  );
+  assert.equal(
+    hosted.profile.toolAllowlist?.includes(
+      "kestrel_one.google_calendar_create_event",
     ),
     true,
   );
@@ -530,13 +556,13 @@ test("legacy composition fingerprint includes Kestrel and economics policy revis
   });
   const expected = digestCanonical({
     policyId: "kestrel",
-    policyVersion: 4,
+    policyVersion: 5,
     promptPolicyId: "kestrel",
     harnessEconomicsControlVersion: 1,
     harnessEconomicsPolicyId: "economics:kestrel:v2",
     harnessEconomicsPolicyVersion: 1,
     environmentPresetId: "workspace_hosted",
-    environmentPresetVersion: 2,
+    environmentPresetVersion: 4,
     environmentCapabilityPacks: composed.profile.capabilityPacks,
     overlay: LUNA_ROUTE,
     toolAllowlist: composed.profile.toolAllowlist,

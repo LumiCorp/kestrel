@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -8,6 +9,109 @@ import {
   resolveLaunchServicesInstalledAppPath,
   runLaunchServicesCleanupActions,
 } from "../../scripts/desktop-launch-services-gate.js";
+import { waitForAsyncValue } from "../../scripts/desktop-smoke-poll.js";
+import { startFakeOpenRouterServer } from "../ops/helpers/fake-open-router.js";
+
+test("Desktop smoke gates poll asynchronous renderer state outside waitForFunction", () => {
+  for (const scriptName of [
+    "desktop-launch-services-smoke.ts",
+    "desktop-ota-smoke.ts",
+    "desktop-package-smoke.ts",
+  ]) {
+    const source = readFileSync(
+      new URL(`../../scripts/${scriptName}`, import.meta.url),
+      "utf8",
+    );
+    assert.doesNotMatch(
+      source,
+      /waitForFunction\(\s*async/gu,
+      `${scriptName} must not pass an async predicate to Playwright waitForFunction`,
+    );
+  }
+});
+
+test("packaged Desktop smoke advertises the model it seeds for onboarding", () => {
+  const source = readFileSync(
+    new URL("../../scripts/desktop-package-smoke.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /startFakeOpenRouterServer\(\{\s*model:\s*DEFAULT_OPENROUTER_MODEL,?\s*\}\)/u,
+  );
+  assert.match(
+    source,
+    /selectOption\(DEFAULT_OPENROUTER_MODEL\)/u,
+  );
+  assert.match(source, /\.timeline-entry-assistant \.message-body/u);
+  assert.doesNotMatch(source, /\.message-assistant \.message-body/u);
+});
+
+test("fake OpenRouter recognizes packaged Browser QA inside the serialized request", async () => {
+  const server = await startFakeOpenRouterServer();
+  try {
+    const response = await fetch(`${server.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "z-ai/glm-5.2",
+        messages: [{
+          role: "user",
+          content: `fake-openrouter-browser-qa ${JSON.stringify({
+            projectId: "project-1",
+            runId: "run-1",
+            urlId: "preview-1",
+          })}`,
+        }],
+        tools: [
+          { type: "function", function: { name: "browser_open" } },
+          { type: "function", function: { name: "kestrel_finalize" } },
+        ],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.match(body, /"name":"browser_open"/u);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Desktop smoke polling awaits non-ready asynchronous samples", async () => {
+  const samples = ["starting_runtime", "starting_web", "ready"];
+  const observed: string[] = [];
+  const result = await waitForAsyncValue(
+    async () => {
+      const value = samples.shift() ?? "ready";
+      observed.push(value);
+      return await Promise.resolve(value);
+    },
+    (value) => value === "ready",
+    {
+      description: "Desktop readiness",
+      timeoutMs: 1_000,
+      intervalMs: 0,
+    },
+  );
+
+  assert.equal(result, "ready");
+  assert.deepEqual(observed, ["starting_runtime", "starting_web", "ready"]);
+});
+
+test("Desktop smoke polling bounds an unresolved renderer sample", async () => {
+  await assert.rejects(
+    waitForAsyncValue(
+      async () => await new Promise<string>(() => {}),
+      (value) => value === "ready",
+      {
+        description: "unresolved Desktop state",
+        timeoutMs: 25,
+        intervalMs: 0,
+      },
+    ),
+    /Timed out waiting for unresolved Desktop state/u,
+  );
+});
 
 test("LaunchServices gate installs under a unique Applications path", () => {
   assert.equal(

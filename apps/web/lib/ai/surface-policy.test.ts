@@ -16,6 +16,7 @@ function toEnv(values: Record<string, string>) {
 test("gateway-governed and direct-runtime surfaces stay explicit", () => {
   assert.equal(getAISurfacePolicy("chat"), "gateway-required");
   assert.equal(getAISurfacePolicy("artifact"), "gateway-required");
+  assert.equal(getAISurfacePolicy("workflow"), "gateway-required");
   assert.equal(getAISurfacePolicy("embedding"), "runtime-direct");
   assert.equal(getAISurfacePolicy("ocr"), "runtime-direct");
 });

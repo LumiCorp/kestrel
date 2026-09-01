@@ -2,6 +2,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { WebSocket } from "ws";
 
+import {
+  parseBrowserEnvironmentDomainAuthority,
+  parseBrowserProjectDomainAuthority,
+  type BrowserEnvironmentDomainAuthorityV1,
+  type BrowserProjectDomainAuthorityV1,
+} from "../browser/domainAuthority.js";
 import type { LocalCoreCredentialStore } from "./credentialStore.js";
 
 const ACCOUNT_CREDENTIAL_ID = "kestrel_one.account" as const;
@@ -28,6 +34,12 @@ export interface KestrelOneAccountProjection {
     environmentId: string;
     environmentProvider: "fly" | "desktop";
     desktopWorkspaceRef?: string | null | undefined;
+    browserAuthority?:
+      | {
+          environment: BrowserEnvironmentDomainAuthorityV1;
+          project: BrowserProjectDomainAuthorityV1;
+        }
+      | undefined;
     role: "owner" | "editor" | "member";
   }>;
   threads: Array<{
@@ -47,6 +59,51 @@ export type KestrelOneAccountStatus =
       baseUrl: string;
       projection: KestrelOneAccountProjection;
     };
+
+export type KestrelOneReceivingConnection = {
+  provider: "resend";
+  configured: boolean;
+  receivingDomainKind: "custom" | "resend_managed" | null;
+  credentialStatus: "not_configured" | "full_access" | "insufficient" | "error";
+  credentialValidatedAt: string | null;
+  receivingDomain: string | null;
+  receivingDomainStatus: "not_selected" | "pending" | "verified" | "failed";
+  mxStatus: "unknown" | "pending" | "verified" | "failed";
+  domainCheckedAt: string | null;
+  webhookStatus: "not_staged" | "staged" | "active" | "disabled" | "error";
+  inboundEnabled: boolean;
+  lastHealthCheckedAt: string | null;
+  lastTestedAt: string | null;
+  lastErrorCode: string | null;
+  readiness:
+    | "not_configured"
+    | "credential_insufficient"
+    | "domain_unready"
+    | "ready_inactive"
+    | "staged"
+    | "active"
+    | "error";
+};
+
+export type KestrelOneReceivingDomain = {
+  id: string;
+  name: string;
+  status: "pending" | "verified" | "failed";
+  receiving: "enabled" | "disabled";
+  mxStatus: "unknown" | "pending" | "verified" | "failed";
+};
+
+export class KestrelOneReceivingAuthorizationError extends Error {
+  readonly statusCode: 401 | 403;
+
+  constructor(statusCode: 401 | 403) {
+    super(
+      "Kestrel One rejected access to this Organization's receiving status.",
+    );
+    this.name = "KestrelOneReceivingAuthorizationError";
+    this.statusCode = statusCode;
+  }
+}
 
 export type KestrelOneAuthorizationSessionView = {
   sessionId: string;
@@ -137,18 +194,31 @@ export class LocalCoreKestrelOneAccountManager {
   readonly #store: LocalCoreCredentialStore;
   readonly #fetch: typeof fetch;
   readonly #now: () => number;
+  readonly #beforeCredentialReplace: () => Promise<void>;
+  readonly #withCredentialReplacement: <T>(
+    action: () => Promise<T>,
+  ) => Promise<T>;
   readonly #sessions = new Map<string, ActiveSession>();
   readonly #previews = new Map<string, DesktopPreviewTunnel>();
   #refreshPromise: Promise<StoredAccountCredential> | undefined;
+  #credentialMutationTail: Promise<void> = Promise.resolve();
 
   constructor(input: {
     credentialStore: LocalCoreCredentialStore;
     fetchImpl?: typeof fetch;
     now?: () => number;
+    beforeCredentialReplace?: (() => Promise<void>) | undefined;
+    withCredentialReplacement?:
+      | (<T>(action: () => Promise<T>) => Promise<T>)
+      | undefined;
   }) {
     this.#store = input.credentialStore;
     this.#fetch = input.fetchImpl ?? fetch;
     this.#now = input.now ?? Date.now;
+    this.#beforeCredentialReplace =
+      input.beforeCredentialReplace ?? (async () => undefined);
+    this.#withCredentialReplacement =
+      input.withCredentialReplacement ?? (async (action) => await action());
   }
 
   async start(input: {
@@ -256,8 +326,10 @@ export class LocalCoreKestrelOneAccountManager {
       },
     );
     if (response.status === 401) {
-      await this.#store.delete(ACCOUNT_CREDENTIAL_ID);
-      throw new Error("Kestrel One rejected this account.");
+      await this.#replaceCredential(async () => {
+        await this.#store.delete(ACCOUNT_CREDENTIAL_ID);
+      });
+      return { status: "signed_out" };
     }
     if (!response.ok) {
       throw new Error(
@@ -283,10 +355,60 @@ export class LocalCoreKestrelOneAccountManager {
           method: "DELETE",
           headers: { authorization: `Bearer ${credential.accessToken}` },
         },
-      ).catch(() => undefined);
+      ).catch(() => {});
     }
-    await this.#store.delete(ACCOUNT_CREDENTIAL_ID);
+    await this.#replaceCredential(async () => {
+      await this.#store.delete(ACCOUNT_CREDENTIAL_ID);
+    });
     return { status: "signed_out" };
+  }
+
+  async receivingConnection(
+    organizationId: string,
+  ): Promise<KestrelOneReceivingConnection> {
+    const body = await this.#receivingRequest(organizationId, "", {
+      method: "GET",
+    });
+    return parseReceivingConnection(body.connection);
+  }
+
+  async inspectReceivingDomains(input: {
+    organizationId: string;
+    apiKey?: string | undefined;
+  }): Promise<KestrelOneReceivingDomain[]> {
+    const body = await this.#receivingRequest(
+      input.organizationId,
+      "/domains",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+        }),
+      },
+    );
+    return requireArray(body.domains, "receiving domains").map(
+      parseReceivingDomain,
+    );
+  }
+
+  async saveReceivingConnection(input: {
+    organizationId: string;
+    receivingDomainId?: string | undefined;
+    receivingDomain?: string | undefined;
+    apiKey?: string | undefined;
+  }): Promise<KestrelOneReceivingConnection> {
+    const body = await this.#receivingRequest(input.organizationId, "", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...(input.receivingDomain
+          ? { receivingDomain: input.receivingDomain }
+          : { receivingDomainId: input.receivingDomainId }),
+        ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+      }),
+    });
+    return parseReceivingConnection(body.connection);
   }
 
   async submitTurn(input: {
@@ -524,7 +646,12 @@ export class LocalCoreKestrelOneAccountManager {
         session.baseUrl,
         this.#now(),
       );
-      await this.#store.set(ACCOUNT_CREDENTIAL_ID, JSON.stringify(credential));
+      await this.#replaceCredential(async () => {
+        await this.#store.set(
+          ACCOUNT_CREDENTIAL_ID,
+          JSON.stringify(credential),
+        );
+      });
       session.view = {
         sessionId: session.sessionId,
         state: "complete",
@@ -562,6 +689,61 @@ export class LocalCoreKestrelOneAccountManager {
     return refresh;
   }
 
+  async #replaceCredential<T>(action: () => Promise<T>): Promise<T> {
+    return await this.#serializeCredentialMutation(() =>
+      this.#withCredentialReplacement(async () => {
+        await this.#beforeCredentialReplace();
+        return await action();
+      }),
+    );
+  }
+
+  async #serializeCredentialMutation<T>(action: () => Promise<T>): Promise<T> {
+    const result = this.#credentialMutationTail.then(action, action);
+    this.#credentialMutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await result;
+  }
+
+  async #receivingRequest(
+    organizationId: string,
+    suffix: string,
+    init: RequestInit,
+  ): Promise<Record<string, unknown>> {
+    const credential = await this.#requireCredential();
+    const id = encodeURIComponent(
+      requireText(organizationId, "organizationId"),
+    );
+    const response = await this.#fetch(
+      new URL(
+        `/api/desktop/v1/organizations/${id}/email/receiving${suffix}`,
+        credential.baseUrl,
+      ),
+      {
+        ...init,
+        headers: {
+          authorization: `Bearer ${credential.accessToken}`,
+          ...(init.headers ?? {}),
+        },
+      },
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        throw new KestrelOneReceivingAuthorizationError(response.status);
+      }
+      const error = requireRecord(payload, "receiving error");
+      throw new Error(
+        typeof error.error === "string"
+          ? error.error
+          : "Kestrel One inbound receiving is unavailable.",
+      );
+    }
+    return requireRecord(payload, "receiving response");
+  }
+
   async #refreshCredential(
     stale: StoredAccountCredential,
   ): Promise<StoredAccountCredential> {
@@ -589,8 +771,17 @@ export class LocalCoreKestrelOneAccountManager {
       stored.baseUrl,
       this.#now(),
     );
-    await this.#store.set(ACCOUNT_CREDENTIAL_ID, JSON.stringify(refreshed));
-    return refreshed;
+    return await this.#serializeCredentialMutation(async () => {
+      const current = await this.#readCredential();
+      if (current === undefined) {
+        throw new Error(
+          "Kestrel One account changed during credential refresh.",
+        );
+      }
+      if (current.refreshToken !== stored.refreshToken) return current;
+      await this.#store.set(ACCOUNT_CREDENTIAL_ID, JSON.stringify(refreshed));
+      return refreshed;
+    });
   }
 
   async #readCredential(): Promise<StoredAccountCredential | undefined> {
@@ -701,7 +892,7 @@ class DesktopPreviewTunnel {
       throw new Error("Desktop preview expiration is invalid.");
     }
     this.#expiresAt = nextExpiresAt;
-    if (!this.#closed && !this.#socket && Date.now() < this.#expiresAt) {
+    if (!(this.#closed || this.#socket) && Date.now() < this.#expiresAt) {
       if (this.#reconnectTimer) clearTimeout(this.#reconnectTimer);
       this.#reconnectTimer = undefined;
       this.#connect();
@@ -721,7 +912,7 @@ class DesktopPreviewTunnel {
     socket.once("close", () => {
       if (this.#socket === socket) this.#socket = undefined;
       if (!this.#closed && Date.now() < this.#expiresAt) {
-        this.#reconnectTimer = setTimeout(() => this.#connect(), 1_000);
+        this.#reconnectTimer = setTimeout(() => this.#connect(), 1000);
         this.#reconnectTimer.unref();
       }
     });
@@ -887,7 +1078,7 @@ function parseLocalPreviewUrl(value: string) {
     throw new Error("Only an HTTP loopback preview URL can be published.");
   }
   const port = Number(url.port);
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+  if (!Number.isInteger(port) || port < 1024 || port > 65_535) {
     throw new Error("The local preview port is invalid.");
   }
   return { origin: url.origin, port };
@@ -1057,6 +1248,13 @@ function parseAccountProjection(value: unknown): KestrelOneAccountProjection {
                   "project.desktopWorkspaceRef",
                 ),
               }),
+        ...(item.browserAuthority === undefined
+          ? {}
+          : {
+              browserAuthority: parseDesktopBrowserAuthorityProjection(
+                item.browserAuthority,
+              ),
+            }),
         role,
       };
     }),
@@ -1089,6 +1287,126 @@ function parseAccountProjection(value: unknown): KestrelOneAccountProjection {
       };
     }),
   };
+}
+
+function parseDesktopBrowserAuthorityProjection(value: unknown): {
+  environment: BrowserEnvironmentDomainAuthorityV1;
+  project: BrowserProjectDomainAuthorityV1;
+} {
+  const record = requireRecord(value, "project.browserAuthority");
+  const keys = Object.keys(record).sort();
+  if (JSON.stringify(keys) !== JSON.stringify(["environment", "project"])) {
+    throw new Error("Kestrel One Browser authority projection is invalid.");
+  }
+  const environment = parseBrowserEnvironmentDomainAuthority(
+    record.environment,
+  );
+  const project = parseBrowserProjectDomainAuthority(record.project);
+  return { environment, project };
+}
+
+function parseReceivingConnection(
+  value: unknown,
+): KestrelOneReceivingConnection {
+  const item = requireRecord(value, "receiving connection");
+  return {
+    provider: requireEnum(item.provider, ["resend"], "provider"),
+    configured: requireBoolean(item.configured, "configured"),
+    receivingDomainKind:
+      item.receivingDomainKind === null
+        ? null
+        : requireEnum(
+            item.receivingDomainKind,
+            ["custom", "resend_managed"],
+            "receivingDomainKind",
+          ),
+    credentialStatus: requireEnum(
+      item.credentialStatus,
+      ["not_configured", "full_access", "insufficient", "error"],
+      "credentialStatus",
+    ),
+    credentialValidatedAt: nullableDate(item.credentialValidatedAt),
+    receivingDomain: nullableText(item.receivingDomain),
+    receivingDomainStatus: requireEnum(
+      item.receivingDomainStatus,
+      ["not_selected", "pending", "verified", "failed"],
+      "receivingDomainStatus",
+    ),
+    mxStatus: requireEnum(
+      item.mxStatus,
+      ["unknown", "pending", "verified", "failed"],
+      "mxStatus",
+    ),
+    domainCheckedAt: nullableDate(item.domainCheckedAt),
+    webhookStatus: requireEnum(
+      item.webhookStatus,
+      ["not_staged", "staged", "active", "disabled", "error"],
+      "webhookStatus",
+    ),
+    inboundEnabled: requireBoolean(item.inboundEnabled, "inboundEnabled"),
+    lastHealthCheckedAt: nullableDate(item.lastHealthCheckedAt),
+    lastTestedAt: nullableDate(item.lastTestedAt),
+    lastErrorCode: nullableText(item.lastErrorCode),
+    readiness: requireEnum(
+      item.readiness,
+      [
+        "not_configured",
+        "credential_insufficient",
+        "domain_unready",
+        "ready_inactive",
+        "staged",
+        "active",
+        "error",
+      ],
+      "readiness",
+    ),
+  };
+}
+
+function parseReceivingDomain(value: unknown): KestrelOneReceivingDomain {
+  const item = requireRecord(value, "receiving domain");
+  return {
+    id: requireText(item.id, "domain.id"),
+    name: requireText(item.name, "domain.name"),
+    status: requireEnum(
+      item.status,
+      ["pending", "verified", "failed"],
+      "domain.status",
+    ),
+    receiving: requireEnum(
+      item.receiving,
+      ["enabled", "disabled"],
+      "domain.receiving",
+    ),
+    mxStatus: requireEnum(
+      item.mxStatus,
+      ["unknown", "pending", "verified", "failed"],
+      "domain.mxStatus",
+    ),
+  };
+}
+
+function requireEnum<const T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+  label: string,
+): T[number] {
+  const parsed = requireText(value, label);
+  if (!allowed.includes(parsed)) throw new Error(`${label} is invalid.`);
+  return parsed as T[number];
+}
+
+function requireBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${label} is invalid.`);
+  return value;
+}
+
+function nullableText(value: unknown): string | null {
+  return value === null ? null : requireText(value, "nullable text");
+}
+
+function nullableDate(value: unknown): string | null {
+  return value === null ? null : requireDate(value);
 }
 
 function parseThreadSnapshot(value: unknown): KestrelOneThreadSnapshot {

@@ -5,6 +5,11 @@ import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
 import { createOpenAiHttpError } from "../../models/openai/OpenAiErrors.js";
+import {
+  MODEL_REQUEST_V2_VERSION,
+  createModelRequestV2,
+  parseModelRequestV2,
+} from "../../src/kestrel/contracts/model-registration.js";
 
 
 test("RetryingModelGateway retries timeout and surfaces IO_MODEL_TIMEOUT code", async () => {
@@ -313,6 +318,35 @@ test("RetryingModelGateway forwards attempt timeout metadata to the invoker", as
   assert.equal(response.ok, true);
   assert.equal(typeof seenRemaining, "number");
   assert.equal((seenRemaining as number) <= 25, true);
+});
+
+test("RetryingModelGateway does not mutate a fingerprinted V2 request before invocation", async () => {
+  let seen: ModelRequest | undefined;
+  const gateway = new RetryingModelGateway(
+    async <T>(request: ModelRequest) => {
+      seen = request;
+      throw new Error("stop after capture") as unknown as T;
+    },
+    { retryCount: 0 },
+  );
+  const request = createModelRequestV2({
+    version: MODEL_REQUEST_V2_VERSION,
+    model: "test-model",
+    input: "plain text",
+    requirements: {
+      runtimeRole: "agent.loop",
+      output: { kind: "text", assurance: "none" },
+      tools: { choice: "none", strictArguments: false, parallelism: "forbidden" },
+      reasoning: { mode: "off", continuationKinds: [] },
+      streaming: { required: false, terminalBehavior: "not_required" },
+      inputModalities: ["text"],
+      endpoint: "chat",
+    },
+  });
+
+  await assert.rejects(() => gateway.call(request), /stop after capture/u);
+  assert.deepEqual(seen, request);
+  assert.doesNotThrow(() => parseModelRequestV2(seen));
 });
 
 test("RetryingModelGateway preserves timeout diagnostics from request metadata", async () => {

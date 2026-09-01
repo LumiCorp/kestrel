@@ -10,6 +10,21 @@ import {
 test("tool registry includes seeded built-in and external providers", () => {
   const providers = listToolProviders();
   assert.ok(providers.some((provider) => provider.key === "built_in.weather"));
+  const browser = getToolProviderDefinition("built_in.browser");
+  assert.ok(browser);
+  assert.equal(browser.app.installMode, "inherited");
+  assert.equal(browser.capabilities.length, 12);
+  assert.equal(browser.capabilities.every((capability) => capability.defaultPolicy.enabled === false), true);
+  assert.equal(browser.capabilities.find((capability) => capability.runtimeName === "browser.upload")?.minimumApprovalMode, "ask");
+  assert.equal(browser.capabilities.find((capability) => capability.runtimeName === "browser.navigate")?.defaultPolicy.approvalMode, "auto");
+  const workspace = getToolProviderDefinition("built_in.workspace");
+  assert.deepEqual(
+    workspace?.capabilities.map((capability) => [
+      capability.runtimeName,
+      capability.defaultPolicy.approvalMode,
+    ]),
+    [["exec_command", "ask"]],
+  );
   const previews = getToolProviderDefinition("built_in.previews");
   assert.equal(
     getToolProviderDefinition(["n", "g", "r", "o", "k"].join("")),

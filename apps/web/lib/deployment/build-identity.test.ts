@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import nextConfig, {
-  kestrelBuildIdentity,
-} from "../../next.config";
-import { resolveKestrelBuildIdentity } from "./build-identity";
-
+import nextConfig, { kestrelBuildIdentity } from "../../next.config";
+import {
+  loadKestrelBuildIdentity,
+  resolveKestrelBuildIdentity,
+} from "./build-identity";
 
 const vercelRevision = "1".repeat(40);
 const gitRevision = "2".repeat(40);
@@ -18,7 +18,7 @@ const currentManifestVersion = (
 
 function resolve(
   env: Record<string, string | undefined>,
-  readGitRevision: () => string | undefined | void = () => gitRevision
+  readGitRevision: () => string | undefined | void = () => gitRevision,
 ) {
   return resolveKestrelBuildIdentity({
     env,
@@ -28,13 +28,18 @@ function resolve(
 }
 
 test("Kestrel One manifest version is canonical", () => {
-  assert.deepEqual(
-    resolve({ KESTREL_APP_VERSION: "0.6.0" }),
-    { revision: gitRevision, source: "git", version: "0.6.0" }
-  );
+  assert.deepEqual(resolve({ KESTREL_APP_VERSION: "0.6.0" }), {
+    revision: gitRevision,
+    source: "git",
+    version: "0.6.0",
+  });
   assert.throws(
     () => resolve({ KESTREL_APP_VERSION: "0.5.1" }),
-    /must match apps\/web\/package\.json/u
+    /must match apps\/web\/package\.json/u,
+  );
+  assert.throws(
+    () => loadKestrelBuildIdentity({ KESTREL_APP_VERSION: "0.0.0" }),
+    /must match apps\/web\/package\.json/u,
   );
 });
 
@@ -49,66 +54,81 @@ test("Vercel revision takes precedence over Git and legacy metadata", () => {
       () => {
         gitRead = true;
         return gitRevision;
-      }
+      },
     ),
-    { revision: vercelRevision, source: "vercel", version: "0.6.0" }
+    { revision: vercelRevision, source: "vercel", version: "0.6.0" },
   );
   assert.equal(gitRead, false);
 });
 
 test("Git revision takes precedence over the legacy fallback", () => {
-  assert.deepEqual(
-    resolve({ KESTREL_BUILD_REVISION: legacyRevision }),
-    { revision: gitRevision, source: "git", version: "0.6.0" }
-  );
+  assert.deepEqual(resolve({ KESTREL_BUILD_REVISION: legacyRevision }), {
+    revision: gitRevision,
+    source: "git",
+    version: "0.6.0",
+  });
 });
 
 test("legacy revision is used only when Vercel and Git metadata are absent", () => {
   assert.deepEqual(
     resolve({ KESTREL_BUILD_REVISION: legacyRevision }, () => {}),
-    { revision: legacyRevision, source: "legacy", version: "0.6.0" }
+    { revision: legacyRevision, source: "legacy", version: "0.6.0" },
   );
 });
 
 test("malformed revisions are rejected before fallback", () => {
   assert.throws(
     () => resolve({ VERCEL_GIT_COMMIT_SHA: "short" }),
-    /full 40-character Git commit SHA/u
+    /full 40-character Git commit SHA/u,
   );
   assert.throws(
     () => resolve({}, () => "not-a-sha"),
-    /full 40-character Git commit SHA/u
+    /full 40-character Git commit SHA/u,
   );
   assert.throws(
-    () =>
-      resolve({ KESTREL_BUILD_REVISION: "not-a-sha" }, () => {}),
-    /full 40-character Git commit SHA/u
+    () => resolve({ KESTREL_BUILD_REVISION: "not-a-sha" }, () => {}),
+    /full 40-character Git commit SHA/u,
   );
 });
 
 test("production identity fails closed without a revision", () => {
   assert.throws(
     () => resolve({ VERCEL_ENV: "production" }, () => {}),
-    /production builds require a full Git revision/u
+    /production builds require a full Git revision/u,
   );
 });
 
 test("non-production identity uses an explicit development marker", () => {
-  assert.deepEqual(resolve({}, () => {}), {
-    revision: "development",
-    source: "development",
-    version: "0.6.0",
-  });
+  assert.deepEqual(
+    resolve({}, () => {}),
+    {
+      revision: "development",
+      source: "development",
+      version: "0.6.0",
+    },
+  );
 });
 
 test("Next configuration embeds non-placeholder build identity", () => {
   assert.equal(nextConfig.env?.KESTREL_APP_VERSION, currentManifestVersion);
   assert.equal(
     nextConfig.env?.KESTREL_BUILD_REVISION,
-    kestrelBuildIdentity.revision
+    kestrelBuildIdentity.revision,
   );
   assert.match(kestrelBuildIdentity.revision, /^[0-9a-f]{40}$/u);
   assert.notEqual(kestrelBuildIdentity.version, "unknown");
   assert.equal(kestrelBuildIdentity.version, currentManifestVersion);
   assert.notEqual(kestrelBuildIdentity.revision, "unknown");
+});
+
+test("build identity bundles the app manifest without runtime filesystem access", () => {
+  const source = readFileSync(
+    new URL("./build-identity.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /import appManifest from "\.\.\/\.\.\/package\.json"/u);
+  assert.doesNotMatch(source, /readFileSync|fileURLToPath|appManifestUrl/u);
+  assert.doesNotMatch(source, /new URL\(["']\.\.\/\.\.\/\.\.\/\.\./u);
+  assert.doesNotMatch(source, /cwd:\s*repositoryRoot/u);
 });

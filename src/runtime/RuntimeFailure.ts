@@ -57,22 +57,6 @@ export function delegationNotPersistedFailure(delegationId: string): RuntimeFail
   );
 }
 
-export function delegationLimitReachedFailure(input: {
-  parentThreadId: string;
-  maxConcurrent: number;
-  activeDelegationCount: number;
-}): RuntimeFailure {
-  return createRuntimeFailure(
-    "DELEGATION_LIMIT_REACHED",
-    `Delegation limit reached (${input.maxConcurrent} active child threads).`,
-    {
-      parentThreadId: input.parentThreadId,
-      maxConcurrent: input.maxConcurrent,
-      activeDelegationCount: input.activeDelegationCount,
-    },
-  );
-}
-
 export function delegationProfileMismatchFailure(input: {
   expectedProfileId: string;
   actualProfileId: string;

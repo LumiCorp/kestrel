@@ -1,5 +1,16 @@
 import { RunnerProtocolContractError } from "./errors.js";
 import {
+  parseHostedToolApprovalDecision,
+  parseRememberedToolApprovalEvidenceSetV1,
+  parseRememberedApprovalScope,
+  parseStableToolApprovalIdentityV1,
+  type HostedToolApprovalDecision,
+  type RememberedToolApprovalEvidenceV1,
+  type RememberedApprovalScope,
+  type RunnerApprovalActorAuthorityV1,
+  type StableToolApprovalIdentityV1,
+} from "./approvals.js";
+import {
   parseRunnerProjectAction,
   type RunnerProjectAction,
 } from "./projectActions.js";
@@ -12,6 +23,8 @@ export type {
 export const EXECUTION_PROTOCOL_VERSION = "execution-protocol-v4" as const;
 export const RUNNER_COMMAND_CONTRACT_VERSION = "runner-command-v3" as const;
 export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v3" as const;
+export const WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION = 4 as const;
+export const HOSTED_APPROVAL_PRODUCER_PROTOCOL = "v4" as const;
 export const RUNNER_WAITING_PROMPT_HISTORY_KIND = "runtime.waiting_prompt" as const;
 export const RUNNER_ASSISTANT_TEXT_HISTORY_KIND = "runtime.assistant_text" as const;
 
@@ -353,6 +366,7 @@ export interface RunnerProfile {
     subject?: "auto" | "ask" | "deny" | undefined;
     minimum: "auto" | "ask";
   }> | undefined;
+  rememberedToolApprovalEvidence?: RememberedToolApprovalEvidenceV1[] | undefined;
   mcpServers?: RunnerMcpServerConfig[] | undefined;
   toolQueue?: RunnerToolQueueProfileConfig | undefined;
   guardrails?: RunnerGuardrailConfig | undefined;
@@ -418,6 +432,10 @@ export interface RunnerTurnFile {
   attachmentId: string;
   threadId?: string | undefined;
   filename: string;
+  /** User-declared, untrusted media type retained for approval presentation. */
+  declaredMediaType?: string | undefined;
+  /** Host-validated media type used for execution binding. */
+  detectedMediaType?: string | undefined;
   mimeType: string;
   sizeBytes: number;
   sha256: string;
@@ -498,6 +516,101 @@ export interface RunnerWorkspaceSkillCatalogEntry {
   skillFile: string;
 }
 
+export interface RunnerHostedApprovalAuthorityV1 {
+  version: "runner_hosted_approval_authority_v1";
+  organizationId: string;
+  environmentId: string;
+  projectId: string;
+  threadId: string;
+}
+
+export const RUNNER_WORKFLOW_AUTHORITY_VERSION =
+  "runner_workflow_run_authority_v2" as const;
+
+export interface RunnerWorkflowCapabilityManifestV1 {
+  version: "workflow_capability_manifest_v2";
+  nativeTools: Array<{ toolId: string; descriptorContractRevision: string; authorityRevision: string }>;
+  actions: Array<{
+    nodeId: string;
+    toolId: string;
+    descriptorContractRevision: string;
+    approvalAuthorityRevision: string;
+    fixedInput: Record<string, unknown>;
+    inputBindings: Record<string, { kind: "kestrel_response_text"; sourceNodeId: string }>;
+    rememberedApprovalScope: RememberedApprovalScope;
+  }>;
+}
+
+export interface RunnerWorkflowRunAuthorityV1 {
+  version: typeof RUNNER_WORKFLOW_AUTHORITY_VERSION;
+  organizationId: string;
+  environmentId: string;
+  projectId: string;
+  workflowId: string;
+  workflowVersionId: string;
+  workflowRunId: string;
+  activationActorId: string;
+  manifestDigest: string;
+  manifest: RunnerWorkflowCapabilityManifestV1;
+  activeStep:
+    | { kind: "kestrel"; nodeId: string }
+    | { kind: "action"; nodeId: string; resolvedInput: Record<string, unknown> };
+}
+
+export const RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION =
+  "runner_prepared_approval_cleanup_v1" as const;
+
+export interface RunnerPreparedApprovalCleanupV1 {
+  version: typeof RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION;
+  organizationId: string;
+  threadId: string;
+  turnId: string;
+  interactionId: string;
+  requestId: string;
+  failureCode:
+    | "EXTERNAL_APPROVAL_EXPIRED"
+    | "EXTERNAL_APPROVAL_IDENTITY_MISMATCH"
+    | "EXTERNAL_APPROVAL_POLICY_CHANGED";
+  failureMessage: string;
+}
+
+export function parseRunnerPreparedApprovalCleanupV1(
+  value: unknown,
+  label = "preparedApprovalCleanup",
+): RunnerPreparedApprovalCleanupV1 {
+  const cleanup = requireRecord(value, label);
+  rejectUnknownFields(cleanup, label, [
+    "version",
+    "organizationId",
+    "threadId",
+    "turnId",
+    "interactionId",
+    "requestId",
+    "failureCode",
+    "failureMessage",
+  ]);
+  if (cleanup.version !== RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION) {
+    throw new RunnerProtocolContractError(`${label}.version is invalid`);
+  }
+  if (
+    cleanup.failureCode !== "EXTERNAL_APPROVAL_EXPIRED" &&
+    cleanup.failureCode !== "EXTERNAL_APPROVAL_IDENTITY_MISMATCH" &&
+    cleanup.failureCode !== "EXTERNAL_APPROVAL_POLICY_CHANGED"
+  ) {
+    throw new RunnerProtocolContractError(`${label}.failureCode is invalid`);
+  }
+  return {
+    version: RUNNER_PREPARED_APPROVAL_CLEANUP_VERSION,
+    organizationId: requireNonEmptyString(cleanup.organizationId, `${label}.organizationId`),
+    threadId: requireNonEmptyString(cleanup.threadId, `${label}.threadId`),
+    turnId: requireNonEmptyString(cleanup.turnId, `${label}.turnId`),
+    interactionId: requireNonEmptyString(cleanup.interactionId, `${label}.interactionId`),
+    requestId: requireNonEmptyString(cleanup.requestId, `${label}.requestId`),
+    failureCode: cleanup.failureCode,
+    failureMessage: requireNonEmptyString(cleanup.failureMessage, `${label}.failureMessage`),
+  };
+}
+
 export interface RunnerTurnInput {
   sessionId: string;
   runId?: string | undefined;
@@ -509,6 +622,9 @@ export interface RunnerTurnInput {
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
   recoveryOptionId?: string | undefined;
+  decision?: HostedToolApprovalDecision | undefined;
+  decidingActor?: RunnerActorMetadata | undefined;
+  preparedApprovalCleanup?: RunnerPreparedApprovalCleanupV1 | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: RunnerInteractionMode | undefined;
@@ -527,6 +643,8 @@ export interface RunnerTurnInput {
   autoCompaction?: RunnerAutoCompaction | undefined;
   workspace?: Record<string, unknown> | undefined;
   workspaceSkills?: RunnerWorkspaceSkillCatalogEntry[] | undefined;
+  hostedApprovalAuthority?: RunnerHostedApprovalAuthorityV1 | undefined;
+  workflowRunAuthority?: RunnerWorkflowRunAuthorityV1 | undefined;
 }
 
 export interface RunnerRunError {
@@ -542,9 +660,12 @@ export interface RunnerTelemetry {
   durationMs?: number | undefined;
   inputTokens?: number | undefined;
   cachedInputTokens?: number | undefined;
+  cacheWriteInputTokens?: number | undefined;
   outputTokens?: number | undefined;
   reasoningTokens?: number | undefined;
   totalTokens?: number | undefined;
+  pricedCostUsd?: number | undefined;
+  validationRejections?: number | undefined;
   [key: string]: unknown;
 }
 
@@ -577,18 +698,76 @@ export interface RunnerReadBudgets {
 export interface RunnerInteractionRequestV1 extends Record<string, unknown> {
   version: "v1";
   requestId: string;
-  kind: "user_input" | "approval";
+  kind: "user_input";
   eventType: string;
   prompt: string;
   inputSchema?: Record<string, unknown> | undefined;
   metadata?: Record<string, unknown> | undefined;
-  approval?: {
-    toolCallId: string;
-    toolName: string;
-    input?: unknown;
-    presentation?: unknown;
-  } | undefined;
 }
+
+export const RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1 =
+  "runner_local_tool_approval_interaction_v1" as const;
+
+export interface RunnerLocalToolApprovalInteractionV1
+  extends Record<string, unknown> {
+  version: typeof RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1;
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: {
+    type: "object";
+    additionalProperties: false;
+    required: ["decision"];
+    properties: {
+      decision: { type: "string"; enum: Array<"decline" | "approve_once"> };
+    };
+  };
+  metadata?: Record<string, unknown> | undefined;
+  approval: {
+    approvalId: string;
+    toolName: string;
+    presentation?: unknown;
+    requestedAt: string;
+    expiresAt: string;
+  };
+}
+
+export const RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4 =
+  "runner_hosted_tool_approval_interaction_v4" as const;
+
+export interface RunnerHostedToolApprovalInteractionV4
+  extends Record<string, unknown> {
+  version: typeof RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4;
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: {
+    type: "object";
+    additionalProperties: false;
+    required: ["decision"];
+    properties: {
+      decision: { type: "string"; enum: HostedToolApprovalDecision[] };
+    };
+  };
+  metadata?: Record<string, unknown> | undefined;
+  approval: {
+    preparedInvocationId: string;
+    toolName: string;
+    stableToolIdentity: StableToolApprovalIdentityV1;
+    requestingActor: RunnerApprovalActorAuthorityV1;
+    presentation?: unknown;
+    rememberedApprovalScope: RememberedApprovalScope;
+    requestedAt: string;
+    expiresAt: string;
+  };
+}
+
+export type RunnerInteractionRequest =
+  | RunnerInteractionRequestV1
+  | RunnerLocalToolApprovalInteractionV1
+  | RunnerHostedToolApprovalInteractionV4;
 
 export type RunnerStructuredReviewReason =
   | "recovery_review"
@@ -634,12 +813,84 @@ export function parseRunnerInteractionRequestV1(
   expectedEventType?: string | undefined,
 ): RunnerInteractionRequestV1 {
   const interaction = requireRecord(value, "runner interaction");
+  if (interaction.version !== "v1") {
+    throw new RunnerProtocolContractError(
+      "runner interaction.version must be 'v1'",
+    );
+  }
+  if (interaction.kind === "approval") {
+    throw new RunnerProtocolContractError(
+      "runner interaction V1 cannot represent tool approval",
+    );
+  }
   const eventType = expectedEventType ?? requireNonEmptyString(
     interaction.eventType,
     "runner interaction.eventType",
   );
   validateRunnerInteractionRequest(interaction, "runner interaction", eventType);
   return structuredClone(interaction) as RunnerInteractionRequestV1;
+}
+
+export function parseRunnerHostedToolApprovalInteractionV4(
+  value: unknown,
+  expectedEventType = "user.approval",
+): RunnerHostedToolApprovalInteractionV4 {
+  const interaction = requireRecord(value, "hosted tool approval interaction");
+  validateRunnerHostedToolApprovalInteractionV4(
+    interaction,
+    "hosted tool approval interaction",
+    expectedEventType,
+  );
+  const parsed = structuredClone(interaction) as RunnerHostedToolApprovalInteractionV4;
+  parsed.approval.rememberedApprovalScope = parseRememberedApprovalScope(
+    interaction.approval &&
+      typeof interaction.approval === "object" &&
+      !Array.isArray(interaction.approval)
+      ? (interaction.approval as Record<string, unknown>).rememberedApprovalScope
+      : undefined,
+  );
+  return parsed;
+}
+
+export function parseRunnerLocalToolApprovalInteractionV1(
+  value: unknown,
+  expectedEventType = "user.approval",
+): RunnerLocalToolApprovalInteractionV1 {
+  const interaction = requireRecord(value, "local tool approval interaction");
+  validateRunnerLocalToolApprovalInteractionV1(
+    interaction,
+    "local tool approval interaction",
+    expectedEventType,
+  );
+  return structuredClone(interaction) as RunnerLocalToolApprovalInteractionV1;
+}
+
+export function parseRunnerInteractionRequest(
+  value: unknown,
+  expectedEventType?: string | undefined,
+): RunnerInteractionRequest {
+  const interaction = requireRecord(value, "runner interaction");
+  if (interaction.version === RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1) {
+    return parseRunnerLocalToolApprovalInteractionV1(
+      interaction,
+      expectedEventType,
+    );
+  }
+  if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4) {
+    return parseRunnerHostedToolApprovalInteractionV4(
+      interaction,
+      expectedEventType,
+    );
+  }
+  if (
+    interaction.version === "runner_hosted_tool_approval_interaction_v2" ||
+    interaction.version === "runner_hosted_tool_approval_interaction_v3"
+  ) {
+    throw new RunnerProtocolContractError(
+      "legacy hosted tool approval interactions are not supported",
+    );
+  }
+  return parseRunnerInteractionRequestV1(interaction, expectedEventType);
 }
 
 const RECOVERY_REVIEW_OPTION_IDS = new Set<RunnerStructuredReviewOptionId>([
@@ -951,7 +1202,9 @@ function validateEvaluationTechnicalDisclosure(
 export interface RunnerWaitFor extends Record<string, unknown> {
   kind?: "user" | "approval" | "effect" | "tool" | "region_merge" | undefined;
   eventType: string;
-  interaction?: RunnerInteractionRequestV1 | undefined;
+  timeoutMs?: number | undefined;
+  metadata?: Record<string, unknown> | undefined;
+  interaction?: RunnerInteractionRequest | undefined;
 }
 
 export interface RunnerRunOutput {
@@ -973,7 +1226,12 @@ export interface RunnerResultV2<TOutput = unknown> {
 }
 
 export type RunnerJobStoreDriver = "auto" | "postgres" | "sqlite";
-export type RunnerApprovalPolicyPackId = "dev" | "isolated_code" | "ci_bot" | "production";
+export type RunnerApprovalPolicyPackId =
+  | "dev"
+  | "isolated_code"
+  | "ci_bot"
+  | "hosted_workspace"
+  | "production";
 
 export type RunnerJobTurnInput = Omit<RunnerTurnInput, "eventType"> & {
   eventType?: string | undefined;
@@ -1134,6 +1392,54 @@ export interface ExecutionProfileResolveCommandPayload {
     | "workspace_hosted";
   managedConfiguration?: Record<string, unknown> | undefined;
   authoringProfileId?: string | undefined;
+  /** Exact tools to evaluate in Build mode before any provider or model spend. */
+  exactToolNames?: string[] | undefined;
+}
+
+export interface EffectiveToolDecisionV1 {
+  version: "effective_tool_decision_v1";
+  available: boolean;
+  availabilityReason:
+    | "available"
+    | "approval_policy"
+    | "interaction_mode"
+    | "tool_class_policy"
+    | "capability_policy"
+    | "approval_policy"
+    | "actor_access";
+  approvalDisposition: {
+    mode: "auto" | "ask" | "deny";
+    reasonCode:
+      | "tool_minimum"
+      | "environment_policy"
+      | "project_restriction"
+      | "subject_restriction"
+      | "runtime_strict"
+      | "remembered_thread";
+    authority: {
+      kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
+      revision: string;
+    };
+  };
+  rememberApprovalEligible: boolean;
+  authorityRevision: string;
+  evidence: {
+    interactionMode: "chat" | "plan" | "build";
+    toolClass: "read_only" | "planning_write" | "sandboxed_only" | "external_side_effect";
+    requiredCapabilities: string[];
+    blockedCapability?:
+      | "workspace.read"
+      | "workspace.write"
+      | "shell.exec"
+      | "mission_control.work_item.write"
+      | "network.call"
+      | "code.execute"
+      | "mcp.invoke"
+      | "delegation.control"
+      | "external.confirm"
+      | undefined;
+    actorAccess: boolean;
+  };
 }
 
 export type RunnerProfileReference =
@@ -1175,6 +1481,9 @@ export type OrdinaryConversationTurn = Omit<
   | "resumeBlockedRun"
   | "resumeRequestId"
   | "recoveryOptionId"
+  | "decision"
+  | "decidingActor"
+  | "preparedApprovalCleanup"
   | "stepAgent"
 >;
 
@@ -1656,7 +1965,9 @@ export interface ExecutionProfileResolvedEventPayload {
       | "workspace_hosted";
     version: number;
   };
+  hostedApprovalProducerProtocol?: typeof HOSTED_APPROVAL_PRODUCER_PROTOCOL | undefined;
   resolvedProfile: RunnerProfile;
+  exactToolDecisions?: Record<string, EffectiveToolDecisionV1> | undefined;
 }
 
 export interface JobStartedEventPayload {
@@ -1831,6 +2142,13 @@ export interface RunnerToolUpdateV1 {
   presentation?: RunnerToolPresentationV1 | undefined;
 }
 
+export interface RunnerToolUpdateV2
+  extends Omit<RunnerToolUpdateV1, "version"> {
+  version: "v2";
+  activation: Record<string, unknown>;
+  outcome?: Record<string, unknown> | undefined;
+}
+
 export interface RunProgressEventPayload {
   update: RunnerProgressUpdateV1;
 }
@@ -1844,7 +2162,7 @@ export interface RunAgentProgressEventPayload {
 }
 
 export interface RunToolEventPayload {
-  update: RunnerToolUpdateV1;
+  update: RunnerToolUpdateV1 | RunnerToolUpdateV2;
 }
 
 export interface RunCancelledEventPayload {
@@ -1892,12 +2210,25 @@ export interface RunnerPongEventPayload {
   sessionId?: string | undefined;
 }
 
+export interface RunnerModeResolutionV1 {
+  version: "mode_resolution_v1";
+  requestId: string;
+  runId: string;
+  interactionMode: "chat" | "plan" | "build";
+  actSubmode?: "strict" | "safe" | "full_auto" | undefined;
+  source: "explicit_command" | "classified_reply";
+  disposition: "resume" | "decline" | "clarify";
+}
+
 export interface SessionDescribedEventPayload extends Record<string, unknown> {
   sessionId: string;
   version: number;
   threadId?: string | undefined;
   currentStepAgent?: string | undefined;
   updatedAt?: string | undefined;
+  interactionMode?: "chat" | "plan" | "build" | undefined;
+  actSubmode?: "strict" | "safe" | "full_auto" | undefined;
+  modeResolution?: RunnerModeResolutionV1 | undefined;
   waitFor?: Record<string, unknown> | undefined;
   activeAssembly?: Record<string, unknown> | undefined;
   operatorInbox?: Record<string, unknown> | undefined;
@@ -1963,6 +2294,7 @@ export interface OperatorControlledEventPayload {
   inbox?: RunnerOperatorInboxSnapshot | undefined;
   view?: RunnerOperatorThreadView | undefined;
   result?: RunnerResultV2<RunnerRunOutput> | undefined;
+  modeResolution?: RunnerModeResolutionV1 | undefined;
 }
 
 export interface TaskUpdatedEventPayload {
@@ -1980,6 +2312,7 @@ export interface TaskUpdatedEventPayload {
     text: string;
     createdAt: string;
     dialogStatus: "open" | "closed";
+    dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
     status?: "failed" | "cancelled" | undefined;
   } | undefined;
 }
@@ -2549,6 +2882,9 @@ function parseRunnerCommandPayloadV2(
         requireRecord(payload.managedConfiguration, `${label}.managedConfiguration`);
       }
       validateOptionalNonEmptyString(payload.authoringProfileId, `${label}.authoringProfileId`);
+      if (payload.exactToolNames !== undefined) {
+        validateUniqueNonEmptyStringArray(payload.exactToolNames, `${label}.exactToolNames`);
+      }
       break;
     case "job.run": {
       validateOptionalProfile(payload.profile, `${label}.profile`);
@@ -2586,6 +2922,9 @@ function parseRunnerCommandPayloadV2(
         "resumeBlockedRun",
         "resumeRequestId",
         "recoveryOptionId",
+        "decision",
+        "decidingActor",
+        "preparedApprovalCleanup",
         "stepAgent",
       ]) {
         if (Object.hasOwn(turn, forbidden)) {
@@ -3041,10 +3380,25 @@ function parseRunnerEventPayloadV2(
       validateSha256(payload.fingerprint, `${label}.fingerprint`);
       validateProfileResolutionProvenance(payload.policy, `${label}.policy`);
       validateEnvironmentPresetProvenance(payload.environmentPreset, `${label}.environmentPreset`);
+      validateOptionalEnum(
+        payload.hostedApprovalProducerProtocol,
+        `${label}.hostedApprovalProducerProtocol`,
+        [HOSTED_APPROVAL_PRODUCER_PROTOCOL],
+      );
       validateRunnerProfile(
         requireRecord(payload.resolvedProfile, `${label}.resolvedProfile`),
         `${label}.resolvedProfile`,
       );
+      if (payload.exactToolDecisions !== undefined) {
+        const decisions = requireRecord(payload.exactToolDecisions, `${label}.exactToolDecisions`);
+        for (const [toolName, decision] of Object.entries(decisions)) {
+          requireNonEmptyString(toolName, `${label}.exactToolDecisions tool name`);
+          validateEffectiveToolDecisionV1(
+            requireRecord(decision, `${label}.exactToolDecisions.${toolName}`),
+            `${label}.exactToolDecisions.${toolName}`,
+          );
+        }
+      }
       break;
     case "job.started":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
@@ -3316,6 +3670,7 @@ function parseRunnerEventPayloadV2(
       validateOptionalRecord(payload.inbox, `${label}.inbox`);
       validateOptionalRecord(payload.view, `${label}.view`);
       validateOptionalRecord(payload.result, `${label}.result`);
+      validateOptionalModeResolution(payload.modeResolution, `${label}.modeResolution`);
       break;
     case "task.updated":
       requireRecord(payload.task, `${label}.task`);
@@ -3479,6 +3834,20 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalBoolean(turn.resumeBlockedRun, `${label}.resumeBlockedRun`);
   validateOptionalNonEmptyString(turn.resumeRequestId, `${label}.resumeRequestId`);
   validateOptionalNonEmptyString(turn.recoveryOptionId, `${label}.recoveryOptionId`);
+  validateOptionalEnum(turn.decision, `${label}.decision`, [
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ]);
+  const decidingActor = turn.decidingActor === undefined
+    ? undefined
+    : parseRunnerActorMetadata(turn.decidingActor, `${label}.decidingActor`);
+  const preparedApprovalCleanup = turn.preparedApprovalCleanup === undefined
+    ? undefined
+    : parseRunnerPreparedApprovalCleanupV1(
+        turn.preparedApprovalCleanup,
+        `${label}.preparedApprovalCleanup`,
+      );
   if (turn.resumeBlockedRun === true && turn.resumeRequestId === undefined) {
     throw new RunnerProtocolContractError(
       `${label}.resumeRequestId is required when resumeBlockedRun is true`,
@@ -3490,6 +3859,34 @@ function validateRunTurn(value: unknown, label: string): void {
   ) {
     throw new RunnerProtocolContractError(
       `${label}.recoveryOptionId requires resumeBlockedRun to be true`,
+    );
+  }
+  if (
+    turn.decision !== undefined &&
+    (turn.resumeRequestId === undefined || turn.eventType !== "user.approval")
+  ) {
+    throw new RunnerProtocolContractError(
+      `${label}.decision requires a user.approval resumeRequestId`,
+    );
+  }
+  if (turn.decision !== undefined && decidingActor === undefined) {
+    throw new RunnerProtocolContractError(
+      `${label}.decidingActor is required for an approval decision`,
+    );
+  }
+  if (decidingActor !== undefined && turn.decision === undefined) {
+    throw new RunnerProtocolContractError(
+      `${label}.decidingActor requires an approval decision`,
+    );
+  }
+  if (
+    preparedApprovalCleanup !== undefined &&
+    (turn.decision !== "decline" ||
+      turn.eventType !== "user.approval" ||
+      turn.resumeRequestId !== preparedApprovalCleanup.requestId)
+  ) {
+    throw new RunnerProtocolContractError(
+      `${label}.preparedApprovalCleanup requires the exact declined approval request`,
     );
   }
   validateOptionalNonEmptyString(turn.stepAgent, `${label}.stepAgent`);
@@ -3522,6 +3919,183 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalAutoCompaction(turn.autoCompaction, `${label}.autoCompaction`);
   validateOptionalRecord(turn.workspace, `${label}.workspace`);
   validateOptionalWorkspaceSkills(turn.workspaceSkills, `${label}.workspaceSkills`);
+  if (turn.hostedApprovalAuthority !== undefined) {
+    const authority = requireRecord(
+      turn.hostedApprovalAuthority,
+      `${label}.hostedApprovalAuthority`,
+    );
+    const allowedKeys = new Set([
+      "version",
+      "organizationId",
+      "environmentId",
+      "projectId",
+      "threadId",
+    ]);
+    const unknownKey = Object.keys(authority).find(
+      (key) => !allowedKeys.has(key),
+    );
+    if (unknownKey !== undefined) {
+      throw new RunnerProtocolContractError(
+        `${label}.hostedApprovalAuthority contains unknown field '${unknownKey}'`,
+      );
+    }
+    if (authority.version !== "runner_hosted_approval_authority_v1") {
+      throw new RunnerProtocolContractError(
+        `${label}.hostedApprovalAuthority.version must be 'runner_hosted_approval_authority_v1'`,
+      );
+    }
+    requireNonEmptyString(
+      authority.organizationId,
+      `${label}.hostedApprovalAuthority.organizationId`,
+    );
+    requireNonEmptyString(
+      authority.environmentId,
+      `${label}.hostedApprovalAuthority.environmentId`,
+    );
+    requireNonEmptyString(
+      authority.projectId,
+      `${label}.hostedApprovalAuthority.projectId`,
+    );
+    requireNonEmptyString(
+      authority.threadId,
+      `${label}.hostedApprovalAuthority.threadId`,
+    );
+  }
+  if (turn.workflowRunAuthority !== undefined) {
+    const authority = requireRecord(
+      turn.workflowRunAuthority,
+      `${label}.workflowRunAuthority`,
+    );
+    const allowedKeys = new Set([
+      "version",
+      "organizationId",
+      "environmentId",
+      "projectId",
+      "workflowId",
+      "workflowVersionId",
+      "workflowRunId",
+      "activationActorId",
+      "manifestDigest",
+      "manifest",
+      "activeStep",
+    ]);
+    const unknownKey = Object.keys(authority).find(
+      (key) => !allowedKeys.has(key),
+    );
+    if (unknownKey !== undefined) {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority contains unknown field '${unknownKey}'`,
+      );
+    }
+    if (authority.version !== RUNNER_WORKFLOW_AUTHORITY_VERSION) {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.version is invalid`,
+      );
+    }
+    for (const field of [
+      "organizationId",
+      "environmentId",
+      "projectId",
+      "workflowId",
+      "workflowVersionId",
+      "workflowRunId",
+      "activationActorId",
+      "manifestDigest",
+    ] as const) {
+      requireNonEmptyString(
+        authority[field],
+        `${label}.workflowRunAuthority.${field}`,
+      );
+    }
+    const manifest = requireRecord(
+      authority.manifest,
+      `${label}.workflowRunAuthority.manifest`,
+    );
+    if (manifest.version !== "workflow_capability_manifest_v2") {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.manifest.version is invalid`,
+      );
+    }
+    const manifestAllowedKeys = new Set(["version", "nativeTools", "actions"]);
+    const unknownManifestKey = Object.keys(manifest).find((key) => !manifestAllowedKeys.has(key));
+    if (unknownManifestKey !== undefined) {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.manifest contains unknown field '${unknownManifestKey}'`,
+      );
+    }
+    if (!Array.isArray(manifest.nativeTools)) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.nativeTools must be an array`);
+    if (!Array.isArray(manifest.actions)) {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.manifest.actions must be an array`,
+      );
+    }
+    const nativeToolIds = new Set<string>();
+    for (const [index, candidate] of manifest.nativeTools.entries()) {
+      const nativeTool = requireRecord(candidate, `${label}.workflowRunAuthority.manifest.nativeTools[${index}]`);
+      const keys = new Set(["toolId", "descriptorContractRevision", "authorityRevision"]);
+      const unknown = Object.keys(nativeTool).find((key) => !keys.has(key));
+      if (unknown !== undefined) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.nativeTools[${index}] contains unknown field '${unknown}'`);
+      for (const field of ["toolId", "descriptorContractRevision", "authorityRevision"] as const) requireNonEmptyString(nativeTool[field], `${label}.workflowRunAuthority.manifest.nativeTools[${index}].${field}`);
+      if (nativeToolIds.has(nativeTool.toolId as string)) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.nativeTools contains duplicate tool '${nativeTool.toolId as string}'`);
+      nativeToolIds.add(nativeTool.toolId as string);
+    }
+    const actionNodeIds = new Set<string>();
+    for (const [index, candidate] of manifest.actions.entries()) {
+      const action = requireRecord(candidate, `${label}.workflowRunAuthority.manifest.actions[${index}]`);
+      const keys = new Set(["nodeId", "toolId", "descriptorContractRevision", "approvalAuthorityRevision", "fixedInput", "inputBindings", "rememberedApprovalScope"]);
+      const unknown = Object.keys(action).find((key) => !keys.has(key));
+      if (unknown !== undefined) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.actions[${index}] contains unknown field '${unknown}'`);
+      for (const field of ["nodeId", "toolId", "descriptorContractRevision", "approvalAuthorityRevision"] as const) requireNonEmptyString(action[field], `${label}.workflowRunAuthority.manifest.actions[${index}].${field}`);
+      requireRecord(action.fixedInput, `${label}.workflowRunAuthority.manifest.actions[${index}].fixedInput`);
+      const bindings = requireRecord(action.inputBindings, `${label}.workflowRunAuthority.manifest.actions[${index}].inputBindings`);
+      for (const [pointer, candidateBinding] of Object.entries(bindings)) {
+        if (!/^\/(?:[^~\/]|~[01])+(?:\/(?:[^~\/]|~[01])+)*$/u.test(pointer)) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.actions[${index}].inputBindings contains an invalid JSON Pointer`);
+        const binding = requireRecord(candidateBinding, `${label}.workflowRunAuthority.manifest.actions[${index}].inputBindings.${pointer}`);
+        if (Object.keys(binding).some((key) => key !== "kind" && key !== "sourceNodeId") || binding.kind !== "kestrel_response_text") throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.actions[${index}].inputBindings.${pointer} is invalid`);
+        requireNonEmptyString(binding.sourceNodeId, `${label}.workflowRunAuthority.manifest.actions[${index}].inputBindings.${pointer}.sourceNodeId`);
+      }
+      parseRememberedApprovalScope(action.rememberedApprovalScope);
+      if (actionNodeIds.has(action.nodeId as string)) throw new RunnerProtocolContractError(`${label}.workflowRunAuthority.manifest.actions contains duplicate node '${action.nodeId as string}'`);
+      actionNodeIds.add(action.nodeId as string);
+    }
+    const activeStep = requireRecord(
+      authority.activeStep,
+      `${label}.workflowRunAuthority.activeStep`,
+    );
+    const activeStepAllowedKeys = new Set(
+      activeStep.kind === "action"
+        ? ["kind", "nodeId", "resolvedInput"]
+        : ["kind", "nodeId"],
+    );
+    const unknownActiveStepKey = Object.keys(activeStep).find(
+      (key) => !activeStepAllowedKeys.has(key),
+    );
+    if (unknownActiveStepKey !== undefined) {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.activeStep contains unknown field '${unknownActiveStepKey}'`,
+      );
+    }
+    if (activeStep.kind !== "kestrel" && activeStep.kind !== "action") {
+      throw new RunnerProtocolContractError(
+        `${label}.workflowRunAuthority.activeStep.kind is invalid`,
+      );
+    }
+    requireNonEmptyString(
+      activeStep.nodeId,
+      `${label}.workflowRunAuthority.activeStep.nodeId`,
+    );
+    if (activeStep.kind === "action") {
+      requireRecord(
+        activeStep.resolvedInput,
+        `${label}.workflowRunAuthority.activeStep.resolvedInput`,
+      );
+      if (!actionNodeIds.has(activeStep.nodeId as string)) {
+        throw new RunnerProtocolContractError(
+          `${label}.workflowRunAuthority.activeStep does not match an activated Action`,
+        );
+      }
+    }
+  }
 }
 
 function parseJobInput(value: unknown, label: string): RunnerJobInput {
@@ -3548,6 +4122,7 @@ function parseJobInput(value: unknown, label: string): RunnerJobInput {
     "dev",
     "isolated_code",
     "ci_bot",
+    "hosted_workspace",
     "production",
   ]);
   const environmentPresetId = input.version === "job_input_v2"
@@ -3687,8 +4262,28 @@ function validateSessionDescription(
   validateOptionalNonEmptyString(session.threadId, `${label}.threadId`);
   validateOptionalNonEmptyString(session.currentStepAgent, `${label}.currentStepAgent`);
   validateOptionalNonEmptyString(session.updatedAt, `${label}.updatedAt`);
+  validateOptionalEnum(session.interactionMode, `${label}.interactionMode`, ["chat", "plan", "build"]);
+  validateOptionalEnum(session.actSubmode, `${label}.actSubmode`, ["strict", "safe", "full_auto"]);
+  validateOptionalModeResolution(session.modeResolution, `${label}.modeResolution`);
   validateOptionalRecord(session.waitFor, `${label}.waitFor`);
   validateOptionalRecord(session.activeAssembly, `${label}.activeAssembly`);
+  if (session.activeAssembly !== undefined) {
+    const activeAssembly = session.activeAssembly as Record<string, unknown>;
+    if (activeAssembly.environmentPresetId !== undefined) {
+      validateEnum(
+        activeAssembly.environmentPresetId,
+        `${label}.activeAssembly.environmentPresetId`,
+        [
+          "cli_safe_local",
+          "cli_dev_local",
+          "web_balanced",
+          "desktop_safe_local",
+          "desktop_dev_local",
+          "workspace_hosted",
+        ],
+      );
+    }
+  }
   validateOptionalRecord(session.operatorInbox, `${label}.operatorInbox`);
   validateOptionalRecord(session.childBlocker, `${label}.childBlocker`);
   validateOptionalRecordArray(session.childThreads, `${label}.childThreads`);
@@ -3700,6 +4295,20 @@ function validateSessionDescription(
   validateOptionalNonEmptyString(session.contextPosture, `${label}.contextPosture`);
   validateOptionalNonEmptyString(session.focusedThreadId, `${label}.focusedThreadId`);
   validateOptionalRecord(session.operatorThreadView, `${label}.operatorThreadView`);
+}
+
+function validateOptionalModeResolution(value: unknown, label: string): void {
+  if (value === undefined) return;
+  const resolution = requireRecord(value, label);
+  if (resolution.version !== "mode_resolution_v1") {
+    throw new RunnerProtocolContractError(`${label}.version must be 'mode_resolution_v1'`);
+  }
+  requireNonEmptyString(resolution.requestId, `${label}.requestId`);
+  requireNonEmptyString(resolution.runId, `${label}.runId`);
+  validateEnum(resolution.interactionMode, `${label}.interactionMode`, ["chat", "plan", "build"]);
+  validateOptionalEnum(resolution.actSubmode, `${label}.actSubmode`, ["strict", "safe", "full_auto"]);
+  validateEnum(resolution.source, `${label}.source`, ["explicit_command", "classified_reply"]);
+  validateEnum(resolution.disposition, `${label}.disposition`, ["resume", "decline", "clarify"]);
 }
 
 function normalizeSessionDescription(
@@ -3752,9 +4361,12 @@ function validateRunnerTelemetry(value: unknown, label: string): void {
     "durationMs",
     "inputTokens",
     "cachedInputTokens",
+    "cacheWriteInputTokens",
     "outputTokens",
     "reasoningTokens",
     "totalTokens",
+    "pricedCostUsd",
+    "validationRejections",
   ] as const) {
     validateOptionalNonNegativeNumber(telemetry[field], `${label}.${field}`);
   }
@@ -3850,11 +4462,27 @@ function validateRunnerInteractionRequest(
   waitEventType: string,
 ): void {
   const interaction = requireRecord(value, label);
+  if (interaction.version === RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1) {
+    validateRunnerLocalToolApprovalInteractionV1(
+      interaction,
+      label,
+      waitEventType,
+    );
+    return;
+  }
+  if (interaction.version === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4) {
+    validateRunnerHostedToolApprovalInteractionV4(
+      interaction,
+      label,
+      waitEventType,
+    );
+    return;
+  }
   if (interaction.version !== "v1") {
     throw new RunnerProtocolContractError(`${label}.version must be 'v1'`);
   }
   requireNonEmptyString(interaction.requestId, `${label}.requestId`);
-  validateEnum(interaction.kind, `${label}.kind`, ["user_input", "approval"]);
+  validateEnum(interaction.kind, `${label}.kind`, ["user_input"]);
   const eventType = requireNonEmptyString(interaction.eventType, `${label}.eventType`);
   if (eventType !== waitEventType) {
     throw new RunnerProtocolContractError(
@@ -3873,21 +4501,235 @@ function validateRunnerInteractionRequest(
       `${label} is an invalid structured review: ${structuredReview.error}`,
     );
   }
-  if (interaction.approval !== undefined) {
-    const approval = requireRecord(interaction.approval, `${label}.approval`);
-    requireNonEmptyString(approval.toolCallId, `${label}.approval.toolCallId`);
-    requireNonEmptyString(approval.toolName, `${label}.approval.toolName`);
-    if (
-      Object.hasOwn(approval, "input") === false &&
-      Object.hasOwn(approval, "presentation") === false
-    ) {
+}
+
+function validateRunnerLocalToolApprovalInteractionV1(
+  interaction: Record<string, unknown>,
+  label: string,
+  waitEventType: string,
+): void {
+  rejectUnknownFields(interaction, label, [
+    "version",
+    "requestId",
+    "kind",
+    "eventType",
+    "prompt",
+    "inputSchema",
+    "metadata",
+    "approval",
+  ]);
+  if (interaction.version !== RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1) {
+    throw new RunnerProtocolContractError(
+      `${label}.version must be '${RUNNER_LOCAL_TOOL_APPROVAL_INTERACTION_V1}'`,
+    );
+  }
+  requireNonEmptyString(interaction.requestId, `${label}.requestId`);
+  if (interaction.kind !== "approval") {
+    throw new RunnerProtocolContractError(`${label}.kind must be 'approval'`);
+  }
+  if (interaction.eventType !== "user.approval" || waitEventType !== "user.approval") {
+    throw new RunnerProtocolContractError(`${label}.eventType must be 'user.approval'`);
+  }
+  requireNonEmptyString(interaction.prompt, `${label}.prompt`);
+  validateOptionalRecord(interaction.metadata, `${label}.metadata`);
+  const schema = requireRecord(interaction.inputSchema, `${label}.inputSchema`);
+  rejectUnknownFields(schema, `${label}.inputSchema`, [
+    "type",
+    "additionalProperties",
+    "required",
+    "properties",
+  ]);
+  const properties = requireRecord(schema.properties, `${label}.inputSchema.properties`);
+  rejectUnknownFields(properties, `${label}.inputSchema.properties`, ["decision"]);
+  const decision = requireRecord(properties.decision, `${label}.inputSchema.properties.decision`);
+  rejectUnknownFields(decision, `${label}.inputSchema.properties.decision`, [
+    "type",
+    "enum",
+  ]);
+  if (
+    schema.type !== "object" ||
+    schema.additionalProperties !== false ||
+    Array.isArray(schema.required) === false ||
+    schema.required.length !== 1 ||
+    schema.required[0] !== "decision" ||
+    decision.type !== "string" ||
+    Array.isArray(decision.enum) === false ||
+    decision.enum.length !== 2 ||
+    decision.enum[0] !== "decline" ||
+    decision.enum[1] !== "approve_once"
+  ) {
+    throw new RunnerProtocolContractError(`${label}.inputSchema is invalid`);
+  }
+  const approval = requireRecord(interaction.approval, `${label}.approval`);
+  rejectUnknownFields(approval, `${label}.approval`, [
+    "approvalId",
+    "toolName",
+    "presentation",
+    "requestedAt",
+    "expiresAt",
+  ]);
+  requireNonEmptyString(approval.approvalId, `${label}.approval.approvalId`);
+  requireNonEmptyString(approval.toolName, `${label}.approval.toolName`);
+  const requestedAt = requireIsoTimestamp(
+    approval.requestedAt,
+    `${label}.approval.requestedAt`,
+  );
+  const expiresAt = requireIsoTimestamp(
+    approval.expiresAt,
+    `${label}.approval.expiresAt`,
+  );
+  if (Date.parse(expiresAt) <= Date.parse(requestedAt)) {
+    throw new RunnerProtocolContractError(
+      `${label}.approval.expiresAt must be after requestedAt`,
+    );
+  }
+}
+
+function validateRunnerHostedToolApprovalInteractionV4(
+  interaction: Record<string, unknown>,
+  label: string,
+  waitEventType: string,
+): void {
+  validateRunnerHostedToolApprovalInteraction(
+    interaction,
+    label,
+    waitEventType,
+    RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4,
+    ["decline", "approve_once", "remember_approval"],
+  );
+}
+
+function validateRunnerHostedToolApprovalInteraction(
+  interaction: Record<string, unknown>,
+  label: string,
+  waitEventType: string,
+  expectedVersion: typeof RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4,
+  expectedDecisions: readonly HostedToolApprovalDecision[],
+): void {
+  rejectUnknownFields(interaction, label, [
+    "version",
+    "requestId",
+    "kind",
+    "eventType",
+    "prompt",
+    "inputSchema",
+    "metadata",
+    "approval",
+  ]);
+  if (interaction.version !== expectedVersion) {
+    throw new RunnerProtocolContractError(
+      `${label}.version must be '${expectedVersion}'`,
+    );
+  }
+  requireNonEmptyString(interaction.requestId, `${label}.requestId`);
+  if (interaction.kind !== "approval") {
+    throw new RunnerProtocolContractError(`${label}.kind must be 'approval'`);
+  }
+  if (interaction.eventType !== "user.approval" || waitEventType !== "user.approval") {
+    throw new RunnerProtocolContractError(`${label}.eventType must be 'user.approval'`);
+  }
+  requireNonEmptyString(interaction.prompt, `${label}.prompt`);
+  validateOptionalRecord(interaction.metadata, `${label}.metadata`);
+  const schema = requireRecord(interaction.inputSchema, `${label}.inputSchema`);
+  rejectUnknownFields(schema, `${label}.inputSchema`, [
+    "type",
+    "additionalProperties",
+    "required",
+    "properties",
+  ]);
+  const properties = requireRecord(schema.properties, `${label}.inputSchema.properties`);
+  rejectUnknownFields(properties, `${label}.inputSchema.properties`, ["decision"]);
+  const decision = requireRecord(properties.decision, `${label}.inputSchema.properties.decision`);
+  rejectUnknownFields(decision, `${label}.inputSchema.properties.decision`, [
+    "type",
+    "enum",
+  ]);
+  if (
+    schema.type !== "object" ||
+    schema.additionalProperties !== false ||
+    Array.isArray(schema.required) === false ||
+    schema.required.length !== 1 ||
+    schema.required[0] !== "decision" ||
+    decision.type !== "string" ||
+    Array.isArray(decision.enum) === false ||
+    decision.enum.length !== expectedDecisions.length ||
+    decision.enum.some((entry, index) => entry !== expectedDecisions[index]) ||
+    decision.enum.some((entry) => {
+      try {
+        parseHostedToolApprovalDecision(entry);
+        return false;
+      } catch {
+        return true;
+      }
+    })
+  ) {
+    throw new RunnerProtocolContractError(`${label}.inputSchema is invalid`);
+  }
+  const approval = requireRecord(interaction.approval, `${label}.approval`);
+  rejectUnknownFields(
+    approval,
+    `${label}.approval`,
+    [
+      "preparedInvocationId",
+      "toolName",
+      "stableToolIdentity",
+      "requestingActor",
+      "presentation",
+      ...(expectedVersion === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4
+        ? ["rememberedApprovalScope", "requestedAt", "expiresAt"]
+        : []),
+    ],
+  );
+  requireNonEmptyString(
+    approval.preparedInvocationId,
+    `${label}.approval.preparedInvocationId`,
+  );
+  requireNonEmptyString(approval.toolName, `${label}.approval.toolName`);
+  if (expectedVersion === RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4) {
+    parseRememberedApprovalScope(approval.rememberedApprovalScope);
+    const requestedAt = requireIsoTimestamp(
+      approval.requestedAt,
+      `${label}.approval.requestedAt`,
+    );
+    const expiresAt = requireIsoTimestamp(
+      approval.expiresAt,
+      `${label}.approval.expiresAt`,
+    );
+    if (Date.parse(expiresAt) <= Date.parse(requestedAt)) {
       throw new RunnerProtocolContractError(
-        `${label}.approval.input or .presentation is required`,
+        `${label}.approval.expiresAt must be after requestedAt`,
       );
     }
-    if (approval.presentation !== undefined) {
-      requireRecord(approval.presentation, `${label}.approval.presentation`);
-    }
+  }
+  const stableToolIdentity = parseStableToolApprovalIdentityV1(
+    approval.stableToolIdentity,
+  );
+  if (stableToolIdentity.toolId !== approval.toolName) {
+    throw new RunnerProtocolContractError(
+      `${label}.approval.stableToolIdentity.toolId must match ${label}.approval.toolName`,
+    );
+  }
+  try {
+    const requestingActor = requireRecord(
+      approval.requestingActor,
+      `${label}.approval.requestingActor`,
+    );
+    rejectUnknownFields(
+      requestingActor,
+      `${label}.approval.requestingActor`,
+      ["actorType", "actorId", "tenantId"],
+    );
+    parseRunnerActorMetadata(
+      requestingActor,
+      `${label}.approval.requestingActor`,
+    );
+  } catch (error) {
+    throw new RunnerProtocolContractError(
+      `${label}.approval.requestingActor is invalid: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
+  }
+  if (approval.presentation !== undefined) {
+    requireRecord(approval.presentation, `${label}.approval.presentation`);
   }
 }
 
@@ -4009,6 +4851,9 @@ function validateRunnerProfile(
   validateOptionalAppApprovalPolicyRecord(
     profile.kestrelOneAppApprovalPolicies,
     `${label}.kestrelOneAppApprovalPolicies`,
+  );
+  parseRememberedToolApprovalEvidenceSetV1(
+    profile.rememberedToolApprovalEvidence,
   );
   validateOptionalRecordArray(profile.mcpServers, `${label}.mcpServers`);
   validateOptionalRecord(profile.toolQueue, `${label}.toolQueue`);
@@ -4297,11 +5142,14 @@ function parseRunnerCommandMetadata(value: unknown): RunnerCommandMetadata {
   };
 }
 
-function parseRunnerActorMetadata(value: unknown): RunnerActorMetadata {
-  const actor = requireRecord(value, "runner command.metadata.actor");
+function parseRunnerActorMetadata(
+  value: unknown,
+  label = "runner command.metadata.actor",
+): RunnerActorMetadata {
+  const actor = requireRecord(value, label);
   const actorId = requireNonEmptyString(
     actor.actorId,
-    "runner command.metadata.actor.actorId",
+    `${label}.actorId`,
   );
   if (
     actor.actorType !== "end_user"
@@ -4309,20 +5157,20 @@ function parseRunnerActorMetadata(value: unknown): RunnerActorMetadata {
     && actor.actorType !== "service"
   ) {
     throw new RunnerProtocolContractError(
-      "runner command.metadata.actor.actorType must be 'end_user', 'operator', or 'service'",
+      `${label}.actorType must be 'end_user', 'operator', or 'service'`,
     );
   }
   const displayName = parseOptionalNonEmptyString(
     actor.displayName,
-    "runner command.metadata.actor.displayName",
+    `${label}.displayName`,
   );
   const tenantId = parseOptionalNonEmptyString(
     actor.tenantId,
-    "runner command.metadata.actor.tenantId",
+    `${label}.tenantId`,
   );
   if (actor.orgRole !== undefined && actor.orgRole !== "member" && actor.orgRole !== "org_admin") {
     throw new RunnerProtocolContractError(
-      "runner command.metadata.actor.orgRole must be 'member' or 'org_admin'",
+      `${label}.orgRole must be 'member' or 'org_admin'`,
     );
   }
   return {
@@ -4523,14 +5371,88 @@ function validateRunnerToolUpdate(
   label: string,
   expectedPhase: string,
 ): void {
-  const update = validatePresentationUpdateIdentity(value, label);
-  requireNonEmptyString(update.toolCallId, `${label}.toolCallId`);
-  requireNonEmptyString(update.toolName, `${label}.toolName`);
+  const update = requireRecord(value, label);
+  if (update.version !== "v1" && update.version !== "v2") {
+    throw new RunnerProtocolContractError(
+      `${label}.version must be 'v1' or 'v2'`,
+    );
+  }
+  requireNonEmptyString(update.runId, `${label}.runId`);
+  requireNonEmptyString(update.sessionId, `${label}.sessionId`);
+  requireNonEmptyString(update.ts, `${label}.ts`);
+  requireNonNegativeInteger(update.seq, `${label}.seq`);
+  const toolCallId = requireNonEmptyString(
+    update.toolCallId,
+    `${label}.toolCallId`,
+  );
+  const toolName = requireNonEmptyString(update.toolName, `${label}.toolName`);
   validateEnum(update.phase, `${label}.phase`, ["started", "completed", "failed"]);
   if (update.phase !== expectedPhase) {
     throw new RunnerProtocolContractError(
       `${label}.phase must match the runner event type '${expectedPhase}'`,
     );
+  }
+  if (update.version === "v2") {
+    const activation = validateAgentToolActivationV1(
+      update.activation,
+      `${label}.activation`,
+    );
+    if (activation.descriptorToolId !== toolName) {
+      throw new RunnerProtocolContractError(
+        `${label}.activation must match toolName`,
+      );
+    }
+    if (update.phase !== "started" && update.outcome === undefined) {
+      throw new RunnerProtocolContractError(
+        `${label}.outcome is required for a terminal v2 tool update`,
+      );
+    }
+    if (update.outcome !== undefined) {
+      const outcome = requireRecord(update.outcome, `${label}.outcome`);
+      if (outcome.version !== "v1") {
+        throw new RunnerProtocolContractError(
+          `${label}.outcome.version must be 'v1'`,
+        );
+      }
+      if (
+        requireNonEmptyString(outcome.callId, `${label}.outcome.callId`) !==
+        toolCallId
+      ) {
+        throw new RunnerProtocolContractError(
+          `${label}.outcome.callId must match toolCallId`,
+        );
+      }
+      const outcomeActivation = validateAgentToolActivationV1(
+        outcome.activation,
+        `${label}.outcome.activation`,
+      );
+      if (outcomeActivation.canonicalIdentity !== activation.canonicalIdentity) {
+        throw new RunnerProtocolContractError(
+          `${label}.outcome.activation must match activation`,
+        );
+      }
+      validateEnum(outcome.kind, `${label}.outcome.kind`, [
+        "success",
+        "partial",
+        "failure",
+        "cancellation",
+      ]);
+      validateEnum(outcome.effectState, `${label}.outcome.effectState`, [
+        "not_applicable",
+        "not_started",
+        "committed",
+        "unknown",
+      ]);
+      requireNonEmptyString(outcome.startedAt, `${label}.outcome.startedAt`);
+      requireNonEmptyString(outcome.completedAt, `${label}.outcome.completedAt`);
+      if (outcome.kind !== "success") {
+        requireNonEmptyString(
+          outcome.normalizedFailureCode,
+          `${label}.outcome.normalizedFailureCode`,
+        );
+        requireBoolean(outcome.retryable, `${label}.outcome.retryable`);
+      }
+    }
   }
   validateOptionalNonNegativeInteger(update.stepIndex, `${label}.stepIndex`);
   validateOptionalNonEmptyString(update.stepAgent, `${label}.stepAgent`);
@@ -4878,6 +5800,105 @@ function validateNonEmptyStringArray(value: unknown, label: string): void {
   if (!Array.isArray(value) || value.length === 0) {
     throw new RunnerProtocolContractError(`${label} must contain at least one entry`);
   }
+}
+
+function validateUniqueNonEmptyStringArray(value: unknown, label: string): void {
+  validateNonEmptyStringArray(value, label);
+  if (new Set(value as string[]).size !== (value as string[]).length) {
+    throw new RunnerProtocolContractError(`${label} must not contain duplicates`);
+  }
+}
+
+function validateEffectiveToolDecisionV1(
+  value: Record<string, unknown>,
+  label: string,
+): void {
+  if (value.version !== "effective_tool_decision_v1") {
+    throw new RunnerProtocolContractError(
+      `${label}.version must be effective_tool_decision_v1`,
+    );
+  }
+  requireBoolean(value.available, `${label}.available`);
+  validateEnum(value.availabilityReason, `${label}.availabilityReason`, [
+    "available",
+    "approval_policy",
+    "interaction_mode",
+    "tool_class_policy",
+    "capability_policy",
+    "approval_policy",
+    "actor_access",
+  ]);
+  const disposition = requireRecord(
+    value.approvalDisposition,
+    `${label}.approvalDisposition`,
+  );
+  validateEnum(disposition.mode, `${label}.approvalDisposition.mode`, [
+    "auto",
+    "ask",
+    "deny",
+  ]);
+  validateEnum(
+    disposition.reasonCode,
+    `${label}.approvalDisposition.reasonCode`,
+    [
+      "tool_minimum",
+      "environment_policy",
+      "project_restriction",
+      "subject_restriction",
+      "runtime_strict",
+      "remembered_thread",
+    ],
+  );
+  const authority = requireRecord(
+    disposition.authority,
+    `${label}.approvalDisposition.authority`,
+  );
+  validateEnum(authority.kind, `${label}.approvalDisposition.authority.kind`, [
+    "runtime_policy",
+    "hosted_mcp_grant",
+    "hosted_app_policy",
+  ]);
+  requireNonEmptyString(
+    authority.revision,
+    `${label}.approvalDisposition.authority.revision`,
+  );
+  requireBoolean(
+    value.rememberApprovalEligible,
+    `${label}.rememberApprovalEligible`,
+  );
+  requireNonEmptyString(value.authorityRevision, `${label}.authorityRevision`);
+  const evidence = requireRecord(value.evidence, `${label}.evidence`);
+  validateEnum(evidence.interactionMode, `${label}.evidence.interactionMode`, [
+    "chat",
+    "plan",
+    "build",
+  ]);
+  validateEnum(evidence.toolClass, `${label}.evidence.toolClass`, [
+    "read_only",
+    "planning_write",
+    "sandboxed_only",
+    "external_side_effect",
+  ]);
+  validateStringArray(
+    evidence.requiredCapabilities,
+    `${label}.evidence.requiredCapabilities`,
+  );
+  validateOptionalEnum(
+    evidence.blockedCapability,
+    `${label}.evidence.blockedCapability`,
+    [
+      "workspace.read",
+      "workspace.write",
+      "shell.exec",
+      "mission_control.work_item.write",
+      "network.call",
+      "code.execute",
+      "mcp.invoke",
+      "delegation.control",
+      "external.confirm",
+    ],
+  );
+  requireBoolean(evidence.actorAccess, `${label}.evidence.actorAccess`);
 }
 
 function validateOptionalEnumArray<const T extends string>(

@@ -164,6 +164,19 @@ export function createReferenceReactAgentDefinitionFromResolvedOptions(
         createStep: () => createExecWaitEffectStep(execConfig),
         contract: ({ transition }) => {
           const next = transition.nextStepAgent;
+          if (transition.status === "COMPLETED") {
+            const effects = transition.effects ?? [];
+            const payload = asRecord(effects[0]?.payload);
+            const cleanup = asRecord(payload?.preparedApprovalCleanup);
+            if (
+              effects.length !== 1 ||
+              effects[0]?.type !== "release_prepared_tool_call" ||
+              cleanup?.version !== "runner_prepared_approval_cleanup_v1"
+            ) {
+              throw contractError("agent.exec.wait_approval cleanup completion is invalid");
+            }
+            return;
+          }
           if (transition.status === "WAITING") {
             if (next !== AGENT_STEP_IDS.execWaitEffect) {
               throw contractError("agent.exec.wait_effect WAITING transitions must resume at agent.exec.wait_effect");
@@ -180,6 +193,25 @@ export function createReferenceReactAgentDefinitionFromResolvedOptions(
         createStep: () => createExecWaitApprovalStep(execConfig),
         contract: ({ transition }) => {
           const next = transition.nextStepAgent;
+          if (transition.status === "COMPLETED") {
+            const effects = transition.effects ?? [];
+            const payload = asRecord(effects[0]?.payload);
+            const cleanup = asRecord(payload?.preparedApprovalCleanup);
+            const terminal = asRecord(asRecord(transition.statePatch?.agent)?.terminal);
+            const assistantText = asString(asRecord(transition.statePatch?.agent)?.assistantText);
+            const isPreparedCleanup = cleanup?.version === "runner_prepared_approval_cleanup_v1";
+            const isApprovalDecline = terminal?.status === "COMPLETED" &&
+              terminal?.reasonCode === "TOOL_APPROVAL_DECLINED" &&
+              assistantText !== undefined;
+            if (
+              effects.length !== 1 ||
+              effects[0]?.type !== "release_prepared_tool_call" ||
+              (!isPreparedCleanup && !isApprovalDecline)
+            ) {
+              throw contractError("agent.exec.wait_approval completion is invalid");
+            }
+            return;
+          }
           if (transition.status === "WAITING") {
             if (next !== AGENT_STEP_IDS.execWaitApproval) {
               throw contractError("agent.exec.wait_approval WAITING transitions must resume at agent.exec.wait_approval");
@@ -244,6 +276,13 @@ export function createReferenceReactAgentDefinitionFromResolvedOptions(
             }
             return;
           }
+          if (
+            transition.status === "RUNNING" &&
+            transition.nextStepAgent === AGENT_STEP_IDS.loop &&
+            hasModeSwitchContinuationTrace(transition)
+          ) {
+            return;
+          }
           if (transition.status !== "COMPLETED") {
             throw contractError("agent.exec.finalize must terminate with COMPLETED status");
           }
@@ -255,6 +294,18 @@ export function createReferenceReactAgentDefinitionFromResolvedOptions(
       },
     ],
   };
+}
+
+function hasModeSwitchContinuationTrace(transition: {
+  statePatch?: Record<string, unknown> | undefined;
+}): boolean {
+  const agent = asRecord(transition.statePatch?.agent);
+  const traces = Array.isArray(agent?.decisionTrace) ? agent.decisionTrace : [];
+  return traces.some((trace) => {
+    const record = asRecord(trace);
+    return record?.eventType === "decision.executed" &&
+      record?.decisionCode === "switch_mode";
+  });
 }
 
 function hasAllowedLoopSelfTransitionTrace(agent: Record<string, unknown>): boolean {

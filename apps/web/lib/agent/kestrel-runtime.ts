@@ -2,7 +2,11 @@ import "server-only";
 
 import { readRequestCorrelation } from "@kestrel-agents/next";
 import type { KestrelAgent, RunnerActorMetadata } from "@kestrel-agents/sdk";
-import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
+import {
+  WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+  type RunnerPreparedApprovalCleanupV1,
+  type RunnerTurnAttachment,
+} from "@kestrel-agents/protocol";
 import {
   isRunnerRunStreamEvent,
   isRunnerRunTerminalEvent,
@@ -18,6 +22,7 @@ import {
 } from "@kestrel-agents/sdk/runner";
 import type { InferUIMessageChunk, UIMessage } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
+import { hasMaterializedEmailReceiptThread } from "@/lib/email-receipts/attachment-import";
 import { createRecoveredKestrelOneCompletion } from "@/lib/agent/kestrel-reconnect-stream";
 import { generateKestrelOneExternalReplyFromAgent } from "@/lib/agent/kestrel-external-runtime-core";
 import {
@@ -40,6 +45,7 @@ import {
 } from "@/lib/agent/kestrel-tool-profile";
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { parseDesktopLocalRuntimeModelId } from "@/lib/ai/gateway-utils";
+import { isDesktopModelRoleReady } from "@/lib/environments/desktop-model-readiness";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
 import type { Session } from "@/lib/auth-types";
 import { getHostedEnvironmentRuntimeMode } from "@/lib/environments/config";
@@ -48,6 +54,7 @@ import {
   persistRuntimeDialogMessage,
   readRuntimeDialogMessage,
 } from "@/lib/turns/dialog-messages";
+import { listRememberedToolApprovalEvidenceForRuntime } from "@/lib/turns/store";
 import {
   activateEnvironmentModelGrant,
   resolveEnvironmentExecutionRoute,
@@ -60,6 +67,7 @@ import {
   updateEnvironmentExecutionStatus,
 } from "@/lib/environments/execution-route";
 import { recordHostedAppApprovalRequest } from "@/lib/apps/hosted-app-approval-recorder";
+import { attachHostedAppApprovalPresentation } from "@/lib/apps/hosted-app-approval-presentation";
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 import { synchronizeProjectSkills } from "@/lib/projects/skills";
@@ -72,6 +80,9 @@ import {
 
 const DEFAULT_PROFILE_ID = "kestrel";
 const DEFAULT_HOSTED_AGENT_ID = "kestrel-one";
+const LEGACY_HOSTED_WORKSPACE_PRESET_VERSION = 2;
+const HOSTED_WORKSPACE_POLICY_ID = "kestrel";
+const HOSTED_WORKSPACE_POLICY_VERSION = 4;
 const HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
   "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
@@ -342,6 +353,8 @@ export type KestrelOneAgentResponseInput = {
   workspaceBaseRef?: string | null;
   parentThreadId?: string | null;
   durableTurnId?: string | undefined;
+  noninteractive?: boolean | undefined;
+  workflowRunAuthority?: Record<string, unknown> | undefined;
   messages: UIMessage[];
   resolvedAttachments?: RunnerTurnAttachment[] | null | undefined;
   threadFileInventory?: Array<{
@@ -363,6 +376,9 @@ export type KestrelOneAgentResponseInput = {
         eventType: string;
         message: string;
         approved?: boolean | undefined;
+        decision?: "decline" | "approve_once" | "remember_approval" | undefined;
+        decidingActor?: RunnerActorMetadata | undefined;
+        preparedApprovalCleanup?: RunnerPreparedApprovalCleanupV1 | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;
       }
@@ -380,7 +396,11 @@ export type KestrelOneAgentResponseInput = {
   signal?: AbortSignal;
   abortBehavior?: "cancel" | "detach" | undefined;
   onExecutionRouted?: (executionId: string) => Promise<void> | void;
-  onApplicationProgress?: (progress: { stage: string; detail: string; status: string }) => Promise<void> | void;
+  onApplicationProgress?: (progress: {
+    stage: string;
+    detail: string;
+    status: string;
+  }) => Promise<void> | void;
   onUiChunk?: (chunk: KestrelUiStreamChunk) => void;
   onRuntimeEvent?: (event: RunnerRunStreamEvent) => void;
   onFinishPersist?: (
@@ -401,7 +421,11 @@ function createModelAwareKestrelOneAgent(input: {
   projectContextRevisionId?: string | undefined;
   projectContextGrantId?: string | undefined;
   onExecutionRouted?: (executionId: string) => Promise<void> | void;
-  onApplicationProgress?: (progress: { stage: string; detail: string; status: string }) => Promise<void> | void;
+  onApplicationProgress?: (progress: {
+    stage: string;
+    detail: string;
+    status: string;
+  }) => Promise<void> | void;
 }): KestrelOneAgent {
   const clients = new Set<KestrelOneRunnerClient>();
   return {
@@ -467,6 +491,7 @@ function createModelAwareKestrelOneAgent(input: {
               runId: route.runId,
               gatewayId: runtimeModel.gatewayId,
               rawModelId: runtimeModel.model,
+              routeBinding: runtimeModel.routeBinding,
             });
           }
           if (route.provider !== "desktop") {
@@ -522,6 +547,12 @@ function createModelAwareKestrelOneAgent(input: {
           }
           const { signal, abortBehavior, resumeRequestId, ...turn } = turnInput;
           const eventType = turn.eventType || "user.message";
+          const rememberedToolApprovalEvidence =
+            await listRememberedToolApprovalEvidenceForRuntime({
+              organizationId: input.organizationId,
+              threadId: input.threadId,
+              userId: input.actorUserId,
+            });
           const resolvedProfile = await resolveHostedKestrelExecutionProfile({
             client,
             context,
@@ -532,6 +563,11 @@ function createModelAwareKestrelOneAgent(input: {
               approvalPolicies: route.approvalPolicies,
               reasoningPolicy: route.reasoningPolicy,
               ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
+              rememberedToolApprovalEvidence,
+              emailAttachmentReadAvailable: await hasMaterializedEmailReceiptThread({
+                organizationId: input.organizationId,
+                threadId: input.threadId,
+              }),
             },
             ...(runtimeModel !== undefined
               ? { runtimeModels: [runtimeModel] }
@@ -551,10 +587,31 @@ function createModelAwareKestrelOneAgent(input: {
             input.parentThreadId,
             input.workspaceBaseRef,
           );
+          const effectiveWorkspace = turn.workflowRunAuthority
+            ? {
+                ...runtimeWorkspace,
+                managedWorktreeRequired: true as const,
+                managedWorktreeIsolation: "scoped" as const,
+                managedWorktreeScope: "workflow_run" as const,
+                managedWorktreeScopeId:
+                  turn.workflowRunAuthority.workflowRunId,
+              }
+            : runtimeWorkspace;
           const normalizedTurn = {
             ...turn,
             eventType,
-            ...(runtimeWorkspace ? { workspace: runtimeWorkspace } : {}),
+            ...(route.projectId
+              ? {
+                  hostedApprovalAuthority: {
+                    version: "runner_hosted_approval_authority_v1" as const,
+                    organizationId: input.organizationId,
+                    environmentId: route.environmentId,
+                    projectId: route.projectId,
+                    threadId: input.threadId,
+                  },
+                }
+              : {}),
+            ...(effectiveWorkspace ? { workspace: effectiveWorkspace } : {}),
             ...(projectSkills
               ? { workspaceSkills: projectSkills.catalog }
               : {}),
@@ -618,7 +675,7 @@ function createModelAwareKestrelOneAgent(input: {
           mainTerminal = true;
           if (pendingDialogs.size === 0) dialogAbort.abort();
           else retainClientForDialog = true;
-          await recordHostedAppApprovalRequest({
+          const hostedApproval = await recordHostedAppApprovalRequest({
             organizationId: input.organizationId,
             environmentId: route.environmentId,
             workspaceId: route.workspaceId,
@@ -628,13 +685,17 @@ function createModelAwareKestrelOneAgent(input: {
             requestedExecutionId: route.runId,
             event: terminal,
           });
+          const presentedTerminal = attachHostedAppApprovalPresentation(
+            terminal,
+            hostedApproval?.presentation,
+          );
           await updateEnvironmentExecutionStatus({
             organizationId: input.organizationId,
             executionId,
-            status: terminalExecutionStatus(terminal),
-            ...terminalFailureEvidence(terminal),
+            status: terminalExecutionStatus(presentedTerminal),
+            ...terminalFailureEvidence(presentedTerminal),
           });
-          routed.complete(terminal);
+          routed.complete(presentedTerminal);
         } catch (error) {
           if (
             executionId &&
@@ -646,7 +707,9 @@ function createModelAwareKestrelOneAgent(input: {
               status: "failed",
               failureCode: readRuntimeErrorCode(error) ?? "RUNTIME_FAILED",
               failureMessage:
-                error instanceof Error ? error.message : "Runtime execution failed.",
+                error instanceof Error
+                  ? error.message
+                  : "Runtime execution failed.",
             }).catch(() => {});
           }
           routed.fail(error);
@@ -689,6 +752,10 @@ export async function resolveHostedKestrelExecutionProfile(input: {
       | undefined;
     reasoningPolicy?: RunnerProfile["reasoning"] | undefined;
     ociMcpEgressBindings?: ResolvedOciMcpEgressBindingV1[] | undefined;
+    rememberedToolApprovalEvidence?:
+      | import("@kestrel-agents/protocol").RememberedToolApprovalEvidenceV1[]
+      | undefined;
+    emailAttachmentReadAvailable?: boolean | undefined;
   };
   runtimeModels?:
     | readonly [
@@ -696,6 +763,7 @@ export async function resolveHostedKestrelExecutionProfile(input: {
         ...EnvironmentRuntimeModelSelection[],
       ]
     | undefined;
+  exactToolName?: string | undefined;
 }) {
   const primaryRuntimeModel = input.runtimeModels?.[0];
   const environmentPresetId =
@@ -707,11 +775,16 @@ export async function resolveHostedKestrelExecutionProfile(input: {
     availableToolNames: [...KESTREL_ONE_HOSTED_RUNTIME_TOOL_NAMES],
     effectiveCapabilities: input.route.effectiveCapabilities,
     approvalPolicies: input.route.approvalPolicies,
+    emailAttachmentReadAvailable: input.route.emailAttachmentReadAvailable,
   });
   try {
-    return await input.client.resolveExecutionProfile(
+    const resolution = await input.client.resolveExecutionProfile(
       {
         environmentPresetId,
+        ...(environmentPresetId === "workspace_hosted" &&
+        input.exactToolName !== undefined
+          ? { exactToolNames: [input.exactToolName] }
+          : {}),
         managedConfiguration: {
           label: "Kestrel One",
           additionalToolNames: toolConfiguration.additionalToolNames,
@@ -719,6 +792,8 @@ export async function resolveHostedKestrelExecutionProfile(input: {
             toolConfiguration.kestrelOneAppApprovalModes,
           kestrelOneAppApprovalPolicies:
             toolConfiguration.kestrelOneAppApprovalPolicies,
+          rememberedToolApprovalEvidence:
+            input.route.rememberedToolApprovalEvidence ?? [],
           ...(input.route.reasoningPolicy !== undefined
             ? { reasoning: input.route.reasoningPolicy }
             : {}),
@@ -761,8 +836,97 @@ export async function resolveHostedKestrelExecutionProfile(input: {
       },
       input.context,
     );
+    if (environmentPresetId === "workspace_hosted") {
+      assertHostedWorkspaceProfileCompatibility(resolution);
+    }
+    if (input.exactToolName !== undefined) {
+      assertHostedWorkspaceExactToolPreflight(
+        resolution,
+        input.exactToolName,
+      );
+    }
+    return resolution;
   } catch (error) {
     throw mapHostedKestrelProfileResolutionError(error, primaryRuntimeModel);
+  }
+}
+
+export function assertHostedWorkspaceProfileCompatibility(
+  resolution: Awaited<ReturnType<HostedKestrelExecutionProfileResolver["resolveExecutionProfile"]>>,
+): void {
+  const preset4ProducerSupported =
+    resolution.environmentPreset.version ===
+      WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION &&
+    resolution.hostedApprovalProducerProtocol === "v4";
+  const deployedPreset2BridgeSupported =
+    resolution.environmentPreset.version ===
+      LEGACY_HOSTED_WORKSPACE_PRESET_VERSION &&
+    resolution.hostedApprovalProducerProtocol === undefined;
+  const policyIdentitySupported =
+    resolution.policy.id === HOSTED_WORKSPACE_POLICY_ID &&
+    resolution.policy.version === HOSTED_WORKSPACE_POLICY_VERSION &&
+    resolution.resolvedProfile.approvalPolicyPackId === "hosted_workspace";
+  const expectedProfileId =
+    `kestrel:workspace_hosted:${resolution.fingerprint}`;
+  const profileIdentitySupported =
+    resolution.profileId === expectedProfileId &&
+    resolution.resolvedProfile.id === expectedProfileId;
+  if (
+    resolution.environmentPreset.id !== "workspace_hosted" ||
+    !(preset4ProducerSupported || deployedPreset2BridgeSupported) ||
+    !policyIdentitySupported ||
+    !profileIdentitySupported
+  ) {
+    throw Object.assign(
+      new Error("The runner does not support the current hosted approval contract."),
+      {
+        code: "HOSTED_PROFILE_CONTRACT_INCOMPATIBLE",
+        details: {
+          environmentPreset: resolution.environmentPreset,
+          approvalPolicyPackId:
+            resolution.resolvedProfile.approvalPolicyPackId ?? null,
+          profileId: resolution.profileId,
+          requiredPresetVersion: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+          policy: resolution.policy,
+          hostedApprovalProducerProtocol:
+            resolution.hostedApprovalProducerProtocol ?? null,
+          acceptedPresetVersions: [
+            LEGACY_HOSTED_WORKSPACE_PRESET_VERSION,
+            WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+          ],
+        },
+      },
+    );
+  }
+}
+
+export function assertHostedWorkspaceExactToolPreflight(
+  resolution: Awaited<ReturnType<HostedKestrelExecutionProfileResolver["resolveExecutionProfile"]>>,
+  requiredTool: string,
+): void {
+  if (resolution.environmentPreset.id !== "workspace_hosted") {
+    return;
+  }
+  assertHostedWorkspaceProfileCompatibility(resolution);
+  if (
+    resolution.resolvedProfile.approvalPolicyPackId !== "hosted_workspace" ||
+    resolution.exactToolDecisions?.[requiredTool]?.available !== true
+  ) {
+    throw Object.assign(
+      new Error(
+        `Hosted no-spend preflight rejected required tool '${requiredTool}' before model execution.`,
+      ),
+      {
+        code: "HOSTED_REQUIRED_TOOL_UNAVAILABLE",
+        details: {
+          requiredTool,
+          approvalPolicyPackId:
+            resolution.resolvedProfile.approvalPolicyPackId ?? null,
+          exactToolDecision:
+            resolution.exactToolDecisions?.[requiredTool] ?? null,
+        },
+      },
+    );
   }
 }
 
@@ -928,6 +1092,7 @@ export async function generateKestrelOneExternalReply(input: {
       ...resolvedModel.model,
       organizationId: input.organizationId,
       environmentId: route.environmentId,
+      credentialRevision: resolvedModel.gateway.credentialRevision,
     });
     await activateEnvironmentModelGrant({
       organizationId: input.organizationId,
@@ -937,7 +1102,14 @@ export async function generateKestrelOneExternalReply(input: {
       runId: route.runId,
       gatewayId: runtimeModel.gatewayId,
       rawModelId: runtimeModel.model,
+      routeBinding: runtimeModel.routeBinding,
     });
+    const rememberedToolApprovalEvidence =
+      await listRememberedToolApprovalEvidenceForRuntime({
+        organizationId: input.organizationId,
+        threadId: input.sessionId,
+        userId: input.actor.actorId,
+      });
     const resolvedProfile = await resolveHostedKestrelExecutionProfile({
       client,
       context,
@@ -948,6 +1120,11 @@ export async function generateKestrelOneExternalReply(input: {
         approvalPolicies: route.approvalPolicies,
         reasoningPolicy: route.reasoningPolicy,
         ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
+        rememberedToolApprovalEvidence,
+        emailAttachmentReadAvailable: await hasMaterializedEmailReceiptThread({
+          organizationId: input.organizationId,
+          threadId: input.sessionId,
+        }),
       },
       runtimeModels: [runtimeModel],
     });
@@ -974,6 +1151,17 @@ export async function generateKestrelOneExternalReply(input: {
               turn: {
                 ...turn,
                 eventType: turn.eventType || "user.message",
+                ...(route.projectId
+                  ? {
+                      hostedApprovalAuthority: {
+                        version: "runner_hosted_approval_authority_v1" as const,
+                        organizationId: input.organizationId,
+                        environmentId: route.environmentId,
+                        projectId: route.projectId,
+                        threadId: input.sessionId,
+                      },
+                    }
+                  : {}),
                 ...(runtimeWorkspace ? { workspace: runtimeWorkspace } : {}),
               },
             },
@@ -998,6 +1186,11 @@ export async function generateKestrelOneExternalReply(input: {
           tenantId: input.organizationId,
           capabilities: buildKestrelOneCapabilityDescriptors({
             request: new Request(new URL("/", input.apiUrl)),
+            threadId: input.sessionId,
+            emailAttachmentReadAvailable: await hasMaterializedEmailReceiptThread({
+              organizationId: input.organizationId,
+              threadId: input.sessionId,
+            }),
           }),
         },
       },
@@ -1102,6 +1295,7 @@ export async function createKestrelOneAgentResponse(
         ...resolvedModel.model,
         organizationId: input.organizationId,
         environmentId: input.environmentId,
+        credentialRevision: resolvedModel.gateway.credentialRevision,
       })
     : null;
   const runtimeModel =
@@ -1136,6 +1330,8 @@ export async function createKestrelOneAgentResponse(
     correlation: readRequestCorrelation(input.request),
     threadId: input.threadId,
     durableTurnId: input.durableTurnId,
+    noninteractive: input.noninteractive,
+    workflowRunAuthority: input.workflowRunAuthority,
     messages: input.messages,
     resolvedAttachments: input.resolvedAttachments,
     threadFileInventory: input.threadFileInventory,
@@ -1223,7 +1419,9 @@ export async function createKestrelOneReattachmentResponse(
             status: "failed",
             failureCode: code ?? "RUNTIME_FAILED",
             failureMessage:
-              error instanceof Error ? error.message : "Runtime execution failed.",
+              error instanceof Error
+                ? error.message
+                : "Runtime execution failed.",
           });
         },
       );
@@ -1461,11 +1659,13 @@ async function resolveDesktopLocalRuntimeModel(input: {
         ),
       columns: { advertisedModels: true },
     });
-  const advertised = connection?.advertisedModels.some(
-    (candidate) =>
-      candidate.provider === provider &&
-      candidate.model === model &&
-      candidate.health === "ready",
+  const advertised = connection?.advertisedModels.some((candidate) =>
+    isDesktopModelRoleReady({
+      model: candidate,
+      provider,
+      modelId: model,
+      role: "agent.loop",
+    }),
   );
   if (!advertised) {
     throw new Error(

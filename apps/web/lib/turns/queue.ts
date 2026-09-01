@@ -1,8 +1,13 @@
 import "server-only";
 
-import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import {
+  listDispatchableEmailDeliveryReceiptIds,
+  readEmailDeliveryReceiptState,
+} from "@/lib/email-receipts/store";
+import { recordEmailReceiptTelemetry } from "@/lib/email-receipts/observability";
 import { resolveTurnWorkerConcurrency } from "@/lib/runtime/process-contracts";
 import {
   claimDueProjectPromptScheduleRuns,
@@ -10,14 +15,25 @@ import {
   listQueuedProjectPromptScheduleRunIds,
 } from "@/lib/schedules/store";
 import { createSingleFlightOperation } from "@/lib/turns/single-flight";
-import { completeDurableThreadTurn } from "@/lib/turns/store";
+import {
+  completeDurableThreadTurn,
+  hasDurablePreparedApprovalCleanupPending,
+  reconcileDurablePreparedApprovalCleanupForRetry,
+} from "@/lib/turns/store";
 import { resolveTurnConcurrencyGroup } from "@/lib/turns/concurrency";
+import {
+  isPreparedApprovalCleanupRetryError,
+  shouldPreservePreparedApprovalCleanupExecution,
+} from "@/lib/turns/prepared-approval-cleanup";
+import { nextPreparedApprovalCleanupRetrySchedule } from "@/lib/turns/prepared-approval-cleanup-retry";
+import { runTurnWorkerMaintenance } from "@/lib/turns/worker-maintenance";
 
 export const DURABLE_THREAD_TURN_QUEUE = "thread.turn.execute";
 export const PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE =
   "project.prompt-schedule.dispatch";
 export const PROJECT_PROMPT_SCHEDULE_EXECUTION_QUEUE =
   "project.prompt-schedule.execute";
+export const EMAIL_DELIVERY_RECEIPT_QUEUE = "email.delivery-receipt.hydrate";
 export const PROJECT_PROMPT_SCHEDULE_DISPATCH_CRON = "* * * * *";
 export const DURABLE_TURN_EXPIRE_SECONDS = 12 * 60 * 60;
 export const DURABLE_TURN_HEARTBEAT_SECONDS = 60;
@@ -48,6 +64,24 @@ function reportPushFailure(error: unknown) {
   });
 }
 
+function reportReceivingWebhookRecoveryFailure(error: unknown) {
+  console.error("Kestrel receiving webhook reconciliation failed.", {
+    errorType: error instanceof Error ? error.name : "UnknownError",
+  });
+}
+
+function reportEmailReceiptRecoveryFailure(error: unknown) {
+  console.error("Kestrel email receipt queue recovery failed.", {
+    errorType: error instanceof Error ? error.name : "UnknownError",
+  });
+}
+
+async function reconcileConfiguredReceivingWebhooks() {
+  const receiving =
+    await import("@/lib/email/receiving-webhook-reconciliation");
+  await receiving.reconcileConfiguredReceivingWebhooks();
+}
+
 async function createTurnBoss() {
   if (!databaseUrl) {
     throw new Error("DATABASE_URL or POSTGRES_URL is required");
@@ -64,6 +98,7 @@ async function createTurnBoss() {
   });
   await boss.createQueue(PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE);
   await boss.createQueue(PROJECT_PROMPT_SCHEDULE_EXECUTION_QUEUE);
+  await boss.createQueue(EMAIL_DELIVERY_RECEIPT_QUEUE);
   await boss.schedule(
     PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE,
     PROJECT_PROMPT_SCHEDULE_DISPATCH_CRON,
@@ -77,7 +112,15 @@ async function getTurnBoss() {
   return bossPromise;
 }
 
-async function sendTurn(boss: PgBoss, turnId: string) {
+async function sendTurn(
+  boss: PgBoss,
+  turnId: string,
+  options: {
+    cleanupReconciliation?: boolean | undefined;
+    previousCleanupReconciliationAttempt?: number | undefined;
+    cleanupResumeRunning?: boolean | undefined;
+  } = {},
+) {
   const [turn] = await knowledgeDb
     .select({
       concurrencyGroupKey: schema.threadTurns.concurrencyGroupKey,
@@ -88,22 +131,44 @@ async function sendTurn(boss: PgBoss, turnId: string) {
       workspaceMode: schema.threads.workspaceMode,
     })
     .from(schema.threadTurns)
-    .innerJoin(schema.threads, eq(schema.threads.id, schema.threadTurns.threadId))
+    .innerJoin(
+      schema.threads,
+      eq(schema.threads.id, schema.threadTurns.threadId),
+    )
     .where(eq(schema.threadTurns.id, turnId))
     .limit(1);
   if (!turn) throw new Error("The durable turn is unavailable for dispatch.");
   const concurrencyGroupKey =
     turn.concurrencyGroupKey ?? resolveTurnConcurrencyGroup(turn);
+  const cleanupRetrySchedule = options.cleanupReconciliation
+    ? nextPreparedApprovalCleanupRetrySchedule({
+        previousAttempt: options.previousCleanupReconciliationAttempt,
+        nowMs: Date.now(),
+      })
+    : undefined;
   const jobId = await boss.send(
     DURABLE_THREAD_TURN_QUEUE,
-    { turnId },
     {
-      retryLimit: 3,
+      turnId,
+      ...(cleanupRetrySchedule === undefined
+        ? {}
+        : {
+            cleanupReconciliationAttempt: cleanupRetrySchedule.attempt,
+            ...(options.cleanupResumeRunning
+              ? { cleanupResumeRunning: true }
+              : {}),
+          }),
+    },
+    {
+      retryLimit: options.cleanupReconciliation ? 0 : 3,
       retryDelay: 5,
       retryBackoff: true,
       expireInSeconds: DURABLE_TURN_EXPIRE_SECONDS,
       heartbeatSeconds: DURABLE_TURN_HEARTBEAT_SECONDS,
       group: { id: concurrencyGroupKey },
+      ...(cleanupRetrySchedule === undefined
+        ? {}
+        : { startAfter: cleanupRetrySchedule.startAfter }),
     },
   );
   if (!jobId) {
@@ -122,6 +187,61 @@ async function sendProjectPromptScheduleRun(boss: PgBoss, runId: string) {
   }
 }
 
+async function sendEmailDeliveryReceipt(boss: PgBoss, receiptId: string) {
+  const jobId = await boss.send(
+    EMAIL_DELIVERY_RECEIPT_QUEUE,
+    { receiptId },
+    {
+      retryLimit: 3,
+      retryDelay: 5,
+      retryBackoff: true,
+      singletonKey: receiptId,
+    },
+  );
+  if (
+    !(jobId || (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)))
+  ) {
+    throw new Error("The email delivery receipt queue rejected the job.");
+  }
+}
+
+async function dispatchEmailDeliveryReceiptOrReconcile(
+  boss: PgBoss,
+  receiptId: string,
+) {
+  await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:email-receipt-dispatch:${receiptId}`}, 0))`,
+    );
+    const [receipt] = await transaction
+      .select({ state: schema.emailDeliveryReceipts.state })
+      .from(schema.emailDeliveryReceipts)
+      .where(eq(schema.emailDeliveryReceipts.id, receiptId))
+      .limit(1);
+    if (!receipt || !["queued", "hydrating", "admitted"].includes(receipt.state)) return;
+    if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)) return;
+    try {
+      await sendEmailDeliveryReceipt(boss, receiptId);
+    } catch (error) {
+      try {
+        if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId))
+          return;
+        const current = await readEmailDeliveryReceiptState(receiptId);
+        if (!current || !["queued", "hydrating", "admitted"].includes(current.state))
+          return;
+      } catch {
+        // The queued database record remains durable dispatch intent. Worker
+        // maintenance retries after either queue or database state is readable.
+      }
+      throw error;
+    }
+  });
+}
+
+export async function enqueueEmailDeliveryReceipt(receiptId: string) {
+  await dispatchEmailDeliveryReceiptOrReconcile(await getTurnBoss(), receiptId);
+}
+
 async function dispatchTurnOrReconcile(boss: PgBoss, turnId: string) {
   try {
     await sendTurn(boss, turnId);
@@ -135,8 +255,7 @@ async function dispatchTurnOrReconcile(boss: PgBoss, turnId: string) {
         state &&
         (state.queueState !== "running" ||
           state.activeTurnId !== turnId ||
-          (state.status !== "queued" &&
-            state.status !== "waiting_for_input"))
+          (state.status !== "queued" && state.status !== "waiting_for_input"))
       ) {
         return;
       }
@@ -160,6 +279,12 @@ export async function finalizeExhaustedDurableTurnJob(input: {
   if (input.retryCount < input.retryLimit) {
     return false;
   }
+  if (await hasDurablePreparedApprovalCleanupPending({ turnId: input.turnId })) {
+    await reconcileDurablePreparedApprovalCleanupForRetry({
+      turnId: input.turnId,
+    });
+    return false;
+  }
   await completeDurableThreadTurn({
     turnId: input.turnId,
     status: "failed",
@@ -168,7 +293,8 @@ export async function finalizeExhaustedDurableTurnJob(input: {
       "The Kestrel agent could not start this turn. Please try again.",
     interactionFailure: {
       failureCode: "TURN_DISPATCH_FAILED",
-      failureMessage: "The durable queue exhausted dispatch before the runner started.",
+      failureMessage:
+        "The durable queue exhausted dispatch before the runner started.",
       effectStatus: "not_started",
       retryable: true,
     },
@@ -195,10 +321,40 @@ async function hasNonterminalProjectPromptScheduleJob(
   return jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state));
 }
 
+async function hasNonterminalEmailDeliveryReceiptJob(
+  boss: PgBoss,
+  receiptId: string,
+) {
+  const jobs = await boss.findJobs<{ receiptId?: unknown }>(
+    EMAIL_DELIVERY_RECEIPT_QUEUE,
+    { data: { receiptId } },
+  );
+  return jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state));
+}
+
 async function dispatchDueProjectPromptSchedules(boss: PgBoss) {
   const runIds = await claimDueProjectPromptScheduleRuns();
   for (const runId of runIds) {
     await sendProjectPromptScheduleRun(boss, runId);
+  }
+  const { claimDueProjectWorkflowRuns } = await import("@/lib/workflows/store");
+  const { advanceProjectWorkflowRun } = await import("@/lib/workflows/runtime");
+  for (const runId of await claimDueProjectWorkflowRuns()) {
+    const result = await advanceProjectWorkflowRun(runId);
+    for (const turnId of result.turnIds) {
+      await dispatchTurnOrReconcile(boss, turnId);
+    }
+  }
+}
+
+async function advanceActiveProjectWorkflows(boss: PgBoss) {
+  const { listActiveProjectWorkflowRunIds } = await import("@/lib/workflows/store");
+  const { advanceProjectWorkflowRun } = await import("@/lib/workflows/runtime");
+  for (const runId of await listActiveProjectWorkflowRunIds()) {
+    const result = await advanceProjectWorkflowRun(runId);
+    for (const turnId of result.turnIds) {
+      await dispatchTurnOrReconcile(boss, turnId);
+    }
   }
 }
 
@@ -209,6 +365,21 @@ async function recoverQueuedProjectPromptScheduleRuns(boss: PgBoss) {
       await sendProjectPromptScheduleRun(boss, runId);
     }
   }
+}
+
+async function recoverQueuedEmailDeliveryReceipts(boss: PgBoss) {
+  const receiptIds = await listDispatchableEmailDeliveryReceiptIds();
+  for (const receiptId of receiptIds) {
+    if (await hasNonterminalEmailDeliveryReceiptJob(boss, receiptId)) continue;
+    const receipt = await readEmailDeliveryReceiptState(receiptId);
+    if (!receipt || !["queued", "hydrating", "admitted"].includes(receipt.state)) continue;
+    await dispatchEmailDeliveryReceiptOrReconcile(boss, receiptId);
+  }
+}
+
+export async function reconcileEmailDeliveryReceiptQueue() {
+  await recoverQueuedEmailDeliveryReceipts(await getTurnBoss());
+  recordEmailReceiptTelemetry({ event: "worker_reconciled" });
 }
 
 async function readDurableDispatchState(turnId: string) {
@@ -242,11 +413,12 @@ async function hasResolvedUnconsumedRuntimeInteraction(turnId: string) {
 }
 
 async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
-  const capacity =
-    await knowledgeDb.query.platformTurnWorkerCapacity.findFirst({
+  const capacity = await knowledgeDb.query.platformTurnWorkerCapacity.findFirst(
+    {
       where: eq(schema.platformTurnWorkerCapacity.id, "default"),
       columns: { admissionClosedUntil: true },
-    });
+    },
+  );
   if (!capacity) {
     throw new Error("Turn Worker capacity configuration is unavailable.");
   }
@@ -290,6 +462,15 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
     if (turn.status === "waiting_for_input") {
       if (
         turn.queueState === "running" &&
+        await hasDurablePreparedApprovalCleanupPending({
+          turnId: turn.turnId,
+        })
+      ) {
+        await sendTurn(boss, turn.turnId, { cleanupReconciliation: true });
+        continue;
+      }
+      if (
+        turn.queueState === "running" &&
         (await hasResolvedUnconsumedRuntimeInteraction(turn.turnId))
       ) {
         await dispatchTurnOrReconcile(boss, turn.turnId);
@@ -297,6 +478,14 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
       continue;
     }
     if (turn.status === "running") {
+      if (
+        await reconcileDurablePreparedApprovalCleanupForRetry({
+          turnId: turn.turnId,
+        })
+      ) {
+        await sendTurn(boss, turn.turnId, { cleanupReconciliation: true });
+        continue;
+      }
       await completeDurableThreadTurn({
         turnId: turn.turnId,
         status: "failed",
@@ -305,7 +494,8 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
           "The Kestrel agent was interrupted before this turn finished. Please try again.",
         interactionFailure: {
           failureCode: "TURN_WORKER_INTERRUPTED",
-          failureMessage: "The orphaned worker could not prove whether execution started.",
+          failureMessage:
+            "The orphaned worker could not prove whether execution started.",
           effectStatus: "unknown",
           retryable: false,
         },
@@ -320,9 +510,17 @@ export async function reconcileDurableThreadTurnQueue() {
 
 function createWorkerMaintenance(boss: PgBoss) {
   return createSingleFlightOperation(async () => {
-    await recoverQueuedProjectPromptScheduleRuns(boss);
-    await reconcileDurableThreadTurnQueueWithBoss(boss);
-    await drainMobilePushOutbox().catch(reportPushFailure);
+    await runTurnWorkerMaintenance({
+      reconcileReceivingWebhooks: reconcileConfiguredReceivingWebhooks,
+      reportReceivingWebhookFailure: reportReceivingWebhookRecoveryFailure,
+      recoverEmailReceipts: () => recoverQueuedEmailDeliveryReceipts(boss),
+      reportEmailReceiptFailure: reportEmailReceiptRecoveryFailure,
+      recoverSchedules: () => recoverQueuedProjectPromptScheduleRuns(boss),
+      reconcileTurns: () => reconcileDurableThreadTurnQueueWithBoss(boss),
+      drainMobilePush: drainMobilePushOutbox,
+      reportMobilePushFailure: reportPushFailure,
+    });
+    await advanceActiveProjectWorkflows(boss);
   });
 }
 
@@ -374,6 +572,40 @@ export async function startDurableThreadTurnWorker() {
       },
     );
     await boss.work(
+      EMAIL_DELIVERY_RECEIPT_QUEUE,
+      {
+        batchSize: 1,
+        localConcurrency: turnWorkerConcurrency,
+        includeMetadata: true,
+      },
+      async (jobs: Array<JobWithMetadata<{ receiptId?: unknown }>>) => {
+        for (const job of jobs) {
+          const receiptId = job.data?.receiptId;
+          if (typeof receiptId !== "string") continue;
+          const { materializeAdmittedEmailDeliveryReceipt } =
+            await import("@/lib/email-receipts/materialize");
+          const { processEmailDeliveryReceipt } =
+            await import("@/lib/email-receipts/runtime");
+          await processEmailDeliveryReceipt(receiptId);
+          const materialized =
+            await materializeAdmittedEmailDeliveryReceipt(receiptId);
+          if (materialized?.turnId) {
+            recordEmailReceiptTelemetry({
+              event: "materialized",
+              receiptId,
+            });
+          }
+          if (materialized?.turnId && materialized.shouldDispatch) {
+            await dispatchTurnOrReconcile(boss, materialized.turnId);
+            recordEmailReceiptTelemetry({
+              event: "execution_routed",
+              receiptId,
+            });
+          }
+        }
+      },
+    );
+    await boss.work(
       DURABLE_THREAD_TURN_QUEUE,
       {
         batchSize: 1,
@@ -382,7 +614,11 @@ export async function startDurableThreadTurnWorker() {
         includeMetadata: true,
         heartbeatRefreshSeconds: DURABLE_TURN_HEARTBEAT_REFRESH_SECONDS,
       },
-      async (jobs: Array<JobWithMetadata<{ turnId?: unknown }>>) => {
+      async (jobs: Array<JobWithMetadata<{
+        turnId?: unknown;
+        cleanupReconciliationAttempt?: unknown;
+        cleanupResumeRunning?: unknown;
+      }>>) => {
         for (const job of jobs) {
           const turnId = job.data?.turnId;
           if (typeof turnId !== "string") {
@@ -392,7 +628,10 @@ export async function startDurableThreadTurnWorker() {
             const { processDurableThreadTurn } =
               await import("@/lib/turns/process-runtime");
             const result = await processDurableThreadTurn(turnId, {
-              retryCount: job.retryCount,
+              retryCount:
+                job.data?.cleanupResumeRunning === true
+                  ? Math.max(1, job.retryCount)
+                  : job.retryCount,
               workerSignal: job.signal,
             });
             if (result.nextTurnId) {
@@ -400,6 +639,25 @@ export async function startDurableThreadTurnWorker() {
             }
             await runWorkerMaintenance();
           } catch (error) {
+            if (isPreparedApprovalCleanupRetryError(error)) {
+              const preserveRunningExecution =
+                shouldPreservePreparedApprovalCleanupExecution(error);
+              const preserved = preserveRunningExecution
+                ? await hasDurablePreparedApprovalCleanupPending({ turnId })
+                : await reconcileDurablePreparedApprovalCleanupForRetry({
+                    turnId,
+                  });
+              if (!preserved) throw error;
+              await sendTurn(boss, turnId, {
+                cleanupReconciliation: true,
+                previousCleanupReconciliationAttempt:
+                  typeof job.data?.cleanupReconciliationAttempt === "number"
+                    ? job.data.cleanupReconciliationAttempt
+                    : undefined,
+                cleanupResumeRunning: preserveRunningExecution,
+              });
+              continue;
+            }
             await finalizeExhaustedDurableTurnJob({
               turnId,
               retryCount: job.retryCount,

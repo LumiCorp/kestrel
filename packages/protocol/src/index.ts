@@ -14,6 +14,7 @@ export * from "./apps.js";
 export * from "./tooling.js";
 export * from "./approvals.js";
 export * from "./attachmentDeploymentCanary.js";
+export * from "./browserViewer.js";
 export { parseRunnerProjectAction } from "./projectActions.js";
 
 export const RUNNER_HEALTH_VERSION = "runner-health-v1" as const;

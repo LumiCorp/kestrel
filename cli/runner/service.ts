@@ -5,6 +5,7 @@ import {
   createHostedRunnerStoreFromEnv,
 } from "./HostedRunnerStore.js";
 import { createRunnerServiceServer } from "./RunnerService.js";
+import { createDurableSessionDescriber } from "./DurableSessionDescriber.js";
 
 async function main(): Promise<void> {
   const store = await createHostedRunnerStoreFromEnv({
@@ -24,6 +25,7 @@ async function main(): Promise<void> {
       ? {}
       : {
           runtimeFactory: createHostedRunnerRuntimeFactory(store.store),
+          sessionDescriber: createDurableSessionDescriber(store.store),
           runtimeStore: {
             ready: store.ready,
             probe: store.probe,

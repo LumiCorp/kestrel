@@ -109,6 +109,10 @@ const tuiPtyHelper = readFileSync(
   new URL("../ops/helpers/pty.ts", import.meta.url),
   "utf8",
 );
+const tuiPtyDriver = readFileSync(
+  new URL("../ops/helpers/pty_driver.py", import.meta.url),
+  "utf8",
+);
 const webCommandProof = readFileSync(
   new URL("../integration/web-command.test.ts", import.meta.url),
   "utf8",
@@ -265,8 +269,8 @@ test("runtime hermetic lane manifest is explicit, complete, and independently ru
   const assigned = Object.values(runtimeHermeticLaneManifest.lanes).flatMap(
     (definition) => definition.files,
   );
-  assert.equal(assigned.length, 357);
-  assert.equal(new Set(assigned).size, 357);
+  assert.equal(assigned.length, 391);
+  assert.equal(new Set(assigned).size, 391);
   assert.ok(
     runtimeHermeticLaneManifest.lanes["cli-command-mode"]?.files.includes(
       "tests/unit/approval-policy-pack-digest.test.ts",
@@ -590,6 +594,11 @@ test("portable validation harnesses do not enforce wall-clock correctness gates"
   assert.doesNotMatch(productBrowserProof, /deadline|Date\.now\(\)\s*\+\s*\d/u);
   assert.doesNotMatch(tuiJourneys, /timeoutSeconds|concurrency:\s*true/u);
   assert.doesNotMatch(tuiPtyHelper, /timeoutSeconds|startupTimeoutSeconds/u);
+  assert.match(tuiPtyDriver, /timeout_seconds=step\.get\("timeoutSeconds"\)/u);
+  assert.doesNotMatch(
+    tuiPtyDriver,
+    /timeout_seconds=step\.get\("timeoutSeconds",\s*[^)]/u,
+  );
   assert.doesNotMatch(
     webCommandProof,
     /--max-time|Timed out waiting|Date\.now\(\)\s*-\s*startedAt/u,

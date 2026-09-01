@@ -2,6 +2,7 @@ import {
   createRuntimeFailure,
   RuntimeFailure,
 } from "../../src/runtime/RuntimeFailure.js";
+import { microsoft365OperationDescriptor } from "../../src/apps/microsoft365.js";
 import type {
   SharedToolContext,
   SharedToolDefinition,
@@ -16,6 +17,7 @@ type Microsoft365Operation =
   | "mail.send"
   | "calendar.list"
   | "chats.list"
+  | "chat.messages.list"
   | "chat.send"
   | "sites.search";
 
@@ -28,6 +30,21 @@ function createMicrosoft365Tool(options: {
   inputSchema: Record<string, unknown>;
   readOnly: boolean;
 }): SharedToolModule {
+  const canonicalOperation = options.operation === "sites.search"
+    ? undefined
+    : microsoft365OperationDescriptor(options.operation);
+  const readOnly = canonicalOperation === undefined
+    ? options.readOnly
+    : canonicalOperation.sideEffect === "read";
+  if (
+    canonicalOperation !== undefined &&
+    (options.name !== canonicalOperation.hostedToolName ||
+      options.readOnly !== readOnly)
+  ) {
+    throw new Error(
+      `Microsoft 365 tool '${options.name}' must match its canonical operation descriptor.`,
+    );
+  }
   const definition: SharedToolDefinition = {
     name: options.name,
     description: options.description,
@@ -36,14 +53,14 @@ function createMicrosoft365Tool(options: {
       freshnessClass: "live",
       latencyClass: "medium",
       costClass: "free",
-      executionClass: options.readOnly ? "read_only" : "external_side_effect",
-      ...(options.readOnly
+      executionClass: readOnly ? "read_only" : "external_side_effect",
+      ...(readOnly
         ? {}
         : { allowedInteractionModes: ["chat", "build"] as Array<"chat" | "build"> }),
       capabilityClasses: [`microsoft.${options.family}`, "network.call"],
       approvalCapabilities: [
         "network.call",
-        ...(options.readOnly ? [] : (["external.confirm"] as const)),
+        ...(readOnly ? [] : (["external.confirm"] as const)),
       ],
       suitability: {
         supportsAttribution: true,
@@ -70,7 +87,9 @@ function createMicrosoft365Tool(options: {
         invokeMicrosoft365(context, {
           operation: options.operation,
           input: parseObjectInput(options.name, input),
-          requiresApproval: !options.readOnly,
+          requiresApproval: !readOnly,
+          minimumApprovalMode:
+            canonicalOperation?.minimumApprovalMode ?? "auto",
           toolName: options.name,
         });
     },
@@ -133,16 +152,35 @@ export const kestrelOneMicrosoft365ListEventsTool = createMicrosoft365Tool({
 export const kestrelOneMicrosoft365ListChatsTool = createMicrosoft365Tool({
   name: "kestrel_one.microsoft_365_list_chats",
   displayName: "Microsoft 365 List Teams Chats",
-  description: "List the user's Teams chats, or list messages from one supplied chat ID.",
+  description: "List the connected user's Teams chats.",
   operation: "chats.list",
   family: "teams",
   readOnly: true,
   inputSchema: {
     type: "object",
     properties: {
-      chatId: { type: "string", minLength: 1, maxLength: 512 },
+      cursor: { type: "string", minLength: 1, maxLength: 4096 },
       maxResults: { type: "integer", minimum: 1, maximum: 50, default: 20 },
     },
+    additionalProperties: false,
+  },
+});
+
+export const kestrelOneMicrosoft365ListChatMessagesTool = createMicrosoft365Tool({
+  name: "kestrel_one.microsoft_365_list_chat_messages",
+  displayName: "Microsoft 365 List Teams Chat Messages",
+  description: "List messages from one selected Teams chat.",
+  operation: "chat.messages.list",
+  family: "teams",
+  readOnly: true,
+  inputSchema: {
+    type: "object",
+    properties: {
+      chatId: { type: "string", minLength: 1, maxLength: 512 },
+      cursor: { type: "string", minLength: 1, maxLength: 4096 },
+      maxResults: { type: "integer", minimum: 1, maximum: 50, default: 20 },
+    },
+    required: ["chatId"],
     additionalProperties: false,
   },
 });
@@ -189,6 +227,7 @@ async function invokeMicrosoft365(
     operation: Microsoft365Operation;
     input: Record<string, unknown>;
     requiresApproval: boolean;
+    minimumApprovalMode: "auto" | "ask";
     toolName: string;
   }
 ) {
@@ -199,6 +238,7 @@ async function invokeMicrosoft365(
   const explicitApprovalMode =
     context.kestrelOne?.appApprovalModes?.[input.toolName];
   const approvalRequired =
+    input.minimumApprovalMode === "ask" ||
     explicitApprovalMode === "ask" ||
     (explicitApprovalMode === undefined && input.requiresApproval);
   const approvalId = approvalRequired

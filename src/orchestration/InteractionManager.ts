@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import {
+  RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION,
+  parseRunnerExternalApprovalBinding,
   parseRunnerStructuredReviewInteractionV1,
-  parseRunnerExternalApprovalBindingV1,
+  parseRunnerInteractionRequest,
   serializeCanonicalApprovalPayload,
 } from "@kestrel-agents/protocol";
 import {
@@ -13,6 +15,8 @@ import {
 } from "../runtime/RuntimeFailure.js";
 import { parseEvaluationReviewBindingV1 } from "../kestrel/contracts/evaluation.js";
 import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
+import type { RuntimeInteractionRequest } from "../kestrel/contracts/execution.js";
+import { parseDurablePreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
 import type { HostedMcpContext } from "../mcp/hosted-contracts.js";
 import type {
   ApprovalGrantRecord,
@@ -30,6 +34,7 @@ export class InteractionManager {
 
   async syncWaitState(input: {
     threadId: string;
+    sessionId?: string | undefined;
     turnId?: string | undefined;
     runId?: string | undefined;
     actor?: RuntimeTurnActor | undefined;
@@ -41,23 +46,7 @@ export class InteractionManager {
           eventType?: string | undefined;
           metadata?: Record<string, unknown> | undefined;
           interaction?:
-            | {
-                version?: string | undefined;
-                requestId?: string | undefined;
-                kind?: string | undefined;
-                eventType?: string | undefined;
-                prompt?: string | undefined;
-                inputSchema?: Record<string, unknown> | undefined;
-                metadata?: Record<string, unknown> | undefined;
-                approval?:
-                  | {
-                      toolCallId: string;
-                      toolName: string;
-                      input?: unknown;
-                      presentation?: unknown;
-                    }
-                  | undefined;
-              }
+            | RuntimeInteractionRequest
             | undefined;
         }
       | undefined;
@@ -102,6 +91,7 @@ export class InteractionManager {
         ...(input.runId !== undefined ? { runId: input.runId } : {}),
         metadata: {
           ...(existing.metadata ?? {}),
+          ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
           ...(blockedToolScope === undefined ? {} : { blockedToolScope }),
           ...(input.turnId !== undefined ? { conversationTurnId: input.turnId } : {}),
           ...(input.runId !== undefined ? { conversationRunId: input.runId } : {}),
@@ -131,19 +121,21 @@ export class InteractionManager {
         : typeof metadata.prompt === "string"
           ? { prompt: metadata.prompt }
           : {}),
-      ...(interaction !== undefined &&
-        interaction.version === "v1" &&
-        typeof interaction.requestId === "string" &&
-        interaction.requestId.trim().length > 0 &&
-        interaction.kind === requestKind &&
-        interaction.eventType === eventType &&
-        typeof interaction.prompt === "string"
-        ? {
-            interaction: structuredClone(interaction) as InteractionRequestRecord["interaction"],
-          }
-        : {}),
+      ...(interaction === undefined ||
+        typeof interaction.requestId !== "string" ||
+        interaction.requestId.trim().length === 0 ||
+        interaction.kind !== requestKind ||
+        interaction.eventType !== eventType
+        ? {}
+        : {
+            interaction: parseRunnerInteractionRequest(
+              interaction,
+              eventType,
+            ) as InteractionRequestRecord["interaction"],
+          }),
       metadata: {
         ...metadata,
+        ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
         ...(blockedToolScope === undefined ? {} : { blockedToolScope }),
         ...(input.turnId !== undefined ? { conversationTurnId: input.turnId } : {}),
         ...(input.runId !== undefined ? { conversationRunId: input.runId } : {}),
@@ -201,12 +193,25 @@ export class InteractionManager {
       request.kind === "approval" && input.approve !== false
         ? readExternalApprovalBinding(request.metadata)
         : undefined;
-    if (request.kind === "approval" && input.approve !== false && binding !== undefined) {
-      validateExecutableApproval({
-        request,
-        binding,
-        actor,
-      });
+    if (request.kind === "approval" && input.approve !== false) {
+      if (
+        request.metadata?.preparedToolCall !== undefined &&
+        binding === undefined
+      ) {
+        throw createRuntimeFailure(
+          "EXTERNAL_APPROVAL_BINDING_INVALID",
+          "The hosted approval is missing its prepared invocation binding.",
+          {
+            classification: "policy",
+            recoverable: false,
+            effectStatus: "not_started",
+            retryable: false,
+          },
+        );
+      }
+      if (binding !== undefined) {
+        validateExecutableApproval({ request, binding, actor });
+      }
     }
 
     const resolvedRequest: InteractionRequestRecord = {
@@ -229,7 +234,8 @@ export class InteractionManager {
       request.kind !== "approval" ||
       input.approve === false ||
       request.eventType === "runtime.assembly_change" ||
-      binding === undefined
+      binding === undefined ||
+      binding.toolClass !== "external_side_effect"
     ) {
       return { request: resolvedRequest };
     }
@@ -387,11 +393,11 @@ function readExternalApprovalBinding(
     return;
   }
   try {
-    return parseRunnerExternalApprovalBindingV1(value);
+    return parseRunnerExternalApprovalBinding(value);
   } catch (error) {
     throw createRuntimeFailure(
       "EXTERNAL_APPROVAL_BINDING_INVALID",
-      "The pending external-effect approval binding is invalid.",
+      "The pending tool approval binding is invalid.",
       {
         classification: "policy",
         recoverable: false,
@@ -434,13 +440,13 @@ function normalizeTrustedActor(
 
 function validateExecutableApproval(input: {
   request: InteractionRequestRecord;
-  binding: ReturnType<typeof parseRunnerExternalApprovalBindingV1>;
+  binding: ReturnType<typeof parseRunnerExternalApprovalBinding>;
   actor: RuntimeTurnActor | undefined;
 }): void {
   if (input.actor === undefined) {
     throw createRuntimeFailure(
       "APPROVAL_ACTOR_REQUIRED",
-      "External-effect approval requires authenticated actor metadata.",
+      "Tool approval requires authenticated actor metadata.",
       {
         classification: "policy",
         recoverable: false,
@@ -449,15 +455,42 @@ function validateExecutableApproval(input: {
       },
     );
   }
-  if (
-    input.binding.threadId !== input.request.threadId ||
-    input.request.runId === undefined ||
-    input.binding.runId !== input.request.runId ||
-    input.binding.approvalId !== input.request.metadata?.approvalId
-  ) {
+  let identityMatches: boolean;
+  if (input.binding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION) {
+    try {
+      const prepared = parseDurablePreparedToolCallV1(
+        input.request.metadata?.preparedToolCall,
+      );
+      const preparedBinding = prepared.approval?.externalApprovalBinding;
+      const hostedSessionId = readNonEmptyString(
+        input.request.metadata?.sessionId,
+      );
+      identityMatches =
+        hostedSessionId !== undefined &&
+        input.request.runId !== undefined &&
+        input.binding.threadId === hostedSessionId &&
+        prepared.sessionId === hostedSessionId &&
+        prepared.runId === input.request.runId &&
+        input.binding.approvalId === input.request.metadata?.approvalId &&
+        input.binding.preparedInvocationId === input.binding.approvalId &&
+        prepared.callId === input.binding.preparedInvocationId &&
+        preparedBinding !== undefined &&
+        serializeCanonicalApprovalPayload(preparedBinding) ===
+          serializeCanonicalApprovalPayload(input.binding);
+    } catch {
+      identityMatches = false;
+    }
+  } else {
+    identityMatches =
+      input.binding.threadId === input.request.threadId &&
+      input.request.runId !== undefined &&
+      input.binding.runId === input.request.runId &&
+      input.binding.approvalId === input.request.metadata?.approvalId;
+  }
+  if (!identityMatches) {
     throw createRuntimeFailure(
       "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
-      "External-effect approval does not match the pending request identity.",
+      "Tool approval does not match the pending request identity.",
       {
         classification: "policy",
         recoverable: false,
@@ -479,18 +512,20 @@ function validateExecutableApproval(input: {
   }
   if (
     pendingAction !== input.binding.actionKey ||
-    pendingPayloadHash !== input.binding.payloadHash
+    pendingPayloadHash !== input.binding.payloadHash ||
+    (input.binding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+      input.request.metadata?.toolClass !== input.binding.toolClass)
   ) {
     throw createRuntimeFailure(
       "EXTERNAL_APPROVAL_ACTION_MISMATCH",
-      "External-effect approval does not match the exact pending action and payload.",
+      "Tool approval does not match the exact pending action and payload.",
       { classification: "policy", recoverable: false, effectStatus: "not_started", retryable: false },
     );
   }
   if (Date.parse(input.binding.expiresAt) <= Date.now()) {
     throw createRuntimeFailure(
       "EXTERNAL_APPROVAL_EXPIRED",
-      "External-effect approval expired before the decision was recorded.",
+      "Tool approval expired before the decision was recorded.",
       {
         classification: "policy",
         recoverable: true,
@@ -507,11 +542,15 @@ function validateExecutableApproval(input: {
     expectedActor === undefined ||
     expectedActor.actorType !== input.actor.actorType ||
     expectedActor.actorId !== input.actor.actorId ||
-    expectedActor.tenantId !== input.actor.tenantId
+    expectedActor.tenantId !== input.actor.tenantId ||
+    (input.binding.version === RUNNER_EXTERNAL_APPROVAL_BINDING_V2_VERSION &&
+      (input.binding.requestingActor.actorType !== input.actor.actorType ||
+        input.binding.requestingActor.actorId !== input.actor.actorId ||
+        input.binding.requestingActor.tenantId !== input.actor.tenantId))
   ) {
     throw createRuntimeFailure(
       "APPROVAL_ACTOR_MISMATCH",
-      "External-effect approval must be decided by the authenticated actor that requested it.",
+      "Tool approval must be decided by the authenticated actor that requested it.",
       { classification: "policy", recoverable: false, effectStatus: "not_started", retryable: false },
     );
   }

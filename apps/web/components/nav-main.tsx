@@ -4,7 +4,9 @@ import {
   BookOpen,
   Bot,
   CalendarClock,
+  GitBranch,
   LayoutDashboard,
+  MailPlus,
   PlugZap,
 } from "lucide-react";
 import Link from "next/link";
@@ -39,6 +41,20 @@ const modeItems = [
     icon: CalendarClock,
     isActive: (pathname: string) =>
       pathname === "/schedules" || pathname.startsWith("/schedules/"),
+  },
+  {
+    title: "Workflows",
+    url: "/workflows",
+    icon: GitBranch,
+    isActive: (pathname: string) =>
+      pathname === "/workflows" || pathname.startsWith("/workflows/"),
+  },
+  {
+    title: "Triggers",
+    url: "/triggers",
+    icon: MailPlus,
+    isActive: (pathname: string) =>
+      pathname === "/triggers" || pathname.startsWith("/triggers/"),
   },
   {
     title: "Knowledge",

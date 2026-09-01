@@ -63,6 +63,7 @@ export function buildModelToolAliasRegistry(
     controlToolNames?: readonly string[] | undefined;
     finalizeStatuses?: readonly KestrelAgentFinalizeStatus[] | undefined;
     cannotSatisfyReasonCodes?: readonly KestrelAgentCannotSatisfyReasonCode[] | undefined;
+    modeSwitchRequiredCapabilities?: readonly string[] | undefined;
   } = {},
 ): ModelToolAliasRegistry {
   return buildKestrelAgentToolSurface({
@@ -70,6 +71,7 @@ export function buildModelToolAliasRegistry(
     controlToolNames: options.controlToolNames,
     finalizeStatuses: options.finalizeStatuses,
     cannotSatisfyReasonCodes: options.cannotSatisfyReasonCodes,
+    modeSwitchRequiredCapabilities: options.modeSwitchRequiredCapabilities,
   });
 }
 
@@ -367,6 +369,11 @@ function normalizeControlToolCall(input: {
   }
   if (input.canonicalName === "kestrel.request_mode_switch") {
     const requiredToolClass = asString(input.input.requiredToolClass);
+    const requiredCapabilities = Array.isArray(input.input.requiredCapabilities)
+      ? [...new Set(input.input.requiredCapabilities.map(asString).filter((value): value is string =>
+          value !== undefined && value.trim().length > 0
+        ).map((value) => value.trim()))]
+      : [];
     const reason = asString(input.input.reason)?.trim();
     if (
       requiredToolClass !== "planning_write" &&
@@ -378,7 +385,20 @@ function normalizeControlToolCall(input: {
     if (reason === undefined || reason.length === 0) {
       throw invalidControlInput(input, "kestrel.request_mode_switch requires a non-empty reason.", "reason");
     }
-    return { kind: "request_mode_switch", requiredToolClass, reason };
+    if (requiredCapabilities.length === 0) {
+      throw invalidControlInput(input, "kestrel.request_mode_switch requires at least one non-empty required capability.", "requiredCapabilities");
+    }
+    const advertisedCapabilities = readAdvertisedStringArrayItemEnum(
+      input.inputSchema,
+      "requiredCapabilities",
+    );
+    if (
+      advertisedCapabilities !== undefined &&
+      requiredCapabilities.some((capability) => advertisedCapabilities.includes(capability) === false)
+    ) {
+      throw invalidControlInput(input, "kestrel.request_mode_switch requiredCapabilities contains a capability outside the advertised mode-hidden surface.", "requiredCapabilities");
+    }
+    return { kind: "request_mode_switch", requiredToolClass, requiredCapabilities, reason };
   }
   throw new ModelToolCallActionError(`Unsupported control tool '${input.canonicalName}'.`, {
     reason: "unsupported_control_tool",
@@ -394,6 +414,19 @@ function readAdvertisedStringEnum(
   const property = asRecord(properties?.[propertyName]);
   const values = Array.isArray(property?.enum)
     ? property.enum.map((item) => asString(item)).filter((item): item is string => item !== undefined)
+    : undefined;
+  return values !== undefined && values.length > 0 ? values : undefined;
+}
+
+function readAdvertisedStringArrayItemEnum(
+  inputSchema: Record<string, unknown>,
+  propertyName: string,
+): string[] | undefined {
+  const properties = asRecord(inputSchema.properties);
+  const property = asRecord(properties?.[propertyName]);
+  const items = asRecord(property?.items);
+  const values = Array.isArray(items?.enum)
+    ? items.enum.map((item) => asString(item)).filter((item): item is string => item !== undefined)
     : undefined;
   return values !== undefined && values.length > 0 ? values : undefined;
 }

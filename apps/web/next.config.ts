@@ -75,6 +75,14 @@ const nextConfig: NextConfig = {
   ],
 
   webpack(config, { isServer }) {
+    // The shared model adapters are authored as NodeNext TypeScript and use
+    // runtime `.js` specifiers. During the web build, resolve those source
+    // specifiers back to their TypeScript files instead of requiring emitted
+    // JavaScript alongside the monorepo source.
+    config.resolve.extensionAlias = {
+      ...(config.resolve.extensionAlias ?? {}),
+      ".js": [".ts", ".tsx", ".js"],
+    };
     if (isServer) {
       // Next's serverExternalPackages matcher only recognizes resolved paths
       // below node_modules. pnpm resolves this workspace dependency to its

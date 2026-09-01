@@ -34,7 +34,6 @@ class RuntimeTurnCoordinatorService extends BaseRuntimeTurnCoordinatorService {
     });
   }
 }
-
 test("RuntimeTurnCoordinatorService fails closed without boundary decision persistence", async () => {
   const coordinator = new BaseRuntimeTurnCoordinatorService({
     defaults: {
@@ -392,11 +391,18 @@ test("RuntimeTurnCoordinatorService leaves unsupported waits waiting", async () 
       directRuns += 1;
       return output("WAITING", {
         waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
+          kind: "user",
+          eventType: "observer.timeout",
+          interaction: {
+            version: "v1",
+            requestId: "observer-timeout-request",
+            kind: "user_input",
+            eventType: "observer.timeout",
+            prompt: "Resume this run?",
+          },
           metadata: {
             reason: "observer_timeout_resume",
-            prompt: "Approve resuming this run?",
+            prompt: "Resume this run?",
           },
         },
       });
@@ -572,10 +578,17 @@ test("RuntimeTurnCoordinatorService builds source-owned operator affordance by d
         thread: threadRecord(input.threadId),
         output: output("WAITING", {
           waitFor: {
-            kind: "approval",
-            eventType: "operator.approval",
+            kind: "user",
+            eventType: "operator.input",
+            interaction: {
+              version: "v1",
+              requestId: "operator-input-request",
+              kind: "user_input",
+              eventType: "operator.input",
+              prompt: "Provide checkpoint input.",
+            },
             metadata: {
-              prompt: "Approve the checkpoint?",
+              prompt: "Provide checkpoint input.",
             },
           },
         }),
@@ -622,7 +635,7 @@ test("RuntimeTurnCoordinatorService builds source-owned operator affordance by d
   };
   assert.equal(affordance.interactionMode, "build");
   assert.equal(affordance.actSubmode, "safe");
-  assert.equal(affordance.wait?.eventType, "operator.approval");
+  assert.equal(affordance.wait?.eventType, "operator.input");
   assert.equal(affordance.assembly?.threadId, "thread-main");
 });
 

@@ -7,6 +7,8 @@ import { resolveDesktopPackagerConfig } from "../src/packageConfig.js";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const packagePreflightPath = path.join(testDir, "..", "..", "..", "scripts", "check-desktop-package.ts");
+const releaseCheckPath = path.join(testDir, "..", "..", "..", "scripts", "check-desktop-release.ts");
+const packageScriptPath = path.join(testDir, "..", "..", "..", "scripts", "package-desktop.ts");
 const desktopPackagePath = path.join(testDir, "..", "package.json");
 
 test("resolveDesktopPackagerConfig defaults to the host platform and desktop staging paths", () => {
@@ -33,6 +35,30 @@ test("resolveDesktopPackagerConfig defaults to the host platform and desktop sta
   );
   assert.equal(config.stageDir, path.join(repoRoot, "apps", "desktop", ".desktop-package"));
   assert.equal(config.outDir, path.join(repoRoot, "apps", "desktop", "out"));
+});
+
+test("Desktop packaging verifies Browser assets and release signatures without runtime discovery", async () => {
+  const [preflight, releaseCheck, packageScript] = await Promise.all([
+    readFile(packagePreflightPath, "utf8"),
+    readFile(releaseCheckPath, "utf8"),
+    readFile(packageScriptPath, "utf8"),
+  ]);
+
+  assert.match(preflight, /verifyDesktopBrowserRuntimeDirectory/u);
+  assert.match(preflight, /assertArm64\(browserExecutables\.engine\)/u);
+  assert.match(preflight, /assertArm64\(browserExecutables\.chrome\)/u);
+  assert.match(packageScript, /prepareDesktopBrowserRuntimeAssets\(repoRoot\)/u);
+  assert.doesNotMatch(
+    packageScript,
+    /agent-browser (?:install|upgrade|doctor)/u,
+  );
+  assert.match(releaseCheck, /mode: "signed-release"/u);
+  assert.match(
+    releaseCheck,
+    /createDarwinDesktopBrowserRuntimeSignatureVerifier/u,
+  );
+  assert.match(releaseCheck, /stapler", "validate/u);
+  assert.match(releaseCheck, /spctl/u);
 });
 
 test("resolveDesktopPackagerConfig honors explicit platform and arch overrides", () => {

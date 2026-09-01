@@ -9,6 +9,7 @@ import {
   RUNNER_EVENT_CONTRACT_VERSION,
   RUNNER_EVENT_TYPES,
   RUNNER_JOB_STREAM_EVENT_TYPES,
+  WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
   RunnerProtocolContractError,
   RUNNER_STREAMING_COMMAND_TYPES,
   isRunnerEventAllowedForCommand,
@@ -60,6 +61,169 @@ test("run.start accepts the autonomous turn marker", () => {
   if (parsed.type === "run.start") {
     assert.equal(parsed.payload.turn.noninteractive, true);
   }
+});
+
+test("run.start accepts only canonical per-step workflow authority", () => {
+  const workflowRunAuthority = {
+    version: "runner_workflow_run_authority_v2",
+    organizationId: "org-1",
+    environmentId: "env-1",
+    projectId: "project-1",
+    workflowId: "workflow-1",
+    workflowVersionId: "version-1",
+    workflowRunId: "run-1",
+    activationActorId: "actor-1",
+    manifestDigest: "sha256:manifest",
+    manifest: {
+      version: "workflow_capability_manifest_v2",
+      nativeTools: [],
+      actions: [],
+    },
+    activeStep: { kind: "kestrel", nodeId: "research" },
+  };
+  const parsed = parseRunnerCommandV2({
+    id: "command-workflow",
+    type: "run.start",
+    payload: { profileId: "kestrel", turn: { ...turn, noninteractive: true, workflowRunAuthority } },
+  });
+  assert.equal(parsed.type, "run.start");
+  assert.throws(() => parseRunnerCommandV2({
+    id: "command-workflow-legacy",
+    type: "run.start",
+    payload: {
+      profileId: "kestrel",
+      turn: {
+        ...turn,
+        noninteractive: true,
+        workflowRunAuthority: { ...workflowRunAuthority, version: "runner_workflow_run_authority_v1" },
+      },
+    },
+  }));
+  assert.throws(() => parseRunnerCommandV2({
+    id: "command-workflow-unknown-action",
+    type: "run.start",
+    payload: {
+      profileId: "kestrel",
+      turn: {
+        ...turn,
+        noninteractive: true,
+        workflowRunAuthority: {
+          ...workflowRunAuthority,
+          activeStep: { kind: "action", nodeId: "not-activated", resolvedInput: {} },
+        },
+      },
+    },
+  }));
+  const { activeStep: _activeStep, ...incompleteAuthority } = workflowRunAuthority;
+  assert.throws(() => parseRunnerCommandV2({
+    id: "command-workflow-incomplete",
+    type: "run.start",
+    payload: { profileId: "kestrel", turn: { ...turn, noninteractive: true, workflowRunAuthority: incompleteAuthority } },
+  }));
+});
+
+test("run.start carries only strict hosted approval decisions", () => {
+  for (const decision of [
+    "decline",
+    "approve_once",
+    "remember_approval",
+  ] as const) {
+    const parsed = parseRunnerCommandV2({
+      id: `command-${decision}`,
+      type: "run.start",
+      payload: {
+        profileId: "kestrel",
+        turn: {
+          ...turn,
+          eventType: "user.approval",
+          resumeRequestId: "approval-request",
+          decision,
+          decidingActor: {
+            actorType: "end_user",
+            actorId: "user-1",
+            tenantId: "org-1",
+          },
+        },
+      },
+    });
+    assert.equal(
+      parsed.type === "run.start" ? parsed.payload.turn.decision : undefined,
+      decision,
+    );
+    assert.deepEqual(
+      parsed.type === "run.start" ? parsed.payload.turn.decidingActor : undefined,
+      { actorType: "end_user", actorId: "user-1", tenantId: "org-1" },
+    );
+  }
+  assert.throws(() => parseRunnerCommandV2({
+    id: "command-invalid-decision",
+    type: "run.start",
+    payload: {
+      profileId: "kestrel",
+      turn: {
+        ...turn,
+        eventType: "user.approval",
+        resumeRequestId: "approval-request",
+        decision: "approve",
+      },
+    },
+  }), /decision/u);
+});
+
+test("run.start accepts cleanup only for the exact declined approval request", () => {
+  const cleanup = {
+    version: "runner_prepared_approval_cleanup_v1" as const,
+    organizationId: "org-1",
+    threadId: "session-1",
+    turnId: "turn-1",
+    interactionId: "interaction-1",
+    requestId: "approval-request",
+    failureCode: "EXTERNAL_APPROVAL_EXPIRED" as const,
+    failureMessage: "Expired.",
+  };
+  const command = {
+    id: "command-cleanup",
+    type: "run.start" as const,
+    payload: {
+      profileId: "kestrel",
+      turn: {
+        ...turn,
+        eventType: "user.approval",
+        resumeRequestId: cleanup.requestId,
+        decision: "decline" as const,
+        decidingActor: {
+          actorType: "end_user" as const,
+          actorId: "user-1",
+          tenantId: "org-1",
+        },
+        preparedApprovalCleanup: cleanup,
+      },
+    },
+  };
+  assert.deepEqual(
+    parseRunnerCommandV2(command).payload.turn.preparedApprovalCleanup,
+    cleanup,
+  );
+  assert.throws(
+    () => parseRunnerCommandV2({
+      ...command,
+      payload: {
+        ...command.payload,
+        turn: { ...command.payload.turn, decision: "approve_once" },
+      },
+    }),
+    /preparedApprovalCleanup requires the exact declined approval request/u,
+  );
+  assert.throws(
+    () => parseRunnerCommandV2({
+      ...command,
+      payload: {
+        ...command.payload,
+        turn: { ...command.payload.turn, resumeRequestId: "other-request" },
+      },
+    }),
+    /preparedApprovalCleanup requires the exact declined approval request/u,
+  );
 });
 
 test("execution protocol v4 accepts canonical attachments and rejects v3 payloads", () => {
@@ -381,6 +545,7 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   "profile.get": { profileId: "kestrel" },
   "execution-profile.resolve": {
     environmentPresetId: "workspace_hosted",
+    exactToolNames: ["exec_command"],
     managedConfiguration: {
       modelProvider: "openrouter",
       model: "z-ai/glm-5.2",
@@ -656,6 +821,29 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
       id: `kestrel:workspace_hosted:${"a".repeat(64)}`,
       agentProfileId: "kestrel",
     },
+    exactToolDecisions: {
+      exec_command: {
+        version: "effective_tool_decision_v1",
+        available: true,
+        availabilityReason: "available",
+        approvalDisposition: {
+          mode: "ask",
+          reasonCode: "environment_policy",
+          authority: {
+            kind: "hosted_app_policy",
+            revision: "authority-v1",
+          },
+        },
+        rememberApprovalEligible: true,
+        authorityRevision: "authority-v1",
+        evidence: {
+          interactionMode: "build",
+          toolClass: "sandboxed_only",
+          requiredCapabilities: ["shell.exec", "external.confirm"],
+          actorAccess: true,
+        },
+      },
+    },
   },
   "job.started": {
     sessionId: "session-1",
@@ -901,6 +1089,96 @@ test("canonical execution profile contracts accept isolated local presets", () =
       environmentPresetId,
     );
   }
+});
+
+test("canonical execution profile contracts validate exact-tool preflight fields", () => {
+  const command = parseRunnerCommandV2({
+    id: "command:exact-tools",
+    type: "execution-profile.resolve",
+    payload: {
+      environmentPresetId: "workspace_hosted",
+      exactToolNames: ["exec_command"],
+    },
+  });
+  assert.deepEqual(command.payload.exactToolNames, ["exec_command"]);
+
+  assert.throws(
+    () => parseRunnerCommandV2({
+      id: "command:duplicate-exact-tools",
+      type: "execution-profile.resolve",
+      payload: {
+        environmentPresetId: "workspace_hosted",
+        exactToolNames: ["exec_command", "exec_command"],
+      },
+    }),
+    /exactToolNames must not contain duplicates/u,
+  );
+
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event:invalid-exact-tool-decision",
+      type: "execution-profile.resolved",
+      ts: "2026-07-13T12:00:00.000Z",
+      payload: {
+        ...eventPayloads["execution-profile.resolved"],
+        exactToolDecisions: {
+          exec_command: {
+            ...(eventPayloads["execution-profile.resolved"]!
+              .exactToolDecisions as Record<string, Record<string, unknown>>)
+              .exec_command,
+            evidence: {
+              interactionMode: "build",
+              toolClass: "sandboxed_only",
+              requiredCapabilities: ["shell.exec"],
+            },
+          },
+        },
+      },
+    }),
+    /evidence\.actorAccess must be a boolean/u,
+  );
+});
+
+test("profile events carry an explicit preset-4 producer protocol marker", () => {
+  const event = parseRunnerEventV2({
+    id: "event:workspace-hosted-v4",
+    type: "execution-profile.resolved",
+    ts: "2026-08-26T12:00:00.000Z",
+    payload: {
+      ...eventPayloads["execution-profile.resolved"],
+      environmentPreset: {
+        id: "workspace_hosted",
+        version: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+      },
+      hostedApprovalProducerProtocol: "v4",
+      resolvedProfile: {
+        ...(eventPayloads["execution-profile.resolved"]!
+          .resolvedProfile as Record<string, unknown>),
+        approvalPolicyPackId: "hosted_workspace",
+      },
+    },
+  });
+  assert.equal(event.type, "execution-profile.resolved");
+  assert.equal(
+    event.payload.environmentPreset.version,
+    WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+  );
+  assert.equal(event.payload.hostedApprovalProducerProtocol, "v4");
+});
+
+test("hosted producer protocol markers reject unknown release modes", () => {
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event:workspace-hosted-unknown-producer",
+      type: "execution-profile.resolved",
+      ts: "2026-08-26T12:00:00.000Z",
+      payload: {
+        ...eventPayloads["execution-profile.resolved"],
+        hostedApprovalProducerProtocol: "automatic",
+      },
+    }),
+    /hostedApprovalProducerProtocol must be one of 'v4'/u,
+  );
 });
 
 test("canonical command parser rejects unknown and malformed payloads", () => {
@@ -1438,6 +1716,53 @@ test("canonical tool presentation validates citation and Artifact identity", () 
   );
 });
 
+test("terminal v2 tool events carry exact execution outcome evidence", () => {
+  const event = parseRunnerEventV2({
+    id: "event-tool-outcome-v2",
+    type: "run.tool.completed",
+    ts: "2026-07-15T12:00:00.000Z",
+    runId: "run-1",
+    sessionId: "session-1",
+    payload: {
+      update: {
+        ...toolUpdate("completed"),
+        version: "v2",
+        toolCallId: "call-1",
+        toolName: "code.execute",
+        activation: exactResultActivation,
+        outcome: exactLoadedResult.outcome,
+      },
+    },
+  });
+  assert.equal(event.type, "run.tool.completed");
+  assert.deepEqual(event.payload.update, {
+    ...toolUpdate("completed"),
+    version: "v2",
+    toolCallId: "call-1",
+    toolName: "code.execute",
+    activation: exactResultActivation,
+    outcome: exactLoadedResult.outcome,
+  });
+
+  assert.throws(
+    () =>
+      parseRunnerEventV2({
+        id: "event-tool-outcome-missing",
+        type: "run.tool.completed",
+        ts: "2026-07-15T12:00:00.000Z",
+        payload: {
+          update: {
+            ...toolUpdate("completed"),
+            version: "v2",
+            toolName: "code.execute",
+            activation: exactResultActivation,
+          },
+        },
+      }),
+    /outcome is required/u,
+  );
+});
+
 test("canonical event parser accepts every registered discriminant", () => {
   for (const type of RUNNER_EVENT_TYPES) {
     const parsed = parseRunnerEventV2({
@@ -1529,6 +1854,98 @@ test("canonical event parser normalizes a blank optional session updatedAt", () 
   });
   assert.equal(parsed.type, "session.described");
   assert.equal("updatedAt" in parsed.payload, false);
+});
+
+test("canonical event parser validates exact session assembly environment identity", () => {
+  const parsed = parseRunnerEventV2({
+    id: "event-session-environment",
+    type: "session.described",
+    ts: "2026-07-13T12:00:00.000Z",
+    payload: {
+      sessionId: "session-1",
+      version: 1,
+      activeAssembly: {
+        mode: "explicit",
+        environmentPresetId: "cli_dev_local",
+      },
+    },
+  });
+  assert.equal(
+    parsed.type === "session.described"
+      ? parsed.payload.activeAssembly?.environmentPresetId
+      : undefined,
+    "cli_dev_local",
+  );
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event-session-invalid-environment",
+      type: "session.described",
+      ts: "2026-07-13T12:00:00.000Z",
+      payload: {
+        sessionId: "session-1",
+        version: 1,
+        activeAssembly: {
+          mode: "explicit",
+          environmentPresetId: "cli_unknown",
+        },
+      },
+    }),
+    /activeAssembly\.environmentPresetId/u,
+  );
+});
+
+test("canonical events carry and validate authoritative mode resolutions", () => {
+  const modeResolution = {
+    version: "mode_resolution_v1" as const,
+    requestId: "request-mode-1",
+    runId: "run-mode-1",
+    interactionMode: "build" as const,
+    actSubmode: "safe" as const,
+    source: "explicit_command" as const,
+    disposition: "resume" as const,
+  };
+  const controlled = parseRunnerEventV2({
+    id: "event-mode-controlled",
+    type: "operator.controlled",
+    ts: "2026-07-13T12:00:00.000Z",
+    runId: "run-mode-1",
+    payload: {
+      sessionId: "session-1",
+      threadId: "thread-main:session-1",
+      runId: "run-mode-1",
+      disposition: "accepted",
+      modeResolution,
+    },
+  });
+  assert.deepEqual(controlled.payload.modeResolution, modeResolution);
+
+  const described = parseRunnerEventV2({
+    id: "event-mode-described",
+    type: "session.described",
+    ts: "2026-07-13T12:00:00.000Z",
+    payload: {
+      sessionId: "session-1",
+      version: 2,
+      interactionMode: "build",
+      actSubmode: "safe",
+      modeResolution,
+    },
+  });
+  assert.equal(described.payload.interactionMode, "build");
+  assert.deepEqual(described.payload.modeResolution, modeResolution);
+
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event-mode-invalid",
+      type: "operator.controlled",
+      ts: "2026-07-13T12:00:00.000Z",
+      payload: {
+        threadId: "thread-main:session-1",
+        modeResolution: { ...modeResolution, requestId: "" },
+      },
+    }),
+    /modeResolution\.requestId/u,
+  );
 });
 
 test("canonical event parser normalizes terminal assistant text without changing payload data", () => {

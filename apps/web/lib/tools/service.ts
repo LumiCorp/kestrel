@@ -1,8 +1,10 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { resolvePlatformOAuthRegistration } from "@/lib/apps/platform-oauth-registrations";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { mapWithConcurrencyLimit } from "./concurrency";
 import { buildToolsOverview } from "./overview";
 import { getToolProviderDefinition, listToolProviders } from "./registry";
+import { BROWSER_SERVICE_PORT_VERSION } from "../../../../src/browser/contracts";
 import type {
   ResolvedToolCapability,
   ResolvedToolProvider,
@@ -183,45 +185,53 @@ const githubAdapter: ToolProviderAdapter = {
 
 const googleWorkspaceAdapter: ToolProviderAdapter = {
   async getConnectionStatus({ organizationId }) {
-    const connections = await knowledgeDb.query.userToolConnections.findMany({
+    const [connections, registration] = await Promise.all([
+      knowledgeDb.query.appConnections.findMany({
       where: (table, { and, eq, inArray }) =>
         and(
           eq(table.organizationId, organizationId),
-          eq(table.providerKey, "google_workspace"),
+          eq(table.appKey, "google_workspace"),
+          eq(table.ownerType, "personal"),
           inArray(table.status, ["connected", "degraded"]),
         ),
       columns: { status: true },
-    });
+      }),
+      resolvePlatformOAuthRegistration("google_workspace"),
+    ]);
     const connectedCount = connections.filter(
       (connection) => connection.status === "connected",
     ).length;
     const degradedCount = connections.length - connectedCount;
-    const configured = Boolean(
-      process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET,
-    );
+    const configured = registration.status === "ready";
     return {
       authSource: "oauth",
       status:
-        connectedCount > 0
+        !configured
+          ? "not_configured"
+          : connectedCount > 0
           ? "connected"
           : degradedCount > 0
             ? "degraded"
             : "not_configured",
       isReady: configured && connectedCount > 0,
       label:
-        connectedCount > 0
+        !configured
+          ? "Platform registration needs configuration"
+          : connectedCount > 0
           ? `${connectedCount} connected account${connectedCount === 1 ? "" : "s"}`
           : degradedCount > 0
             ? "Reconnect required"
             : configured
-              ? "Connect from a Project"
-              : "Missing credentials",
+              ? "Connect from Apps"
+              : "Platform registration needs configuration",
       lastError:
-        degradedCount > 0
+        !configured
+          ? "Google Workspace is not configured by a Platform Admin."
+          : degradedCount > 0
           ? `${degradedCount} Google account${degradedCount === 1 ? "" : "s"} require reconnection.`
           : configured
             ? null
-            : "Google OAuth credentials are not configured.",
+            : "Google Workspace is not configured by a Platform Admin.",
       metadata: { configured, connectedCount, degradedCount },
     };
   },
@@ -260,7 +270,23 @@ const kestrelEdgePreviewAdapter: ToolProviderAdapter = {
   },
 };
 
+const browserAdapter: ToolProviderAdapter = {
+  async getConnectionStatus() {
+    return createSystemConnection({
+      status: "not_configured",
+      isReady: false,
+      label: "Browser runtime unavailable",
+      lastError: "No conforming hosted BrowserServicePort is active.",
+      metadata: {
+        provider: "kestrel_browser",
+        contractVersion: BROWSER_SERVICE_PORT_VERSION,
+      },
+    });
+  },
+};
+
 const providerAdapters = new Map<ToolProviderKey, ToolProviderAdapter>([
+  ["built_in.browser", browserAdapter],
   ["built_in.previews", kestrelEdgePreviewAdapter],
   ["built_in.weather", builtInSystemAdapter],
   ["built_in.time", builtInSystemAdapter],

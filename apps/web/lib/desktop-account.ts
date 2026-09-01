@@ -5,6 +5,13 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import type { MobileMessagePart } from "@/lib/mobile/message-parts";
 import { getMobileV2ThreadSnapshot } from "@/lib/mobile/v2/snapshot";
 import { getThreadForUser } from "@/lib/threads/store";
+import {
+  BROWSER_QA_DOMAIN_AUTHORITY_VERSION,
+} from "../../../src/browser/domainAuthority.js";
+import {
+  hostedBrowserAgentId,
+  readHostedBrowserDomainAuthorityInput,
+} from "@/lib/apps/browser-domain-service";
 
 const AUTHORIZATION_CODE_TTL_MS = 5 * 60_000;
 const ACCESS_TOKEN_TTL_MS = 15 * 60_000;
@@ -164,7 +171,31 @@ export async function getDesktopAccountProjection(request: Request) {
               isNull(schema.projects.archivedAt),
             ),
           );
-  const projectIds = projectRows.map((project) => project.id);
+  const projects = await Promise.all(projectRows.map(async (project) => {
+    const browserAuthority = await readHostedBrowserDomainAuthorityInput({
+      organizationId: project.organizationId,
+      environmentId: project.environmentId,
+      projectId: project.id,
+      userId: user.id,
+      agentId: hostedBrowserAgentId(),
+      qa: {
+        version: BROWSER_QA_DOMAIN_AUTHORITY_VERSION,
+        revision: "desktop-account-projection",
+        target: null,
+      },
+    }).then(
+      (authority) => ({
+        environment: authority.environment,
+        project: authority.project,
+      }),
+      () => undefined,
+    );
+    return {
+      ...project,
+      ...(browserAuthority === undefined ? {} : { browserAuthority }),
+    };
+  }));
+  const projectIds = projects.map((project) => project.id);
   const threadRows =
     projectIds.length === 0
       ? []
@@ -186,7 +217,7 @@ export async function getDesktopAccountProjection(request: Request) {
     organizations: memberships.map(
       ({ memberId: _memberId, ...membership }) => membership,
     ),
-    projects: projectRows,
+    projects,
     threads: threadRows.map((thread) => ({
       ...thread,
       updatedAt: thread.updatedAt.toISOString(),

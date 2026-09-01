@@ -133,9 +133,17 @@ test("host-open failures are typed and redact host targets", async () => {
   );
 });
 
-test("desktop.host.open is limited to Chat and Build and requires no approval", () => {
+test("desktop.host.open is limited to Chat and Build and declares its external capability", () => {
   assert.deepEqual(desktopHostOpenTool.definition.capability?.allowedInteractionModes, ["chat", "build"]);
-  assert.deepEqual(desktopHostOpenTool.definition.capability?.approvalCapabilities, undefined);
+  assert.deepEqual(desktopHostOpenTool.definition.capability?.approvalCapabilities, ["external.confirm"]);
+  assert.match(
+    desktopHostOpenTool.definition.description,
+    /only after the start tool reports that the process is running/u,
+  );
+  assert.match(
+    desktopHostOpenTool.definition.description,
+    /never use it after a failed start/u,
+  );
 });
 
 test("Desktop Safari requests survive profile selection, catalog registration, and service dispatch", async () => {

@@ -8,6 +8,7 @@ import {
 import type { ModelPolicyV1 } from "../profile/modelPolicy.js";
 import type { ModelProviderId } from "../profile/runtimeProfile.js";
 import { getDesktopStandardAppConnection } from "./standardAppConnections.js";
+import { BROWSER_TOOL_NAMES } from "../browser/contracts.js";
 
 export const DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID = "desktop-default";
 export const DESKTOP_WEATHER_APP_ID = KESTREL_APP_IDS.WEATHER;
@@ -88,8 +89,17 @@ export function isDesktopBuiltInAppId(appId: string): appId is KestrelAppId {
   return isPublishedStandardAppId(normalized) && getKestrelStandardAppManifest(normalized)?.preinstalled === true;
 }
 
+export function isDesktopPersonalAppId(appId: string): appId is KestrelAppId {
+  const normalized = normalizeDesktopAppId(appId);
+  return isPublishedStandardAppId(normalized) && !isDesktopBuiltInAppId(normalized);
+}
+
 export function filterDesktopBuiltInAppIds(appIds: readonly string[]): KestrelAppId[] {
   return [...new Set(appIds.map(normalizeDesktopAppId).filter(isDesktopBuiltInAppId))].sort();
+}
+
+export function filterDesktopPersonalAppIds(appIds: readonly string[]): KestrelAppId[] {
+  return [...new Set(appIds.map(normalizeDesktopAppId).filter(isDesktopPersonalAppId))].sort();
 }
 
 export function desktopAppIdForServer(
@@ -131,6 +141,13 @@ const DESKTOP_APP_DEFINITIONS: readonly DesktopAppDefinition[] = Object.freeze([
     label: "Exchange Rates",
     description: "Current reference exchange rates for world currencies.",
     toolNames: Object.freeze(["free.exchange.rate"]) as unknown as string[],
+  }),
+  Object.freeze({
+    id: KESTREL_APP_IDS.BROWSER,
+    contractVersion: 1,
+    label: "Browser",
+    description: "Test applications and operate allowed public websites.",
+    toolNames: Object.freeze([...BROWSER_TOOL_NAMES]) as unknown as string[],
   }),
   Object.freeze({
     id: KESTREL_APP_IDS.TAVILY,

@@ -19,14 +19,15 @@ import {
   DEFAULT_INTERACTION_MODE,
   formatUserFacingModeLabel,
   isToolClassAllowed,
-  isToolEligibleForInteractionMode,
   needsPerCallApproval,
   normalizeInteractionMode,
   parseExecutionPolicyOverride,
   readBlockedApprovalCapability,
+  resolveEffectiveToolDecisionV1,
   type ActSubmode,
   type ExecutionPolicyOverride,
   type InteractionMode,
+  type ToolApprovalDispositionV1,
   type ToolExecutionClass,
 } from "../../../../src/mode/contracts.js";
 import { resolveBlockedResumeRequest } from "../blockedResume.js";
@@ -102,6 +103,7 @@ import {
   createReferenceReactWaitingForPatch,
   getAgentStateFromRuntimeState,
 } from "../state.js";
+import { readActiveModeSwitch } from "../modeSwitch.js";
 import { buildReferenceReactCommandBatchFromAction } from "../commandProcessor.js";
 import { isFilesystemInspectionToolName } from "../filesystemInspection.js";
 import {
@@ -140,6 +142,7 @@ import {
 import {
   classifyUserReplyIntent,
   isHighConfidenceContinuation,
+  readUserReplyIntent,
 } from "../../../../src/runtime/userReplyIntent.js";
 import { readActiveWaitState } from "../../../../src/runtime/waitState.js";
 import { readActiveSkillPackContext } from "../../../../src/runtime/agent-context/runtimeContext.js";
@@ -336,7 +339,13 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       ...(resumeRequest.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
     };
     const modeResolution = normalizeInteractionMode({
-      interactionMode: eventPayload.interactionMode ?? reactState.interactionMode,
+      interactionMode:
+        readActiveModeSwitch({
+          value: reactState.modeSwitch,
+          sourceEventId: ctx.event.id,
+        }) ??
+        eventPayload.interactionMode ??
+        reactState.interactionMode,
       actSubmode: eventPayload.actSubmode ?? reactState.actSubmode,
       defaultInteractionMode: DEFAULT_INTERACTION_MODE,
       defaultActSubmode: DEFAULT_ACT_SUBMODE,
@@ -344,6 +353,47 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
     const executionPolicy = parseExecutionPolicyOverride(
       eventPayload.executionPolicy ?? reactState.executionPolicy,
     );
+    const authoritativeModeResolution = readAuthoritativeModeResolution(eventPayload.modeResolution);
+    reactState = {
+      ...reactState,
+      interactionMode: modeResolution.interactionMode,
+      ...(modeResolution.actSubmode !== undefined
+        ? { actSubmode: modeResolution.actSubmode }
+        : { actSubmode: undefined }),
+      ...(executionPolicy !== undefined ? { executionPolicy } : {}),
+      ...(authoritativeModeResolution !== undefined
+        ? { latestModeResolution: authoritativeModeResolution }
+        : {}),
+    };
+    if (resumeRequest.modeDisposition === "clarify") {
+      const blockedWait = readActiveWaitState(reactState);
+      const blockedMetadata = asRecord(blockedWait?.metadata);
+      return toPlannerModeBlockedTransition({
+        stepIndex: ctx.stepIndex,
+        loopStepId: config.loopStepId,
+        execDispatchStepId: config.execDispatchStepId,
+        reactState,
+        goal,
+        interactionMode: modeResolution.interactionMode,
+        actSubmode: modeResolution.actSubmode,
+        requiredToolClass: readModeBlockedToolClass(blockedMetadata?.requiredToolClass),
+        requiredCapabilities: asArray(blockedMetadata?.requiredCapabilities)
+          .map(asString)
+          .filter((value): value is string => value !== undefined),
+        blockedActionKind: asString(blockedMetadata?.blockedActionKind) ?? "mode_switch_request",
+        requestReason: "I couldn't determine whether you approved the mode change, so the blocked action has not run.",
+      });
+    }
+    if (resumeRequest.modeDisposition === "decline") {
+      return toModeResolutionDeclinedTransition({
+        stepIndex: ctx.stepIndex,
+        loopStepId: config.loopStepId,
+        execDispatchStepId: config.execDispatchStepId,
+        reactState,
+        interactionMode: modeResolution.interactionMode,
+        requiredMode: asString(asRecord(readActiveWaitState(reactState)?.metadata)?.requiredMode),
+      });
+    }
     reactState = normalizeLegacyContinuationRuntimeState(reactState);
     const activeContinuation = normalizeRuntimeContinuationState(reactState.activeContinuation);
     if (isPendingRuntimeContinuationReply(reactState, ctx.event.type)) {
@@ -389,6 +439,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
           interactionMode: modeResolution.interactionMode,
           actSubmode: modeResolution.actSubmode,
           requiredToolClass: activeContinuation.requiredToolClass,
+          requiredCapabilities: activeContinuation.requiredCapabilities,
           blockedActionKind: "continuation_offer",
           blockedActionId: activeContinuation.sourceRunId,
           activeContinuation,
@@ -525,18 +576,19 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
           executionPolicy,
         });
     const noninteractive = isNoninteractiveExecutionContext(ctx.event.type, eventPayload);
+    const modeSwitchRequiredCapabilities = collectModeHiddenWorkspaceCapabilities({
+      allTools: deliberatorTools,
+      modeScopedTools: modeScopedDeliberatorTools,
+      capabilityManifest,
+      modeResolution,
+      executionPolicy,
+    });
     const availableModeControlToolNames = controlToolNamesForInteractionMode({
       interactionMode: modeResolution.interactionMode,
       eventType: ctx.event.type,
       eventPayload,
       executableWorkspaceToolsAvailable,
-      modeSwitchRequestAvailable: hasModeHiddenWorkspaceTool({
-        allTools: deliberatorTools,
-        modeScopedTools: modeScopedDeliberatorTools,
-        capabilityManifest,
-        modeResolution,
-        executionPolicy,
-      }),
+      modeSwitchRequestAvailable: modeSwitchRequiredCapabilities.length > 0,
     });
     const modeScopedControlToolNames = closeoutOnly
       ? ["kestrel.finalize"] as const
@@ -564,6 +616,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         controlToolNames: modeScopedControlToolNames,
         finalizeStatuses,
         cannotSatisfyReasonCodes,
+        modeSwitchRequiredCapabilities,
       },
     ).requestTools;
     contextRequest = await compactContextRequestIfNeeded({
@@ -605,6 +658,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       modeScopedControlToolNames,
       finalizeStatuses,
       cannotSatisfyReasonCodes,
+      modeSwitchRequiredCapabilities,
       economicsScopedDeliberatorTools.selection,
     );
     if (response.toolIntents.length === 0) {
@@ -616,6 +670,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
           controlToolNames: modeScopedControlToolNames,
           finalizeStatuses,
           cannotSatisfyReasonCodes,
+          modeSwitchRequiredCapabilities,
         }).requestTools.length,
       });
     }
@@ -640,6 +695,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       controlToolNames: modeScopedControlToolNames,
       finalizeStatuses,
       cannotSatisfyReasonCodes,
+      modeSwitchRequiredCapabilities,
     });
     while (attempt.ok === false) {
       const retryKind = readDeliberatorRetryKind(attempt.error);
@@ -722,6 +778,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         modeScopedControlToolNames,
         finalizeStatuses,
         cannotSatisfyReasonCodes,
+        modeSwitchRequiredCapabilities,
         economicsScopedDeliberatorTools.selection,
         assistantProgressRepairToolName,
       );
@@ -734,6 +791,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
             controlToolNames: modeScopedControlToolNames,
             finalizeStatuses,
             cannotSatisfyReasonCodes,
+            modeSwitchRequiredCapabilities,
           }).requestTools.length,
         });
       }
@@ -753,6 +811,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         controlToolNames: modeScopedControlToolNames,
         finalizeStatuses,
         cannotSatisfyReasonCodes,
+        modeSwitchRequiredCapabilities,
       });
     }
 
@@ -884,6 +943,7 @@ function resetTaskScopedStateForFreshUserMessageEpoch(input: {
     assistantText: null,
     finalOutput: undefined,
     finalized: undefined,
+    modeSwitch: undefined,
     activeTurnIntent: undefined,
     phase: undefined,
   } as ReferenceReactAgentState;
@@ -989,45 +1049,61 @@ function filterDeliberatorToolsForMode(input: {
   const toolAllowedInteractionModesByName = new Map(
     input.capabilityManifest.map((tool) => [tool.name, tool.allowedInteractionModes] as const),
   );
+  const toolApprovalDispositionByName = new Map(
+    input.capabilityManifest.map((tool) => [tool.name, tool.approvalDisposition] as const),
+  );
   return input.tools.filter((tool) =>
     toolClassByName.has(tool.name) &&
-    isToolEligibleForInteractionMode({
+    resolveEffectiveToolDecisionV1({
       interactionMode: input.modeResolution.interactionMode,
       actSubmode: input.modeResolution.actSubmode,
       toolClass: toolClassByName.get(tool.name) ?? "read_only",
       allowedInteractionModes: toolAllowedInteractionModesByName.get(tool.name),
       executionPolicy: input.executionPolicy,
       requiredCapabilities: toolApprovalCapabilitiesByName.get(tool.name),
-    })
+      approvalDisposition:
+        toolApprovalDispositionByName.get(tool.name) ?? {
+          mode: "auto",
+          reasonCode: "environment_policy",
+          authority: { kind: "runtime_policy", revision: "legacy-default:v1" },
+        },
+    }).available
   );
 }
 
-function hasModeHiddenWorkspaceTool(input: {
+function collectModeHiddenWorkspaceCapabilities(input: {
   allTools: ModelToolSpec[];
   modeScopedTools: ModelToolSpec[];
   capabilityManifest: ToolCapabilityManifestItem[];
   modeResolution: { interactionMode: InteractionMode; actSubmode?: ActSubmode | undefined };
   executionPolicy: ExecutionPolicyOverride | undefined;
-}): boolean {
+}): string[] {
   const configuredByName = new Map(input.capabilityManifest.map((tool) => [tool.name, tool] as const));
   const visibleNames = new Set(input.modeScopedTools.map((tool) => tool.name));
-  return input.allTools.some((tool) => {
+  const capabilities = new Set<string>();
+  for (const tool of input.allTools) {
     const configured = configuredByName.get(tool.name);
-    if (configured === undefined || visibleNames.has(tool.name)) return false;
+    if (configured === undefined || visibleNames.has(tool.name)) continue;
     const executionClass = configured.executionClass ?? "read_only";
-    if (input.executionPolicy?.toolClassPolicy?.[executionClass] === false) return false;
+    if (input.executionPolicy?.toolClassPolicy?.[executionClass] === false) continue;
     if (readBlockedApprovalCapability({
       executionPolicy: input.executionPolicy,
       requiredCapabilities: configured.approvalCapabilities,
-    }) !== undefined) return false;
-    return isToolEligibleForInteractionMode({
+    }) !== undefined) continue;
+    if (resolveEffectiveToolDecisionV1({
       interactionMode: input.modeResolution.interactionMode,
       actSubmode: input.modeResolution.actSubmode,
       toolClass: executionClass,
       allowedInteractionModes: configured.allowedInteractionModes,
       requiredCapabilities: configured.approvalCapabilities,
-    }) === false;
-  });
+      approvalDisposition: configured.approvalDisposition ?? automaticToolDisposition(),
+    }).available === false) {
+      for (const capability of configured.capabilityClasses) {
+        capabilities.add(capability);
+      }
+    }
+  }
+  return [...capabilities].sort();
 }
 
 function hasExecutableWorkspaceTools(input: {
@@ -1123,6 +1199,7 @@ function runDeliberatorCompileAttempt(input: {
   controlToolNames?: readonly string[] | undefined;
   finalizeStatuses?: readonly KestrelAgentFinalizeStatus[] | undefined;
   cannotSatisfyReasonCodes?: readonly KestrelAgentCannotSatisfyReasonCode[] | undefined;
+  modeSwitchRequiredCapabilities?: readonly string[] | undefined;
 }): DeliberatorPreparedCompileAttempt | DeliberatorFailedCompileAttempt {
   const reducedReactState = input.reactState;
   const filteredTools = filterDeliberatorToolsForContext(
@@ -1155,6 +1232,7 @@ function runDeliberatorCompileAttempt(input: {
         controlToolNames: input.controlToolNames,
         finalizeStatuses: input.finalizeStatuses,
         cannotSatisfyReasonCodes: input.cannotSatisfyReasonCodes,
+        modeSwitchRequiredCapabilities: input.modeSwitchRequiredCapabilities,
       }),
       sourceRunId: input.runId,
     });
@@ -1264,6 +1342,7 @@ async function askDeliberator(
   controlToolNames?: readonly string[] | undefined,
   finalizeStatuses?: readonly KestrelAgentFinalizeStatus[] | undefined,
   cannotSatisfyReasonCodes?: readonly KestrelAgentCannotSatisfyReasonCode[] | undefined,
+  modeSwitchRequiredCapabilities?: readonly string[] | undefined,
   economicsToolExposureSelection?: ToolExposureSelectionV1 | undefined,
   requiredProviderToolName?: string | undefined,
 ): Promise<ModelResponse<unknown>> {
@@ -1273,6 +1352,7 @@ async function askDeliberator(
     controlToolNames,
     finalizeStatuses,
     cannotSatisfyReasonCodes,
+    modeSwitchRequiredCapabilities,
   });
   const requestTools = requiredProviderToolName === undefined
     ? aliasRegistry.requestTools
@@ -2676,6 +2756,7 @@ function toAgentLoopActionTransition(
       interactionMode: modeResolution.interactionMode,
       actSubmode: modeResolution.actSubmode,
       requiredToolClass: action.requiredToolClass,
+      requiredCapabilities: action.requiredCapabilities,
       blockedActionKind: "mode_switch_request",
       requestReason: action.reason,
     });
@@ -2709,6 +2790,9 @@ function toAgentLoopActionTransition(
   );
   const toolApprovalCapabilitiesByName = Object.fromEntries(
     capabilityManifest.map((tool) => [tool.name, tool.approvalCapabilities ?? []]),
+  );
+  const toolCapabilityClassesByName = Object.fromEntries(
+    capabilityManifest.map((tool) => [tool.name, tool.capabilityClasses]),
   );
   const toolAllowedInteractionModesByName = Object.fromEntries(
     capabilityManifest.map((tool) => [tool.name, tool.allowedInteractionModes]),
@@ -2784,6 +2868,7 @@ function toAgentLoopActionTransition(
       interactionMode: modeResolution.interactionMode,
       actSubmode: modeResolution.actSubmode,
       requiredToolClass: blockedToolClass.toolClass,
+      requiredCapabilities: toolCapabilityClassesByName[blockedToolClass.toolName] ?? [],
       blockedActionKind: action.kind,
       blockedActionId: blockedToolClass.toolName,
     });
@@ -3037,23 +3122,23 @@ function resolveBlockedActionPolicy(input: {
   const toolNames = readToolNamesFromAction(input.action);
   for (const toolName of toolNames) {
     const toolClass = input.toolExecutionClassByName[toolName] ?? "read_only";
-    if (
-      isToolEligibleForInteractionMode({
-        interactionMode: input.modeResolution.interactionMode,
-        actSubmode: input.modeResolution.actSubmode,
-        toolClass,
-        allowedInteractionModes: input.toolAllowedInteractionModesByName[toolName],
-        executionPolicy: input.executionPolicy,
-      }) === false
-    ) {
-      return { toolName, toolClass };
-    }
-    const blockedCapability = readBlockedApprovalCapability({
+    const decision = resolveEffectiveToolDecisionV1({
+      interactionMode: input.modeResolution.interactionMode,
+      actSubmode: input.modeResolution.actSubmode,
+      toolClass,
+      allowedInteractionModes: input.toolAllowedInteractionModesByName[toolName],
       executionPolicy: input.executionPolicy,
       requiredCapabilities: input.toolApprovalCapabilitiesByName[toolName],
+      approvalDisposition: automaticToolDisposition(),
     });
-    if (blockedCapability !== undefined) {
-      return { toolName, toolClass, blockedCapability };
+    if (decision.available === false) {
+      return {
+        toolName,
+        toolClass,
+        ...(decision.evidence.blockedCapability === undefined
+          ? {}
+          : { blockedCapability: decision.evidence.blockedCapability }),
+      };
     }
   }
   return ;
@@ -3087,13 +3172,17 @@ function remapToolAvailabilityPolicyError(input: {
     return input.error;
   }
   const toolClass = manifestItem.executionClass ?? "read_only";
+  const decision = resolveEffectiveToolDecisionV1({
+    interactionMode: input.interactionMode,
+    toolClass,
+    allowedInteractionModes: manifestItem.allowedInteractionModes,
+    executionPolicy: input.executionPolicy,
+    requiredCapabilities: manifestItem.approvalCapabilities,
+    approvalDisposition: manifestItem.approvalDisposition ?? automaticToolDisposition(),
+  });
   if (
-    isToolEligibleForInteractionMode({
-      interactionMode: input.interactionMode,
-      toolClass,
-      allowedInteractionModes: manifestItem.allowedInteractionModes,
-      executionPolicy: input.executionPolicy,
-    }) === false
+    decision.available === false &&
+    decision.evidence.blockedCapability === undefined
   ) {
     return {
       code: "DECISION_POLICY_FAILED",
@@ -3105,10 +3194,7 @@ function remapToolAvailabilityPolicyError(input: {
       },
     };
   }
-  const blockedCapability = readBlockedApprovalCapability({
-    executionPolicy: input.executionPolicy,
-    requiredCapabilities: manifestItem.approvalCapabilities,
-  });
+  const blockedCapability = decision.evidence.blockedCapability;
   if (blockedCapability === undefined) {
     return input.error;
   }
@@ -3122,6 +3208,14 @@ function remapToolAvailabilityPolicyError(input: {
       blockedCapability,
       blockedActionId: toolName,
     },
+  };
+}
+
+function automaticToolDisposition(): ToolApprovalDispositionV1 {
+  return {
+    mode: "auto",
+    reasonCode: "environment_policy",
+    authority: { kind: "runtime_policy", revision: "legacy-default:v1" },
   };
 }
 
@@ -3265,13 +3359,14 @@ async function shouldTreatUserReplyAsContinuationResume(input: {
     return false;
   }
 
-  const intent = await classifyUserReplyIntent({
-    reply: message,
-    waitFor: readActiveWaitFor(input.reactState),
-    model: input.model,
-    useModel: input.io.useModel,
-  });
-  input.eventPayload.userReplyIntent = intent;
+  const existingIntent = readUserReplyIntent(input.eventPayload.userReplyIntent);
+  const intent = existingIntent ?? await classifyUserReplyIntent({
+      reply: message,
+      waitFor: readActiveWaitFor(input.reactState),
+      model: input.model,
+      useModel: input.io.useModel,
+    });
+  if (existingIntent === undefined) input.eventPayload.userReplyIntent = intent;
   return isHighConfidenceContinuation(intent) || intent.kind === "mode_switch" && intent.proceed === true && intent.confidence === "high";
 }
 
@@ -3570,6 +3665,7 @@ function toPlannerModeBlockedTransition(input: {
   interactionMode: InteractionMode;
   actSubmode?: ActSubmode | undefined;
   requiredToolClass: ToolExecutionClass;
+  requiredCapabilities: string[];
   blockedActionKind: string;
   blockedActionId?: string | undefined;
   activeContinuation?: RuntimeContinuationStateV1 | undefined;
@@ -3594,6 +3690,9 @@ function toPlannerModeBlockedTransition(input: {
       ...(input.blockedActionId !== undefined ? { blockedActionId: input.blockedActionId } : {}),
       reasonCode: "mode_policy_blocked",
       requiredToolClass: input.requiredToolClass,
+      ...(input.requiredCapabilities.length > 0
+        ? { requiredCapabilities: [...input.requiredCapabilities] }
+        : {}),
       currentMode,
       requiredMode,
       question: guidance.question,
@@ -3647,6 +3746,9 @@ function toPlannerModeBlockedTransition(input: {
             blockedActionKind: input.blockedActionKind,
             blockedActionId: input.blockedActionId,
             requiredToolClass: input.requiredToolClass,
+            ...(input.requiredCapabilities.length > 0
+              ? { requiredCapabilities: [...input.requiredCapabilities] }
+              : {}),
             interactionMode: input.interactionMode,
             actSubmode: input.actSubmode,
             prompt: guidance.prompt,
@@ -3660,6 +3762,74 @@ function toPlannerModeBlockedTransition(input: {
       child: "loop",
     },
   };
+}
+
+function toModeResolutionDeclinedTransition(input: {
+  stepIndex: number;
+  loopStepId: string;
+  execDispatchStepId: string;
+  reactState: Record<string, unknown>;
+  interactionMode: InteractionMode;
+  requiredMode?: string | undefined;
+}): Transition {
+  const effectiveMode = formatUserFacingModeLabel({ interactionMode: input.interactionMode });
+  const message = input.requiredMode !== undefined && input.requiredMode !== effectiveMode
+    ? `Mode set to ${effectiveMode}. The blocked action was not run because it requires ${input.requiredMode}.`
+    : `Mode remains ${effectiveMode}. The blocked action was not run.`;
+  const nextAction = {
+    kind: "cannot_satisfy" as const,
+    reasonCode: "need_user_choice" as const,
+    message,
+    details: {
+      reason: "mode_switch_declined",
+      interactionMode: input.interactionMode,
+    },
+  };
+  const commandBatch = buildReferenceReactCommandBatchFromAction({
+    action: nextAction,
+    stepIndex: input.stepIndex,
+    toolExecutionClassByName: {},
+    planningSummary: "Close the blocked action without executing it after the authoritative mode reply was declined.",
+  });
+  return {
+    status: "RUNNING",
+    nextStepAgent: input.execDispatchStepId,
+    statePatch: buildAgentLoopStatePatch({
+      ...input.reactState,
+      ...createReferenceReactNextActionPatch(nextAction),
+      ...createReferenceReactWaitingForPatch(undefined),
+      lastAction: nextAction,
+      commandBatch: {
+        ...commandBatch,
+        status: "ready",
+        sourceStepAgent: input.loopStepId,
+        targetStepAgent: input.execDispatchStepId,
+        createdAtStepIndex: input.stepIndex,
+      },
+      ...createReferenceReactRetryContextPatch(undefined),
+      decisionReason: message,
+      lastDecisionAtStep: input.stepIndex,
+      phase: "PLAN",
+    }),
+    stateNode: {
+      parent: "agent",
+      child: "loop",
+    },
+  };
+}
+
+function readAuthoritativeModeResolution(value: unknown): Record<string, unknown> | undefined {
+  const resolution = asRecord(value);
+  return resolution?.version === "mode_resolution_v1" ? structuredClone(resolution) : undefined;
+}
+
+function readModeBlockedToolClass(value: unknown): ToolExecutionClass {
+  return value === "read_only" ||
+      value === "planning_write" ||
+      value === "sandboxed_only" ||
+      value === "external_side_effect"
+    ? value
+    : "read_only";
 }
 
 function toContinuationInvalidatedTransition(input: {

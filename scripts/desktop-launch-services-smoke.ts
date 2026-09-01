@@ -29,6 +29,7 @@ import {
   resolveLaunchServicesInstalledAppPath,
   runLaunchServicesCleanupActions,
 } from "./desktop-launch-services-gate.js";
+import { waitForAsyncValue } from "./desktop-smoke-poll.js";
 import {
   createDefaultDesktopSettings,
   writeDesktopSettings,
@@ -40,6 +41,7 @@ import {
   resolveLocalCoreRuntimeConfigurationPath,
 } from "../src/localCore/runtimeConfiguration.js";
 import { startFakeOpenRouterServer } from "../tests/ops/helpers/fake-open-router.js";
+import { DEFAULT_OPENROUTER_MODEL } from "../models/openrouter/constants.js";
 
 const repoRoot = resolveRepoRoot(process.cwd());
 const version = readDesktopVersion(repoRoot);
@@ -130,7 +132,7 @@ try {
     mode: 0o600,
   });
   mkdirSync(mountPoint, { recursive: true });
-  fakeOpenRouter = await startFakeOpenRouterServer();
+  fakeOpenRouter = await startFakeOpenRouterServer({ model: DEFAULT_OPENROUTER_MODEL });
   await seedOfflineModelConfiguration({
     coreHome,
     baseUrl: fakeOpenRouter.url,
@@ -209,24 +211,28 @@ try {
     "complete",
     "LaunchServices first run must persist onboarding after execution startup.",
   );
+  const firstLaunchPage = activeLaunch.page;
   const offlineModel = await verifyOfflineModel(
-    activeLaunch.page,
+    firstLaunchPage,
     fakeOpenRouter.url,
   );
-  await activeLaunch.page
+  await firstLaunchPage
     .getByRole("textbox", { name: "Message", exact: true })
     .fill(persistenceMarker);
-  await activeLaunch.page.waitForFunction(
-    async (marker) =>
+  await waitForAsyncValue(
+    async () => await firstLaunchPage.evaluate(async (marker) =>
       JSON.stringify(
         await (globalThis as typeof globalThis & {
           kestrelDesktop: { getUiState(): Promise<unknown> };
         }).kestrelDesktop.getUiState(),
-      ).includes(String(marker)),
-    persistenceMarker,
-    { timeout: 30_000 },
+      ).includes(String(marker)), persistenceMarker),
+    (persisted) => persisted,
+    {
+      description: "LaunchServices conversation persistence",
+      timeoutMs: 30_000,
+    },
   );
-  await activeLaunch.page.screenshot({
+  await firstLaunchPage.screenshot({
     path: firstLaunchScreenshotPath,
     fullPage: true,
   });
@@ -521,55 +527,58 @@ async function verifyReadyDesktop(page: Page): Promise<{
   appInfo: { isPackaged: boolean; name: string; version: string };
   bootState: { phase: string; code?: string | undefined; message: string };
   bridgeInfo: { connected: boolean; version: string; capabilities: string[] };
+  launchState: { phase: string; message: string };
 }> {
   await page.waitForLoadState("domcontentloaded");
   await page.waitForURL(/\/renderer\/index\.html(?:\?.*)?$/u, {
     timeout: 60_000,
   });
   await page.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
-  await page.locator(".composer").waitFor({ state: "visible", timeout: 60_000 });
-  await page.waitForFunction(
-    async () =>
-      (await (globalThis as typeof globalThis & {
+  const state = await waitForAsyncValue(
+    async () => await page.evaluate(async () => {
+      const bridge = (globalThis as typeof globalThis & {
         kestrelDesktop?: {
-          getBootState(): Promise<{ phase?: string | undefined }>;
+          getAppInfo(): Promise<{
+            isPackaged: boolean;
+            name: string;
+            version: string;
+          }>;
+          getBootState(): Promise<{
+            phase: string;
+            code?: string | undefined;
+            message: string;
+          }>;
+          getBridgeInfo(): Promise<{
+            connected: boolean;
+            version: string;
+            capabilities: string[];
+          }>;
+          getLaunchState(): Promise<{ phase: string; message: string }>;
         };
-      }).kestrelDesktop?.getBootState())?.phase === "ready",
-    undefined,
-    { timeout: 60_000 },
+      }).kestrelDesktop;
+      if (bridge === undefined) {
+        throw new Error("Desktop preload bridge is unavailable.");
+      }
+      const [appInfo, bootState, bridgeInfo, launchState] = await Promise.all([
+        bridge.getAppInfo(),
+        bridge.getBootState(),
+        bridge.getBridgeInfo(),
+        bridge.getLaunchState(),
+      ]);
+      return { appInfo, bootState, bridgeInfo, launchState };
+    }),
+    (candidate) =>
+      candidate.bootState.phase === "ready" &&
+      candidate.launchState.phase === "ready",
+    {
+      description: "LaunchServices Desktop boot and launch readiness",
+      timeoutMs: 60_000,
+    },
   );
-  const state = await page.evaluate(async () => {
-    const bridge = (globalThis as typeof globalThis & {
-      kestrelDesktop?: {
-        getAppInfo(): Promise<{
-          isPackaged: boolean;
-          name: string;
-          version: string;
-        }>;
-        getBootState(): Promise<{
-          phase: string;
-          code?: string | undefined;
-          message: string;
-        }>;
-        getBridgeInfo(): Promise<{
-          connected: boolean;
-          version: string;
-          capabilities: string[];
-        }>;
-      };
-    }).kestrelDesktop;
-    if (bridge === undefined) {
-      throw new Error("Desktop preload bridge is unavailable.");
-    }
-    return {
-      appInfo: await bridge.getAppInfo(),
-      bootState: await bridge.getBootState(),
-      bridgeInfo: await bridge.getBridgeInfo(),
-    };
-  });
   assert.equal(state.appInfo.isPackaged, true);
   assert.equal(state.appInfo.version, version);
   assert.equal(state.bootState.phase, "ready");
+  assert.equal(state.launchState.phase, "ready");
   assert.equal(state.bridgeInfo.connected, true);
   assert.equal(state.bridgeInfo.version, DESKTOP_BRIDGE_VERSION);
   return state;
@@ -920,7 +929,7 @@ async function seedOfflineModelConfiguration(input: {
   const policy = {
     version: 1 as const,
     provider: "openrouter" as const,
-    model: "openai/gpt-5.2-chat",
+    model: DEFAULT_OPENROUTER_MODEL,
     modelByStage: {},
     modelCapabilities: { visionInputEnabled: false },
   };
@@ -961,7 +970,7 @@ async function completeFirstRunOnboarding(
   await page.waitForLoadState("domcontentloaded");
   await page.waitForURL(/\/renderer\/index\.html(?:\?.*)?$/u, { timeout: 60_000 });
   await page.getByRole("button", { name: /Get started/u }).click({ timeout: 60_000 });
-  await page.getByLabel("Model", { exact: true }).selectOption("openai/gpt-5.2-chat");
+  await page.getByLabel("Model", { exact: true }).selectOption(DEFAULT_OPENROUTER_MODEL);
   await page.getByLabel("API key", { exact: true }).fill("kestrel-launch-services-smoke-token");
   await page.getByRole("button", { name: /Verify connection/u }).click();
   await page.getByRole("heading", { name: "Choose a project", exact: true }).waitFor({

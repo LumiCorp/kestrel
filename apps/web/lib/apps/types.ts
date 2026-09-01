@@ -4,6 +4,21 @@ import type {
   ToolLoggingMode,
   ToolRateLimitMode,
 } from "@/lib/tools/types";
+import type { BrowserPublicDomainAuthorityV1 } from "../../../../src/browser/domainAuthority.js";
+import type { BrowserMode } from "../../../../src/browser/contracts.js";
+
+export type BrowserEnvironmentAppSettings = {
+  enabledModes: readonly BrowserMode[];
+  personalGrantsEnabled: boolean;
+  configuredPublicDomains: readonly BrowserPublicDomainAuthorityV1[];
+  blockedPublicDomains: readonly BrowserPublicDomainAuthorityV1[];
+};
+
+export type BrowserProjectAppSettings = {
+  enabledModes: readonly BrowserMode[];
+  personalGrantsEnabled: boolean;
+  blockedPublicDomains: readonly BrowserPublicDomainAuthorityV1[];
+};
 
 export type AppCategory =
   | "kestrel"
@@ -120,6 +135,7 @@ export type EnvironmentAppCapability = AppCapability & {
   loggingMode: ToolLoggingMode;
   rateLimitMode: ToolRateLimitMode;
   inheritedDefault: boolean;
+  browserSettings?: BrowserEnvironmentAppSettings | null;
 };
 
 export type EnvironmentAppCapabilityReview = {

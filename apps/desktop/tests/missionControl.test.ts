@@ -99,6 +99,7 @@ test(
   async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const calls: unknown[] = [];
+    const profileRequests: string[] = [];
     const project = {
       projectId,
       schemaVersion: 1 as const,
@@ -121,7 +122,6 @@ test(
     };
 
     const response = await executeDesktopMissionControlAction({
-      adapter,
       intent: {
         type: "start",
         projectId,
@@ -130,12 +130,16 @@ test(
         expectedItemVersion: 3,
       },
       registeredProjectIds: [projectId],
-      profileId: "desktop",
+      profileForProject: async (requestedProjectId) => {
+        profileRequests.push(requestedProjectId);
+        return { profileId: "desktop", adapter };
+      },
       actionId: "desktop-action-1",
       actionTs: "2026-07-31T12:00:00.000Z",
       context,
     });
     assert.equal(response.projectId, projectId);
+    assert.deepEqual(profileRequests, [projectId]);
     const sent = calls[0] as {
       command: {
         type: string;
@@ -178,7 +182,6 @@ test(
 
     await assert.rejects(
       executeDesktopMissionControlAction({
-        adapter,
         intent: {
           type: "start",
           projectId,
@@ -187,7 +190,7 @@ test(
           expectedItemVersion: 3,
         },
         registeredProjectIds: [],
-        profileId: "desktop",
+        profileForProject: async () => ({ profileId: "desktop", adapter }),
         actionId: "desktop-action-unregistered",
         actionTs: "2026-07-31T12:01:00.000Z",
         context,
@@ -200,7 +203,6 @@ test(
 
     await assert.rejects(
       executeDesktopMissionControlAction({
-        adapter,
         intent: {
           type: "configure_autopilot",
           projectId,
@@ -210,7 +212,7 @@ test(
           confirmed: false,
         },
         registeredProjectIds: [projectId],
-        profileId: "desktop",
+        profileForProject: async () => ({ profileId: "desktop", adapter }),
         actionId: "desktop-action-unconfirmed",
         actionTs: "2026-07-31T12:02:00.000Z",
         context,
@@ -258,9 +260,8 @@ test("Desktop maps editing, follow-ups, and complete Ready ordering to authority
     requiredEvidence: [],
   };
   const common = {
-    adapter,
     registeredProjectIds: [projectId],
-    profileId: "desktop",
+    profileForProject: async () => ({ profileId: "desktop", adapter }),
     actionTs: "2026-07-31T12:00:00.000Z",
     context,
   };
@@ -361,6 +362,9 @@ test("Desktop Mission Control projects runtime thread inspection through the run
               dialogId: "dialog-1",
               name: "Peregrine",
               status: "open",
+              activity: "working",
+              revision: 3,
+              errorMessage: "The collaborator needs an answer.",
               childThreadId: "thread-child:session-1",
               messages: [{
                 messageId: "dialog-message-1",
@@ -371,6 +375,7 @@ test("Desktop Mission Control projects runtime thread inspection through the run
                 sender: "collaborator",
                 text: "The bridge is verified.",
                 createdAt: "2026-07-10T11:59:00.000Z",
+                dialogActivity: "working",
               }],
             }],
             childBlockerChain: [],
@@ -481,6 +486,10 @@ test("Desktop Mission Control projects runtime thread inspection through the run
   );
   assert.deepEqual(response.childThreads.map((thread) => thread.threadId), ["thread-child:session-1"]);
   assert.equal(response.dialogs?.[0]?.messages[0]?.parentRunId, "run-1");
+  assert.equal(response.dialogs?.[0]?.activity, "working");
+  assert.equal(response.dialogs?.[0]?.revision, 3);
+  assert.equal(response.dialogs?.[0]?.errorMessage, "The collaborator needs an answer.");
+  assert.equal(response.dialogs?.[0]?.messages[0]?.dialogActivity, "working");
   assert.deepEqual(calls, [{
     command: { type: "operator.thread", threadId: "thread-main:session-1" },
     requestContext: context,

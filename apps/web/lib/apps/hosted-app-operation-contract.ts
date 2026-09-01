@@ -4,9 +4,19 @@ import {
   googleCalendarRuntimeInputSchema,
 } from "@/lib/integrations/google-calendar-contract";
 import {
+  capabilityForGmailOperation,
+  gmailRuntimeInputSchema,
+} from "@/lib/integrations/gmail-contract";
+import {
   capabilityForMicrosoft365Operation,
   microsoft365RuntimeInputSchema,
 } from "@/lib/integrations/microsoft-365-contract";
+import {
+  githubMutationTools as githubTools,
+  gmailMutationTools as gmailTools,
+  googleMutationTools as googleTools,
+  microsoftMutationTools as microsoftTools,
+} from "@/lib/apps/hosted-app-operation-identity";
 
 const repositorySchema = z.string().regex(/^[^/\s]+\/[^/\s]+$/u);
 export const githubRuntimeActionInputSchema = z.discriminatedUnion("operation", [
@@ -41,25 +51,6 @@ type HostedMutation = {
   providerInput: Record<string, unknown>;
 };
 
-const githubTools = {
-  "kestrel_one.github_issue_create": ["issue.create", "issue.write"],
-  "kestrel_one.github_pull_request_create": ["pull_request.create", "pull_request.write"],
-  "kestrel_one.github_pull_request_merge": ["pull_request.merge", "merge.write"],
-  "kestrel_one.github_release_create": ["release.create", "release.write"],
-  "kestrel_one.github_workflow_dispatch": ["workflow.dispatch", "workflow.dispatch"],
-} as const;
-
-const googleTools = {
-  "kestrel_one.google_calendar_create_event": "events.create",
-  "kestrel_one.google_calendar_update_event": "events.update",
-  "kestrel_one.google_calendar_delete_event": "events.delete",
-} as const;
-
-const microsoftTools = {
-  "kestrel_one.microsoft_365_send_mail": "mail.send",
-  "kestrel_one.microsoft_365_send_chat_message": "chat.send",
-} as const;
-
 export function parseHostedMutation(toolName: string, toolInput: Record<string, unknown>): HostedMutation | null {
   if (toolName === "kestrel_one.email_send") {
     return { appKey: "email", capabilityKey: "send", operationKey: "email.send", resourceType: "sender", providerInput: emailRuntimeInputSchema.parse(toolInput) };
@@ -74,6 +65,18 @@ export function parseHostedMutation(toolName: string, toolInput: Record<string, 
     const providerInput = googleCalendarRuntimeInputSchema.parse({ operation: googleOperation, ...toolInput });
     return { appKey: "google_workspace", capabilityKey: capabilityForGoogleCalendarOperation(providerInput.operation), operationKey: googleOperation, resourceType: "calendar", resourceExternalId: "primary", providerInput };
   }
+  const gmailOperation = gmailTools[toolName as keyof typeof gmailTools];
+  if (gmailOperation) {
+    const providerInput = gmailRuntimeInputSchema.parse({ operation: gmailOperation, ...toolInput });
+    return {
+      appKey: "google_workspace",
+      capabilityKey: capabilityForGmailOperation(providerInput.operation),
+      operationKey: gmailOperation,
+      resourceType: "account",
+      resourceExternalId: "primary",
+      providerInput,
+    };
+  }
   const microsoftOperation = microsoftTools[toolName as keyof typeof microsoftTools];
   if (microsoftOperation) {
     const providerInput = microsoft365RuntimeInputSchema.parse({ operation: microsoftOperation, ...toolInput });
@@ -87,6 +90,7 @@ export function isHostedMutationToolName(toolName: unknown): boolean {
     toolName === "kestrel_one.email_send" ||
     toolName in githubTools ||
     toolName in googleTools ||
+    toolName in gmailTools ||
     toolName in microsoftTools
   );
 }

@@ -11,6 +11,7 @@ import type { PersistedRunRecord, SessionRecord } from "../../src/kestrel/contra
 import { createEvaluationReviewBindingV1 } from "../../src/kestrel/contracts/evaluation.js";
 
 import {
+  InteractionManager,
   ThreadRuntime,
   type TurnExecutionInput,
   type TurnExecutionResult,
@@ -28,6 +29,13 @@ import { buildCanonicalWaitingFor } from "../../src/runtime/waitState.js";
 import type { RuntimeWaitMatcher } from "../../src/runtime/waitState.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
+import {
+  createToolActivationRefV1,
+  fingerprintToolScopeV1,
+  hashCanonical,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import { parsePreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
 
 
 class QueueTurnExecutor implements TurnExecutor {
@@ -63,6 +71,14 @@ class QueueTurnExecutor implements TurnExecutor {
         ...result.output,
         runId,
         sessionId: input.sessionId,
+        ...(result.output.waitFor === undefined
+          ? {}
+          : {
+              waitFor: materializePreparedFixtureRunId(
+                result.output.waitFor,
+                runId,
+              ),
+            }),
       },
     });
     await this.sessionStore.completeRun(
@@ -115,6 +131,27 @@ function materializeFixtureAssistantResponse(
   return { ...result, assistantText: null };
 }
 
+function materializePreparedFixtureRunId(
+  waitFor: NonNullable<NormalizedOutput["waitFor"]>,
+  runId: string,
+): NonNullable<NormalizedOutput["waitFor"]> {
+  const metadata = waitFor.metadata;
+  const preparedToolCall = asRecord(metadata?.preparedToolCall);
+  if (preparedToolCall === undefined) {
+    return waitFor;
+  }
+  return {
+    ...waitFor,
+    metadata: {
+      ...metadata,
+      preparedToolCall: {
+        ...preparedToolCall,
+        runId,
+      },
+    },
+  };
+}
+
 class RunForeignKeyEnforcingStore extends InMemorySessionStore {
   override async appendRunEvent(event: Parameters<InMemorySessionStore["appendRunEvent"]>[0]): Promise<void> {
     const run = await this.getRun(event.runId);
@@ -130,6 +167,209 @@ class RunForeignKeyEnforcingStore extends InMemorySessionStore {
     await super.appendRunEvent(event);
   }
 }
+
+test("ThreadRuntime carries authenticated hosted approval authority into the canonical runtime turn", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    { output: buildOutput({ runId: "hosted-approval-turn", status: "COMPLETED" }) },
+  ]);
+  const runtime = new ThreadRuntime({ sessionStore, executor });
+  await runtime.startThread({ threadId: "hosted-approval-thread", title: "Hosted approval" });
+
+  await runtime.submitConversationMessage({
+    threadId: "hosted-approval-thread",
+    messageId: "hosted-approval-message",
+    message: "Run the command",
+    actor: {
+      actorType: "end_user",
+      actorId: "user-1",
+      tenantId: "org-1",
+    },
+    runtimeTurn: {
+      sessionId: "hosted-approval-thread",
+      message: "Run the command",
+      hostedApprovalAuthority: {
+        version: "runner_hosted_approval_authority_v1",
+        organizationId: "org-1",
+        environmentId: "environment-1",
+        projectId: "project-1",
+        threadId: "hosted-approval-thread",
+      },
+    },
+  });
+
+  assert.deepEqual(executor.inputs[0]?.runtimeTurn?.actor, {
+    actorType: "end_user",
+    actorId: "user-1",
+    tenantId: "org-1",
+  });
+  assert.deepEqual(executor.inputs[0]?.runtimeTurn?.hostedApprovalAuthority, {
+    version: "runner_hosted_approval_authority_v1",
+    organizationId: "org-1",
+    environmentId: "environment-1",
+    projectId: "project-1",
+    threadId: "hosted-approval-thread",
+  });
+});
+
+test("ThreadRuntime projects the hosted session identity into durable wait requests", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({
+        runId: "hosted-session-wait-run",
+        status: "WAITING",
+        waitFor: {
+          kind: "user",
+          eventType: "user.reply",
+          metadata: { prompt: "Continue?" },
+        },
+      }),
+    },
+  ]);
+  const runtime = new ThreadRuntime({ sessionStore, executor });
+  await runtime.startThread({
+    threadId: "thread-main:hosted-session",
+    sessionId: "hosted-session",
+    title: "Hosted session wait",
+  });
+
+  await runtime.submitTurn({
+    threadId: "thread-main:hosted-session",
+    message: "Wait for input",
+    eventType: "user.message",
+  });
+
+  const requests = await sessionStore.listInteractionRequests({
+    threadId: "thread-main:hosted-session",
+    status: "PENDING",
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.metadata?.sessionId, "hosted-session");
+});
+
+test("ThreadRuntime gives only fully equipped root turns the named collaborator instructions", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    { output: buildOutput({ runId: "dialog-parent", status: "COMPLETED" }) },
+    { output: buildOutput({ runId: "dialog-child", status: "COMPLETED" }) },
+  ]);
+  const runtime = new ThreadRuntime({
+    sessionStore,
+    executor,
+    profile: buildProfile({ toolAllowlist: ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"] }),
+  });
+  await runtime.startThread({ threadId: "dialog-root", title: "Root" });
+  await runtime.startThread({ threadId: "dialog-child", title: "Child", parentThreadId: "dialog-root" });
+  await runtime.submitTurn({ threadId: "dialog-root", message: "work", eventType: "user.message" });
+  await runtime.submitTurn({ threadId: "dialog-child", message: "work", eventType: "user.message" });
+
+  const parentInstructions = executor.inputs[0]?.runtimeTurn?.systemInstructions?.join("\n") ?? "";
+  assert.match(parentInstructions, /You can ask named collaborators to help with the current task\./u);
+  assert.match(parentInstructions, /Do not open one when nobody can continue until the user answers a question\./u);
+  assert.match(parentInstructions, /dialog\.send only when it is open and idle\./u);
+  assert.match(parentInstructions, /Use dialog\.read when you want to see their status, messages, or results without asking them to do more\./u);
+  assert.match(parentInstructions, /Collaborators cannot open other collaborators\./u);
+  assert.equal(parentInstructions.match(/You can ask named collaborators to help with the current task\./gu)?.length, 1);
+  assert.equal(executor.inputs[1]?.runtimeTurn?.systemInstructions, undefined);
+});
+
+test("ThreadRuntime delivers a saved collaborator reply once with current dialog identity", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    { output: buildOutput({ runId: "child-reply", status: "COMPLETED" }), assistantText: "The review is complete." },
+    { output: buildOutput({ runId: "parent-follow-up", status: "COMPLETED" }), assistantText: "Thanks." },
+  ]);
+  const profile = buildProfile({ toolAllowlist: ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"] });
+  const runtime = new ThreadRuntime({ sessionStore, executor, profile });
+  const parent = await runtime.startThread({ threadId: "dialog-reply-parent", title: "Parent" });
+  await sessionStore.upsertThread({ ...parent, status: "RUNNING", updatedAt: new Date().toISOString() });
+  const dialog = runtime.getDialogService();
+  assert.notEqual(dialog, undefined);
+  const opened = await dialog!.open({ parentSessionId: parent.threadId, name: "Reviewer", message: "Review this." });
+
+  for (let attempt = 0; attempt < 50 && (await runtime.getOperatorThreadView(parent.threadId))?.followUpQueue?.items.length !== 1; attempt += 1) {
+    await tick();
+  }
+  assert.equal((await runtime.getOperatorThreadView(parent.threadId))?.followUpQueue?.items.length, 1);
+  await dialog!.close({ parentSessionId: parent.threadId, dialogId: opened.dialogId });
+  const readyParent = await sessionStore.getThread(parent.threadId);
+  await sessionStore.upsertThread({ ...readyParent!, status: "COMPLETED", activeRunId: undefined, updatedAt: new Date().toISOString() });
+  const restartedBeforeDelivery = new ThreadRuntime({ sessionStore, executor, profile });
+  await restartedBeforeDelivery.startThread({ threadId: parent.threadId, title: parent.title });
+  for (let attempt = 0; attempt < 50 && executor.inputs.length !== 2; attempt += 1) {
+    await tick();
+  }
+
+  const followUp = executor.inputs[1];
+  assert.equal(followUp?.eventType, "dialog.message");
+  assert.deepEqual(followUp?.runtimeTurn?.actor, { actorType: "service", actorId: opened.dialogId, displayName: "Reviewer" });
+  assert.equal(followUp?.runtimeTurn?.metadata?.source, "dialog");
+  assert.equal(followUp?.runtimeTurn?.metadata?.dialogId, opened.dialogId);
+  assert.equal(followUp?.runtimeTurn?.metadata?.dialogName, "Reviewer");
+  assert.equal(followUp?.runtimeTurn?.metadata?.sourceMessageId, followUp?.metadata?.sourceMessageId);
+  assert.equal(followUp?.runtimeTurn?.metadata?.dialogStatus, "closed");
+  assert.equal(followUp?.runtimeTurn?.metadata?.dialogActivity, "idle");
+  assert.match(followUp?.runtimeTurn?.systemInstructions?.join("\n") ?? "", /This is not a message from the user\./);
+  assert.equal(followUp?.runtimeTurn?.runId, `run-dialog-follow-up-${followUp?.metadata?.sourceMessageId}`);
+  for (let attempt = 0; attempt < 50 && ((asRecord(asRecord((await sessionStore.getDelegation(opened.dialogId))?.policy)?.dialog)?.messages as Array<Record<string, unknown>> | undefined) ?? []).find((message) => message.sender === "collaborator")?.delivery !== "delivered"; attempt += 1) {
+    await tick();
+  }
+  const messages = (asRecord(asRecord((await sessionStore.getDelegation(opened.dialogId))?.policy)?.dialog)?.messages as Array<Record<string, unknown>> | undefined) ?? [];
+  assert.equal(messages.find((message) => message.sender === "collaborator")?.delivery, "delivered");
+
+  const reply = messages.find((message) => message.sender === "collaborator")!;
+  const delegation = await sessionStore.getDelegation(opened.dialogId);
+  const storedDialog = asRecord(delegation?.policy?.dialog)!;
+  await sessionStore.upsertDelegation({
+    ...delegation!,
+    policy: {
+      ...(delegation!.policy ?? {}),
+      dialog: {
+        ...storedDialog,
+        messages: messages.map((message) => message.messageId === reply.messageId
+          ? { ...message, delivery: "enqueued" }
+          : message),
+      },
+    },
+  });
+  const completedParent = await sessionStore.getThread(parent.threadId);
+  await sessionStore.upsertThread({
+    ...completedParent!,
+    status: "COMPLETED",
+    activeRunId: undefined,
+    metadata: {
+      ...(completedParent!.metadata ?? {}),
+      operatorControl: {
+        ...asRecord(completedParent!.metadata?.operatorControl),
+        followUpQueue: {
+          state: "ready",
+          items: [{
+            followUpId: reply.messageId,
+            message: `Reviewer: ${reply.text}`,
+            attachmentIds: [],
+            createdAt: reply.createdAt,
+            state: "starting",
+            source: "dialog",
+            dialogId: opened.dialogId,
+            dialogName: "Reviewer",
+            sourceMessageId: reply.messageId,
+            dialogStatus: "closed",
+            dialogActivity: "idle",
+          }],
+        },
+      },
+    },
+    updatedAt: new Date().toISOString(),
+  });
+
+  const restartedAfterParentCompleted = new ThreadRuntime({ sessionStore, executor, profile });
+  await restartedAfterParentCompleted.startThread({ threadId: parent.threadId, title: parent.title });
+  for (let attempt = 0; attempt < 50 && ((asRecord(asRecord((await sessionStore.getDelegation(opened.dialogId))?.policy)?.dialog)?.messages as Array<Record<string, unknown>> | undefined) ?? []).find((message) => message.messageId === reply.messageId)?.delivery !== "delivered"; attempt += 1) {
+    await tick();
+  }
+  assert.equal(executor.inputs.length, 2);
+});
 
 test("ThreadRuntime applies one boundary runtime to submitted content and durable output", async () => {
   const sessionStore = new InMemorySessionStore();
@@ -887,6 +1127,7 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
     actor: { actorType: "end_user", actorId: "user-queued" },
     runtimeTurn: {
       sessionId: "thread-message-exact",
+      runId: "run-message-exact-queued-1",
       message: "What happened?",
       history: [{
         role: "user",
@@ -955,6 +1196,7 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
     (route) => route.messageId === "message-exact-queued-1",
   );
   assert.equal(promotedRoute?.disposition, "started");
+  assert.equal(promotedRoute?.runId, "run-message-exact-queued-1");
   assert.equal(promotedRoute?.turnId, executor.inputs[2]?.metadata?.turnId);
   assert.equal(promotedRoute?.runId, executor.inputs[2]?.runtimeTurn?.runId);
 
@@ -1685,20 +1927,20 @@ test("ThreadRuntime merges short continuation history with durable thread histor
   ]);
 });
 
-test("ThreadRuntime resolves approval requests and expires turn-scoped grants after resume", async () => {
+test("ThreadRuntime resolves prepared approval requests without broad turn-scoped grants", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     {
       output: buildOutput({
         runId: "run-approval-1",
         status: "WAITING",
-        waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
-          metadata: {
-            prompt: "Approve file changes",
-          },
-        },
+        waitFor: buildPreparedApprovalWait({
+          threadId: "thread-approval",
+          runId: "run-approval-1",
+          actorId: "operator",
+          prompt: "Approve file changes",
+          toolClass: "read_only",
+        }),
       }),
     },
     {
@@ -1732,6 +1974,13 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
       sessionId: "session-thread-approval",
       message: "change files",
       eventType: "user.message",
+      hostedApprovalAuthority: {
+        version: "runner_hosted_approval_authority_v1",
+        organizationId: "organization-thread-approval",
+        environmentId: "environment-thread-approval",
+        projectId: "project-thread-approval",
+        threadId: "thread-approval",
+      },
       mcpContext: {
         gatewayUrl: "https://gateway.example.test",
         grantId: "11111111-1111-4111-8111-111111111111",
@@ -1746,21 +1995,6 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
   const requestId = waiting.wait?.request?.requestId;
   assert.ok(requestId);
   assert.ok(waiting.wait?.request);
-  await sessionStore.upsertInteractionRequest({
-    ...waiting.wait.request,
-    metadata: {
-      ...(waiting.wait.request.metadata ?? {}),
-      approvalId: "approval-thread-runtime",
-      toolName: "hosted.tool",
-      toolInput: {},
-      externalApprovalBinding: buildExternalApprovalBinding({
-        approvalId: "approval-thread-runtime",
-        threadId: "thread-approval",
-        runId: waiting.output.runId,
-        capabilities: ["filesystem.read"],
-      }),
-    },
-  });
 
   const resumed = await runtime.replyToRequest({
     threadId: "thread-approval",
@@ -1808,8 +2042,7 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
   const grants = await sessionStore.listApprovalGrants({
     threadId: "thread-approval",
   });
-  assert.equal(grants.length, 1);
-  assert.equal(grants[0]?.status, "EXPIRED");
+  assert.equal(grants.length, 0);
 
   const requests = await sessionStore.listInteractionRequests({
     threadId: "thread-approval",
@@ -1821,7 +2054,44 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
   });
   assert.equal(replay.some((event) => event.type === "interaction.requested"), true);
   assert.equal(replay.some((event) => event.type === "interaction.resolved"), true);
-  assert.equal(replay.some((event) => event.type === "approval.granted"), true);
+  assert.equal(replay.some((event) => event.type === "approval.granted"), false);
+});
+
+test("InteractionManager keeps exact read-only prepared approvals out of turn grants", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const manager = new InteractionManager(sessionStore);
+  const actor = { actorType: "operator" as const, actorId: "operator" };
+  const waitFor = buildPreparedApprovalWait({
+    threadId: "thread-read-only-approval",
+    runId: "run-read-only-approval",
+    actorId: actor.actorId,
+    prompt: "Approve reading the file",
+    toolClass: "read_only",
+  });
+  const request = await manager.syncWaitState({
+    threadId: "thread-read-only-approval",
+    sessionId: "thread-read-only-approval",
+    runId: "run-read-only-approval",
+    actor,
+    waitFor,
+  });
+  assert.ok(request);
+
+  const resolved = await manager.resolveRequest({
+    threadId: request.threadId,
+    requestId: request.requestId,
+    message: "approved",
+    approve: true,
+    actor,
+  });
+
+  assert.equal(resolved.grant, undefined);
+  assert.equal(
+    (await sessionStore.listApprovalGrants({
+      threadId: request.threadId,
+    })).length,
+    0,
+  );
 });
 
 test("ThreadRuntime resumes the active blocked request and derives approval grants", async () => {
@@ -1859,6 +2129,30 @@ test("ThreadRuntime resumes the active blocked request and derives approval gran
     runId: "run-waiting",
     kind: "approval",
     eventType: "user.approval",
+    interaction: {
+      version: "runner_local_tool_approval_interaction_v1",
+      requestId: "request-current",
+      kind: "approval",
+      eventType: "user.approval",
+      prompt: "Review this action before it runs.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["decision"],
+        properties: {
+          decision: {
+            type: "string",
+            enum: ["decline", "approve_once"],
+          },
+        },
+      },
+      approval: {
+        approvalId: "approval-resume-active",
+        toolName: "hosted.tool",
+        requestedAt: "2026-05-22T12:01:00.000Z",
+        expiresAt: "2026-05-22T12:06:00.000Z",
+      },
+    },
     status: "PENDING",
     createdAt: "2026-05-22T12:01:00.000Z",
     metadata: {
@@ -1911,6 +2205,7 @@ test("ThreadRuntime resumes the active blocked request and derives approval gran
   assert.equal(resumed.output.status, "COMPLETED");
   assert.equal(executor.inputs[0]?.resumeBlockedRun, true);
   assert.equal(executor.inputs[0]?.eventType, "user.approval");
+  assert.equal(executor.inputs[0]?.runtimeTurn?.decision, "approve_once");
   const grants = await sessionStore.listApprovalGrants({
     threadId: "thread-resume-active",
   });
@@ -3051,13 +3346,12 @@ test("ThreadRuntime surfaces operator inbox items for pending requests and conte
       output: buildOutput({
         runId: "run-inbox-1",
         status: "WAITING",
-        waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
-          metadata: {
-            prompt: "Approve this action",
-          },
-        },
+        waitFor: buildPreparedApprovalWait({
+          threadId: "thread-inbox",
+          runId: "run-inbox-1",
+          actorId: "kestrel-local-operator",
+          prompt: "Approve this action",
+        }),
       }),
     },
   ]);
@@ -3074,6 +3368,18 @@ test("ThreadRuntime surfaces operator inbox items for pending requests and conte
     threadId: "thread-inbox",
     message: "needs approval",
     eventType: "user.message",
+    runtimeTurn: {
+      sessionId: "thread-inbox",
+      message: "needs approval",
+      eventType: "user.message",
+      hostedApprovalAuthority: {
+        version: "runner_hosted_approval_authority_v1",
+        organizationId: "organization-thread-approval",
+        environmentId: "environment-thread-approval",
+        projectId: "project-thread-approval",
+        threadId: "thread-inbox",
+      },
+    },
   });
 
   await sessionStore.upsertContextCheckpoint({
@@ -3655,8 +3961,8 @@ test("ThreadRuntime supervises multiple child launches and selects the dominant 
         runId: "run-supervision-child-2",
         status: "WAITING",
         waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
+          kind: "user",
+          eventType: "user.reply",
           metadata: { prompt: "Approve the parent action?" },
         },
       }),
@@ -4231,8 +4537,8 @@ test("ThreadRuntime surfaces split-created waiting children in supervision block
         runId: "run-split-supervision-child",
         status: "WAITING",
         waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
+          kind: "user",
+          eventType: "user.reply",
           metadata: {
             prompt: "Approve split child action",
           },
@@ -4364,8 +4670,8 @@ test("ThreadRuntime focusThread updates operator inbox focus deterministically",
         runId: "run-focus-parent",
         status: "WAITING",
         waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
+          kind: "user",
+          eventType: "user.reply",
           metadata: {
             prompt: "Approve parent work",
           },
@@ -4435,8 +4741,8 @@ test("ThreadRuntime persists focused thread across runtime recreation with share
         runId: "run-focus-persist-parent",
         status: "WAITING",
         waitFor: {
-          kind: "approval",
-          eventType: "user.approval",
+          kind: "user",
+          eventType: "user.reply",
           metadata: { prompt: "Approve the parent focus action?" },
         },
       }),
@@ -5216,6 +5522,137 @@ function buildOutput(input: {
       toolCalls: 0,
       modelCalls: 0,
       durationMs: 1,
+    },
+  };
+}
+
+function buildPreparedApprovalWait(input: {
+  threadId: string;
+  runId: string;
+  actorId: string;
+  prompt: string;
+  toolClass?: "read_only" | undefined;
+}): NonNullable<NormalizedOutput["waitFor"]> {
+  const descriptor = defaultToolCatalog.getDescriptorRef("fs.read_text");
+  if (descriptor === undefined) {
+    throw new Error("fs.read_text descriptor is required by the approval fixture");
+  }
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-thread-runtime",
+    scopeFingerprint: fingerprintToolScopeV1({ hosted: true }),
+  });
+  const effectiveInput = { path: "README.md" };
+  const policyRevision = hashCanonical({ policy: "ask" });
+  const requestingActor = {
+    actorType: "operator" as const,
+    actorId: input.actorId,
+  };
+  const stableToolIdentity = {
+    version: "stable_tool_approval_identity_v1" as const,
+    toolId: descriptor.toolId,
+    descriptorContractRevision: descriptor.contractRevision,
+    approvalAuthorityRevision: "approval-authority-thread-runtime",
+  };
+  const stableAuthorityBase = {
+    actor: requestingActor,
+    organizationId: "organization-thread-approval",
+    environmentId: "environment-thread-approval",
+    projectId: "project-thread-approval",
+    threadId: input.threadId,
+    resourceAuthority: {
+      toolSourceKind: descriptor.sourceKind,
+      toolSourceId: descriptor.sourceId,
+    },
+    policyRevision,
+    capabilities: ["filesystem.read"],
+    descriptorContractRevision: descriptor.contractRevision,
+    approvalAuthorityRevision: stableToolIdentity.approvalAuthorityRevision,
+    normalizedActionHash: hashCanonical({
+      toolId: descriptor.toolId,
+      effectiveInput,
+    }),
+  };
+  const stableAuthorityPayload =
+    input.toolClass === "read_only"
+      ? {
+          ...stableAuthorityBase,
+          version: "prepared_tool_stable_authority_v2" as const,
+          executionClass: "read_only" as const,
+        }
+      : {
+          ...stableAuthorityBase,
+          version: "prepared_tool_stable_authority_v1" as const,
+        };
+  const stableAuthority = {
+    ...stableAuthorityPayload,
+    fingerprint: hashCanonical(stableAuthorityPayload),
+  };
+  const now = Date.now();
+  const approvalId = `approval:${input.runId}:${input.threadId}`;
+  const preparedToolCall = parsePreparedToolCallV1({
+    version: "v1",
+    runId: input.runId,
+    sessionId: input.threadId,
+    callId: approvalId,
+    activation,
+    origin: {
+      kind: "model",
+      snapshotId: hashCanonical({ threadId: input.threadId }),
+      modelToolCallId: `model-call:${input.threadId}`,
+    },
+    effectiveInput,
+    policy: {
+      decision: "approval_required",
+      policyRevision,
+      reasonCode: "environment_policy",
+    },
+    approval: {
+      approvalId,
+      authorityRevision: hashCanonical({ approvalId }),
+      externalApprovalBinding: {
+        version: "runner_external_approval_binding_v2",
+        approvalId,
+        preparedInvocationId: approvalId,
+        threadId: input.threadId,
+        actionKey: descriptor.toolId,
+        payloadHash: hashCanonical(effectiveInput),
+        stableAuthorityFingerprint: stableAuthority.fingerprint,
+        stableToolIdentity,
+        requestingActor,
+        toolClass: input.toolClass ?? "external_side_effect",
+        capabilities: ["filesystem.read"],
+        authorityKind: "runtime_policy",
+        authorityRevision: stableToolIdentity.approvalAuthorityRevision,
+        requestedAt: new Date(now - 1_000).toISOString(),
+        expiresAt: new Date(now + 60_000).toISOString(),
+      },
+    },
+    stableAuthority,
+    stableToolIdentity,
+    executionRequirements: {
+      version: "prepared_tool_execution_requirements_v1",
+      credentials: ["continuation_run_segment", "live_handler_capability"],
+    },
+    preparedAt: new Date(now - 1_000).toISOString(),
+  });
+  return {
+    kind: "approval",
+    eventType: "user.approval",
+    metadata: {
+      prompt: input.prompt,
+      ...(input.toolClass === "read_only"
+        ? {
+            approvalId,
+            toolName: descriptor.toolId,
+            toolInput: effectiveInput,
+            toolClass: input.toolClass,
+            externalApprovalBinding:
+              preparedToolCall.approval?.externalApprovalBinding,
+          }
+        : {}),
+      preparedToolCall,
+      reasonCode: "environment_policy",
     },
   };
 }

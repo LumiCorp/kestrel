@@ -30,7 +30,7 @@ test("Desktop OTA renderer callbacks resolve the preload bridge in page context"
     source.match(
       /\(globalThis as DesktopPageGlobal\)\.kestrelDesktop/gu,
     )?.length,
-    14,
+    13,
   );
   assert.match(source, /CFFIXED_USER_HOME: input\.isolatedHome/u);
   assert.doesNotMatch(source, /\bcloseLaunch\b/u);

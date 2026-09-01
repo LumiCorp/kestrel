@@ -1,6 +1,11 @@
 export type TransitionStatus = "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
 export type EffectFailurePolicy = "STOP" | "CONTINUE" | "WAIT";
-export type EffectExecutionStatus = "PENDING" | "DONE" | "FAILED";
+export type EffectExecutionStatus =
+  | "PENDING"
+  | "CLAIMED"
+  | "DISPATCHED"
+  | "DONE"
+  | "FAILED";
 export type OutboxStatus = "PENDING" | "DELIVERED" | "FAILED";
 export type ClaimStatus = "proposed" | "verified" | "disputed" | "retracted";
 export type RunEventLevel = "INFO" | "WARN" | "ERROR";
@@ -59,6 +64,7 @@ export type RunEventType =
   | "step.contract_failed"
   | "effects.resumed"
   | "effects.executed"
+  | "prepared_approval_cleanup.done_evidence_quarantined"
   | "outbox.dispatched"
   | "policy.checkpoint"
   | "quality.computed"

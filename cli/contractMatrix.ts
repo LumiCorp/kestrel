@@ -43,6 +43,7 @@ export const SLASH_COMMANDS = [
   "new",
   "sessions",
   "workspace",
+  "environment",
   "tasks",
   "switch",
   "resume",

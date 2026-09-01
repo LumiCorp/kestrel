@@ -1078,8 +1078,10 @@ test("one first-attempt persistence completes on attempt two and retires only af
     ),
     [["scheduling_destroy"], ["pending_destroy"]],
   );
+  const finalEnvironment = result.environment?.final;
+  assert.ok(finalEnvironment, "The canary must retain its final inventory.");
   assert.deepEqual(
-    result.environment?.final.volumes.find(
+    finalEnvironment.volumes.find(
       (volume) => volume.id === "export-volume",
     ),
     {

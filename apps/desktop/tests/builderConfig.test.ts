@@ -24,6 +24,11 @@ test("Desktop builder emits signed arm64 DMG and ZIP update targets", () => {
   ]);
   assert.equal(config.mac.hardenedRuntime, true);
   assert.equal(
+    "electronDist" in config,
+    false,
+    "release packaging must let electron-builder preserve Electron framework symlinks",
+  );
+  assert.equal(
     config.mac.icon,
     path.join("/repo", "apps", "desktop", "assets", "kestrel-app-icon-light.icns"),
   );
@@ -42,6 +47,14 @@ test("Desktop builder emits signed arm64 DMG and ZIP update targets", () => {
     {
       from: path.join("/repo", "apps", "desktop", "assets", "kestrel-app-icon-light.png"),
       to: "kestrel-app-icon-light.png",
+    },
+  );
+  assert.deepEqual(
+    config.extraResources.find(({ to }) => to === "browser-runtime"),
+    {
+      from: path.join("/repo", "apps", "desktop", ".desktop-browser-runtime"),
+      to: "browser-runtime",
+      filter: ["**/*"],
     },
   );
 });

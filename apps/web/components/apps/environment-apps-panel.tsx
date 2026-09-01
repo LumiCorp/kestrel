@@ -42,15 +42,14 @@ import {
 import { Switch } from "@/components/ui/switch";
 import type {
   AppConnectionSummary,
+  BrowserEnvironmentAppSettings,
   EnvironmentAppCapability,
   EnvironmentAppConfiguration,
 } from "@/lib/apps/types";
-import type { RuntimeApprovalReturnContext } from "@/lib/apps/runtime-approval-policy";
 
 type Props = {
   environmentId: string;
   initialConfiguration: EnvironmentAppConfiguration;
-  approvalReturnContext?: RuntimeApprovalReturnContext | undefined;
 };
 
 function message(error: unknown, fallback: string) {
@@ -350,23 +349,20 @@ function CapabilityRow({
   appKey,
   capability,
   onSaved,
-  approvalReturnContext,
 }: {
   environmentId: string;
   appKey: string;
   capability: EnvironmentAppCapability;
   onSaved: (capability: EnvironmentAppCapability) => void;
-  approvalReturnContext?: RuntimeApprovalReturnContext | undefined;
 }) {
   const [saving, setSaving] = useState(false);
-  const [savingProject, setSavingProject] = useState(false);
-  const [approvingRequest, setApprovingRequest] = useState(false);
-  const [projectApprovalMode, setProjectApprovalMode] = useState(
-    approvalReturnContext?.projectApprovalMode,
-  );
 
   async function save(
-    patch: Partial<Pick<EnvironmentAppCapability, "enabled" | "approvalMode">>,
+    patch: Partial<
+      Pick<EnvironmentAppCapability, "enabled" | "approvalMode">
+    > & {
+      settings?: unknown;
+    },
   ) {
     const next = { ...capability, ...patch };
     setSaving(true);
@@ -381,6 +377,14 @@ function CapabilityRow({
             approvalMode: next.enabled ? next.approvalMode : "deny",
             loggingMode: next.loggingMode,
             rateLimitMode: next.rateLimitMode,
+            ...(capability.browserSettings
+              ? {
+                  settings:
+                    patch.settings ??
+                    next.browserSettings ??
+                    capability.browserSettings,
+                }
+              : {}),
           }),
         },
       );
@@ -388,6 +392,7 @@ function CapabilityRow({
         grant?: {
           enabled: boolean;
           approvalMode: EnvironmentAppCapability["approvalMode"];
+          settings?: BrowserEnvironmentAppSettings;
         };
         error?: string;
       }>(response);
@@ -399,6 +404,7 @@ function CapabilityRow({
         enabled: body.grant.enabled,
         approvalMode: body.grant.approvalMode,
         inheritedDefault: false,
+        browserSettings: body.grant.settings ?? next.browserSettings ?? null,
       });
     } catch (error) {
       toast.error(message(error, "Capability could not be updated."));
@@ -407,89 +413,9 @@ function CapabilityRow({
     }
   }
 
-  async function saveAndApproveRequest() {
-    if (
-      !approvalReturnContext ||
-      capability.minimumApprovalMode === "ask" ||
-      approvalReturnContext.reasonCode === "runtime_strict" ||
-      approvalReturnContext.reasonCode === "subject_restriction"
-    )
-      return;
-    if (
-      !(capability.enabled && capability.approvalMode === "auto") ||
-      projectApprovalMode !== "auto"
-    ) {
-      toast.error(
-        "The effective capability must be Automatic before this request can be approved.",
-      );
-      return;
-    }
-    setApprovingRequest(true);
-    try {
-      const response = await fetch(
-        `/api/threads/${encodeURIComponent(approvalReturnContext.threadId)}`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            interactionResponse: {
-              requestId: approvalReturnContext.requestId,
-              eventType: "user.approval",
-              turnId: approvalReturnContext.turnId,
-              message: "Approved",
-              approved: true,
-            },
-          }),
-        },
-      );
-      if (!response.ok) {
-        const body = await readJson<{ error?: string }>(response);
-        throw new Error(
-          body.error ?? "The pending request could not be approved.",
-        );
-      }
-      toast.success("Policy saved and this request was approved once.");
-    } catch (error) {
-      toast.error(
-        message(error, "The policy could not be saved and approved."),
-      );
-    } finally {
-      setApprovingRequest(false);
-    }
-  }
-
-  async function makeProjectAutomatic() {
-    if (!approvalReturnContext?.canEditProject) return;
-    setSavingProject(true);
-    try {
-      const response = await fetch(
-        `/api/projects/${encodeURIComponent(approvalReturnContext.projectId)}/apps/${encodeURIComponent(appKey)}/capabilities/${encodeURIComponent(capability.key)}`,
-        {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ enabled: true, approvalMode: "auto" }),
-        },
-      );
-      const body = await readJson<{ error?: string }>(response);
-      if (!response.ok) {
-        throw new Error(
-          body.error ?? "The Project restriction could not be changed.",
-        );
-      }
-      setProjectApprovalMode("auto");
-      toast.success("Project policy set to Automatic.");
-    } catch (error) {
-      toast.error(
-        message(error, "The Project restriction could not be changed."),
-      );
-    } finally {
-      setSavingProject(false);
-    }
-  }
-
   return (
     <div
-      className={`grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_9rem_auto] md:items-center ${approvalReturnContext ? "bg-primary/5 ring-1 ring-primary/30 ring-inset" : ""}`}
+      className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_9rem_auto] md:items-center"
       id={`capability-${capability.key}`}
     >
       <div>
@@ -507,67 +433,6 @@ function CapabilityRow({
             This capability requires approval for every invocation and cannot be
             set to Automatic.
           </p>
-        ) : null}
-        {approvalReturnContext ? (
-          <div className="mt-3 space-y-2 rounded-md border bg-background p-3 text-xs">
-            <p>
-              Changing this setting affects every Project in this Environment.
-              Projects may still narrow it.
-            </p>
-            {approvalReturnContext.reasonCode === "runtime_strict" ? (
-              <p>
-                The current runtime requires approval for every call.
-                Environment Apps cannot make this request Automatic.
-              </p>
-            ) : null}
-            {approvalReturnContext.reasonCode === "subject_restriction" ? (
-              <p>
-                A user or agent restriction still requires approval. Environment
-                Apps cannot make this request Automatic.
-              </p>
-            ) : null}
-            {projectApprovalMode !== "auto" ? (
-              <p>
-                This Project is still set to{" "}
-                {projectApprovalMode === "ask" ? "Ask first" : "Blocked"}.
-                {approvalReturnContext.canEditProject
-                  ? " Change the Project policy to Automatic before approving the request."
-                  : " A Project editor must change that restriction before the effective result can be Automatic."}
-              </p>
-            ) : null}
-            {projectApprovalMode !== "auto" &&
-            approvalReturnContext.canEditProject &&
-            capability.minimumApprovalMode !== "ask" ? (
-              <Button
-                disabled={savingProject}
-                onClick={() => void makeProjectAutomatic()}
-                size="sm"
-                variant="outline"
-              >
-                {savingProject ? "Saving…" : "Set Project to Automatic"}
-              </Button>
-            ) : null}
-            {capability.minimumApprovalMode !== "ask" &&
-            approvalReturnContext.reasonCode !== "runtime_strict" &&
-            approvalReturnContext.reasonCode !== "subject_restriction" ? (
-              <Button
-                disabled={
-                  approvingRequest ||
-                  saving ||
-                  savingProject ||
-                  !capability.enabled ||
-                  capability.approvalMode !== "auto" ||
-                  projectApprovalMode !== "auto"
-                }
-                onClick={() => void saveAndApproveRequest()}
-                size="sm"
-              >
-                {approvingRequest
-                  ? "Approving…"
-                  : "Save and approve this request"}
-              </Button>
-            ) : null}
-          </div>
         ) : null}
       </div>
       <Select
@@ -610,6 +475,143 @@ function CapabilityRow({
           }
         />
       </div>
+      {capability.browserSettings ? (
+        <BrowserEnvironmentPolicyEditor
+          disabled={saving}
+          onSave={(settings) => void save({ settings })}
+          settings={capability.browserSettings}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+const DOMAIN_LIST_SEPARATOR = /[\n,]/u;
+function parseDomainList(value: string) {
+  return value
+    .split(DOMAIN_LIST_SEPARATOR)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+type BrowserEnvironmentSettingsInput = Omit<
+  BrowserEnvironmentAppSettings,
+  "configuredPublicDomains" | "blockedPublicDomains"
+> & {
+  configuredPublicDomains: string[];
+  blockedPublicDomains: string[];
+};
+
+function BrowserEnvironmentPolicyEditor({
+  settings,
+  disabled,
+  onSave,
+}: {
+  settings: BrowserEnvironmentAppSettings;
+  disabled: boolean;
+  onSave: (settings: BrowserEnvironmentSettingsInput) => void;
+}) {
+  const [enabledModes, setEnabledModes] = useState([...settings.enabledModes]);
+  const [personalGrantsEnabled, setPersonalGrantsEnabled] = useState(
+    settings.personalGrantsEnabled,
+  );
+  const [configuredDomains, setConfiguredDomains] = useState(
+    settings.configuredPublicDomains
+      .map((domain) => domain.canonicalDomain)
+      .join("\n"),
+  );
+  const [blockedDomains, setBlockedDomains] = useState(
+    settings.blockedPublicDomains
+      .map((domain) => domain.canonicalDomain)
+      .join("\n"),
+  );
+  const toggleMode = (mode: "qa" | "operator", enabled: boolean) =>
+    setEnabledModes((current) =>
+      enabled
+        ? [...new Set([...current, mode])]
+        : current.filter((candidate) => candidate !== mode),
+    );
+  return (
+    <div className="col-span-full mt-2 space-y-4 border-t pt-4">
+      <div>
+        <p className="font-medium text-sm">Browser authority ceiling</p>
+        <p className="mt-1 text-muted-foreground text-xs">
+          Configure public Environment authority. Personal remembered domains
+          remain visible only to the person who allowed them.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {(["qa", "operator"] as const).map((mode) => (
+          <div className="flex items-center justify-between gap-3" key={mode}>
+            <Label htmlFor={`browser-environment-mode-${mode}`}>
+              {mode === "qa" ? "QA mode" : "Operator mode"}
+            </Label>
+            <Switch
+              checked={enabledModes.includes(mode)}
+              disabled={disabled}
+              id={`browser-environment-mode-${mode}`}
+              onCheckedChange={(checked) => toggleMode(mode, checked)}
+            />
+          </div>
+        ))}
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor="browser-environment-personal-grants">
+            Personal grants
+          </Label>
+          <Switch
+            checked={personalGrantsEnabled}
+            disabled={disabled || !enabledModes.includes("operator")}
+            id="browser-environment-personal-grants"
+            onCheckedChange={setPersonalGrantsEnabled}
+          />
+        </div>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="browser-environment-configured-domains">
+            Environment domains
+          </Label>
+          <Input
+            disabled={disabled}
+            id="browser-environment-configured-domains"
+            onChange={(event) => setConfiguredDomains(event.target.value)}
+            placeholder="example.com, docs.example.org"
+            value={configuredDomains}
+          />
+          <p className="text-muted-foreground text-xs">
+            Each entry allows the canonical apex and its subdomains.
+          </p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="browser-environment-blocked-domains">
+            Blocked public domains
+          </Label>
+          <Input
+            disabled={disabled}
+            id="browser-environment-blocked-domains"
+            onChange={(event) => setBlockedDomains(event.target.value)}
+            placeholder="restricted.example.com"
+            value={blockedDomains}
+          />
+        </div>
+      </div>
+      <Button
+        disabled={disabled}
+        onClick={() =>
+          onSave({
+            enabledModes,
+            personalGrantsEnabled:
+              enabledModes.includes("operator") && personalGrantsEnabled,
+            configuredPublicDomains: parseDomainList(configuredDomains),
+            blockedPublicDomains: parseDomainList(blockedDomains),
+          })
+        }
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        Save Browser policy
+      </Button>
     </div>
   );
 }
@@ -617,7 +619,6 @@ function CapabilityRow({
 export function EnvironmentAppSettings({
   environmentId,
   initialConfiguration,
-  approvalReturnContext,
 }: Props) {
   const [configuration, setConfiguration] = useState(initialConfiguration);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
@@ -982,7 +983,6 @@ export function EnvironmentAppSettings({
         title="Access"
       >
         <SettingsDisclosure
-          defaultOpen={approvalReturnContext !== undefined}
           description={`${configuration.capabilities.length} capabilit${configuration.capabilities.length === 1 ? "y" : "ies"} available.`}
           title="Capability ceiling"
         >
@@ -998,11 +998,6 @@ export function EnvironmentAppSettings({
                 capability={capability}
                 environmentId={environmentId}
                 key={capability.key}
-                approvalReturnContext={
-                  approvalReturnContext?.capability === capability.key
-                    ? approvalReturnContext
-                    : undefined
-                }
                 onSaved={(saved) =>
                   updateConfiguration((current) => ({
                     ...current,

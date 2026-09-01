@@ -10,9 +10,15 @@ import type {
 import type { UIMessage } from "ai";
 
 export type KestrelOneExternalReplyUsage = {
+  modelCalls?: number;
   inputTokens?: number;
+  cachedInputTokens?: number;
   outputTokens?: number;
+  reasoningTokens?: number;
   totalTokens?: number;
+  durationMs?: number;
+  pricedCostUsd?: number;
+  validationRejections?: number;
 };
 
 export type KestrelOneExternalReply = {
@@ -77,24 +83,35 @@ export async function generateKestrelOneExternalReplyFromAgent(input: {
     },
     input.context
   );
+  const usage = readTokenUsage(terminal);
 
   return {
     userMessage,
-    text: readTerminalText(terminal),
-    usage: readTokenUsage(terminal),
+    text: readTerminalText(terminal, usage),
+    usage,
   };
 }
 
-function readTerminalText(terminal: RunnerRunTerminalEvent): string {
+function readTerminalText(
+  terminal: RunnerRunTerminalEvent,
+  usage: KestrelOneExternalReplyUsage | undefined,
+): string {
   if (terminal.type === "run.failed") {
     throw Object.assign(new Error(terminal.payload.error.message), {
       code: terminal.payload.error.code,
+      ...(usage !== undefined ? { usage } : {}),
     });
   }
 
   if (terminal.type === "run.cancelled") {
+    const cancellation = terminal.payload.result.output.errors.find(
+      (error) => error.code === "RUN_CANCELLED",
+    );
+    const details = readCancellationDetails(cancellation?.details);
     throw Object.assign(new Error("The Kestrel run was cancelled."), {
       code: "RUN_CANCELLED",
+      ...(details !== undefined ? { details } : {}),
+      ...(usage !== undefined ? { usage } : {}),
     });
   }
 
@@ -107,35 +124,76 @@ function readTerminalText(terminal: RunnerRunTerminalEvent): string {
   return assistantText;
 }
 
+function readCancellationDetails(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return;
+  }
+  const input = value as Record<string, unknown>;
+  const details: Record<string, unknown> = {};
+  if (
+    input.cancellationReason === "user_requested" ||
+    input.cancellationReason === "runner_shutdown"
+  ) {
+    details.cancellationReason = input.cancellationReason;
+  }
+  if (typeof input.modelWorkRecorded === "boolean") {
+    details.modelWorkRecorded = input.modelWorkRecorded;
+  }
+  if (
+    typeof input.validationRejections === "number" &&
+    Number.isFinite(input.validationRejections) &&
+    input.validationRejections >= 0
+  ) {
+    details.validationRejections = input.validationRejections;
+  }
+  return Object.keys(details).length > 0 ? details : undefined;
+}
+
 function readTokenUsage(
   terminal: RunnerRunTerminalEvent
 ): KestrelOneExternalReplyUsage | undefined {
-  if (terminal.type !== "run.completed") {
-    return;
-  }
-
   return tokenUsageFromTelemetry(terminal.payload.result.output.telemetry);
 }
 
 function tokenUsageFromTelemetry(
   telemetry: RunnerTelemetry | undefined
 ): KestrelOneExternalReplyUsage | undefined {
+  const modelCalls = readFiniteNumber(telemetry?.modelCalls);
   const inputTokens = readFiniteNumber(telemetry?.inputTokens);
+  const cachedInputTokens = readFiniteNumber(telemetry?.cachedInputTokens);
   const outputTokens = readFiniteNumber(telemetry?.outputTokens);
+  const reasoningTokens = readFiniteNumber(telemetry?.reasoningTokens);
   const totalTokens = readFiniteNumber(telemetry?.totalTokens);
+  const durationMs = readFiniteNumber(telemetry?.durationMs);
+  const pricedCostUsd = readFiniteNumber(telemetry?.pricedCostUsd);
+  const validationRejections = readFiniteNumber(telemetry?.validationRejections);
 
   if (
+    modelCalls === undefined &&
     inputTokens === undefined &&
+    cachedInputTokens === undefined &&
     outputTokens === undefined &&
-    totalTokens === undefined
+    reasoningTokens === undefined &&
+    totalTokens === undefined &&
+    durationMs === undefined &&
+    pricedCostUsd === undefined &&
+    validationRejections === undefined
   ) {
     return;
   }
 
   return {
+    ...(modelCalls !== undefined ? { modelCalls } : {}),
     ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(pricedCostUsd !== undefined ? { pricedCostUsd } : {}),
+    ...(validationRejections !== undefined ? { validationRejections } : {}),
   };
 }
 

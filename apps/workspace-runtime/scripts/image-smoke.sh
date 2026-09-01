@@ -137,7 +137,7 @@ docker run --rm \
     const collaborationTools = (profile?.toolAllowlist ?? []).filter(
       (toolName) => toolName.startsWith("dialog.") || toolName.startsWith("delegate.") || toolName === "agent.spawn",
     );
-    const expected = ["dialog.open", "dialog.send", "dialog.close"];
+    const expected = ["dialog.open", "dialog.send", "dialog.read", "dialog.list", "dialog.close"];
     if (
       profile?.id !== "kestrel" ||
       profile?.agentProfileId !== "kestrel" ||

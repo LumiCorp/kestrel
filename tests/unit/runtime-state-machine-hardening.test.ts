@@ -17,7 +17,10 @@ import { registerAgentReferenceRuntime } from "../../agents/reference-react/src/
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { buildAgentToolSuccessResult, rawOutputRefFor, unwrapAgentToolOutput } from "../../tools/toolResult.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
-import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
+import {
+  adaptLegacyTestToolGateway,
+  prepareTestToolCall,
+} from "../helpers/createTestToolGateway.js";
 
 
 const execFileAsync = promisify(execFile);
@@ -89,6 +92,258 @@ function createRuntime(
         }),
   });
 }
+
+test("completed cleanup release survives Web requeue without scheduler or duplicate release", async () => {
+  const store = new InMemorySessionStore();
+  const sessionId = "prepared-cleanup-resume";
+  const runId = "prepared-cleanup-original-run";
+  const preparedCallId = "prepared-cleanup-release";
+  const idempotencyKey = `${preparedCallId}:release`;
+  const cleanup = {
+    version: "runner_prepared_approval_cleanup_v1" as const,
+    organizationId: "org-cleanup",
+    threadId: sessionId,
+    turnId: "turn-cleanup",
+    interactionId: "interaction-cleanup",
+    requestId: "approval-cleanup",
+    failureCode: "EXTERNAL_APPROVAL_EXPIRED" as const,
+    failureMessage: "Expired.",
+  };
+  const initialSession = await store.ensureSession(sessionId);
+  await store.patchSessionState({
+    sessionId,
+    expectedVersion: initialSession.version,
+    statePatch: {
+      agent: {
+        terminal: {
+          status: "COMPLETED",
+          finalStepAgent: "agent.exec.wait_approval",
+          finalizedAt: "2026-08-27T00:00:02.000Z",
+          reasonCode: cleanup.failureCode,
+          message: cleanup.failureMessage,
+          preparedApprovalCleanup: {
+            version: "prepared_approval_cleanup_terminal_v1",
+            releaseEffectIdempotencyKey: idempotencyKey,
+            cleanup,
+          },
+        },
+      },
+    },
+  });
+  let modelCalls = 0;
+  let releaseAttempts = 0;
+  let releases = 0;
+  const baseGateway = adaptLegacyTestToolGateway({
+    call: async () => {
+      throw new Error("cleanup must not execute the prepared tool");
+    },
+  });
+  const gateway = {
+    ...baseGateway,
+    releasePreparedToolCall: async () => {
+      releaseAttempts += 1;
+      if (releaseAttempts === 1) {
+        throw new Error("Transient release failure.");
+      }
+      releases += 1;
+    },
+  };
+  const preparedToolCall = await prepareTestToolCall({
+    gateway,
+    toolName: "exec_command",
+    toolInput: { cmd: "true" },
+    runId,
+    sessionId,
+    callId: preparedCallId,
+  });
+  const effect = {
+    runId,
+    sessionId,
+    stepIndex: 1,
+    type: "release_prepared_tool_call",
+    payload: {
+      preparedToolCall,
+      preparedApprovalCleanup: cleanup,
+    },
+    idempotencyKey,
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: "2026-08-27T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push(
+    structuredClone(effect),
+  );
+  const kestrel = createRuntime(store, {}, {
+    toolGateway: gateway,
+    modelGateway: new RetryingModelGateway(async () => {
+      modelCalls += 1;
+      throw new Error("cleanup must not use a model");
+    }),
+  });
+
+  const firstOutput = await kestrel.run({
+    id: "evt-prepared-cleanup-first-resume",
+    type: "user.approval",
+    sessionId,
+    payload: { preparedApprovalCleanup: cleanup },
+  });
+  const secondOutput = await kestrel.run({
+    id: "evt-prepared-cleanup-retry",
+    type: "user.approval",
+    sessionId,
+    payload: { preparedApprovalCleanup: cleanup },
+  });
+  const thirdOutput = await kestrel.run({
+    id: "evt-prepared-cleanup-web-requeue",
+    type: "user.approval",
+    sessionId,
+    payload: { preparedApprovalCleanup: cleanup },
+  });
+
+  assert.equal(firstOutput.status, "FAILED");
+  assert.equal(
+    secondOutput.status,
+    "COMPLETED",
+    JSON.stringify(secondOutput),
+  );
+  assert.equal(thirdOutput.status, "COMPLETED", JSON.stringify(thirdOutput));
+  assert.equal(releaseAttempts, 2);
+  assert.equal(releases, 1);
+  assert.equal(
+    store.operationLog.filter((entry) =>
+      entry ===
+        `commitPreparedApprovalCleanupEffectDone:${idempotencyKey}`
+    ).length,
+    1,
+  );
+  assert.equal(modelCalls, 0);
+  assert.equal(
+    (await store.getEffectResult(idempotencyKey))?.status,
+    "DONE",
+  );
+  assert.equal(
+    store.getRunEvents().filter((event) =>
+      event.type === "run.completed" &&
+      event.metadata?.reason === "prepared_approval_cleanup_completed"
+    ).length,
+    2,
+  );
+});
+
+test("malformed cleanup DONE evidence is quarantined and released exactly once before terminal recovery", async () => {
+  const store = new InMemorySessionStore();
+  const sessionId = "prepared-cleanup-invalid-done";
+  const runId = "prepared-cleanup-invalid-run";
+  const preparedCallId = "prepared-cleanup-invalid-call";
+  const idempotencyKey = `${preparedCallId}:release`;
+  const cleanup = {
+    version: "runner_prepared_approval_cleanup_v1" as const,
+    organizationId: "org-cleanup",
+    threadId: sessionId,
+    turnId: "turn-cleanup-invalid",
+    interactionId: "interaction-cleanup-invalid",
+    requestId: "approval-cleanup-invalid",
+    failureCode: "EXTERNAL_APPROVAL_EXPIRED" as const,
+    failureMessage: "Expired.",
+  };
+  const initialSession = await store.ensureSession(sessionId);
+  await store.patchSessionState({
+    sessionId,
+    expectedVersion: initialSession.version,
+    statePatch: {
+      agent: {
+        terminal: {
+          status: "COMPLETED",
+          finalStepAgent: "agent.exec.wait_approval",
+          finalizedAt: "2026-08-27T00:00:02.000Z",
+          reasonCode: cleanup.failureCode,
+          message: cleanup.failureMessage,
+          preparedApprovalCleanup: {
+            version: "prepared_approval_cleanup_terminal_v1",
+            releaseEffectIdempotencyKey: idempotencyKey,
+            cleanup,
+          },
+        },
+      },
+    },
+  });
+  let releaseCalls = 0;
+  const gateway = {
+    ...adaptLegacyTestToolGateway({
+      call: async () => {
+        throw new Error("cleanup must not execute the prepared tool");
+      },
+    }),
+    releasePreparedToolCall: async () => {
+      releaseCalls += 1;
+    },
+  };
+  const preparedToolCall = await prepareTestToolCall({
+    gateway,
+    toolName: "exec_command",
+    toolInput: { cmd: "true" },
+    runId,
+    sessionId,
+    callId: preparedCallId,
+  });
+  const effect = {
+    runId,
+    sessionId,
+    stepIndex: 1,
+    type: "release_prepared_tool_call",
+    payload: { preparedToolCall, preparedApprovalCleanup: cleanup },
+    idempotencyKey,
+    failurePolicy: "STOP" as const,
+    status: "FAILED" as const,
+    createdAt: "2026-08-27T00:00:00.000Z",
+  };
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push(
+    structuredClone(effect),
+  );
+  await store.saveEffectResult(runId, sessionId, {
+    idempotencyKey,
+    status: "DONE",
+    output: {
+      releasedPreparedInvocationId: "wrong-call",
+      unexpected: true,
+    },
+    timestamp: "2026-08-27T00:00:01.000Z",
+  }, {
+    version: "prepared_approval_cleanup_result_persistence_v1",
+    idempotencyKey,
+  });
+  const kestrel = createRuntime(store, {}, { toolGateway: gateway });
+  const run = (id: string) => kestrel.run({
+    id,
+    type: "user.approval",
+    sessionId,
+    payload: { preparedApprovalCleanup: cleanup },
+  });
+
+  const corrected = await run("evt-cleanup-quarantine-and-release");
+  assert.equal(corrected.status, "COMPLETED", JSON.stringify(corrected));
+  assert.equal((await store.getPersistedEffect(idempotencyKey))?.status, "DONE");
+  const exactDone = await store.getEffectResult(idempotencyKey);
+  assert.equal(exactDone?.status, "DONE");
+  assert.deepEqual(exactDone?.output, {
+    releasedPreparedInvocationId: preparedCallId,
+  });
+  const recovered = await run("evt-cleanup-corrected-recovery");
+  assert.equal(recovered.status, "COMPLETED", JSON.stringify(recovered));
+  assert.equal(releaseCalls, 1);
+  assert.equal(
+    store.operationLog.filter((entry) => entry ===
+      `quarantineInvalidPreparedApprovalCleanupDoneEvidence:${idempotencyKey}`
+    ).length,
+    1,
+  );
+  assert.equal(
+    store.operationLog.filter((entry) => entry ===
+      `resetPreparedApprovalCleanupEffectExecution:${idempotencyKey}`
+    ).length,
+    1,
+  );
+});
 
 test("managed mutation tools capture pre/post workspace checkpoints and expose changed files", async () => {
   const store = new InMemorySessionStore();

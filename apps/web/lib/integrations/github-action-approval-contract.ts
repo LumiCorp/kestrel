@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import { readKestrelTerminalInteraction } from "@kestrel-agents/ai-sdk";
+import {
+  parseRunnerInteractionRequest,
+  RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4,
+  type RunnerHostedToolApprovalInteractionV4,
+} from "@kestrel-agents/protocol";
 import type { RunnerRunTerminalEvent } from "@kestrel-agents/sdk";
 
 export const githubMutationOperations = [
@@ -13,16 +17,34 @@ export const githubMutationOperations = [
 export type GitHubMutationOperation = (typeof githubMutationOperations)[number];
 
 export function readGitHubApprovalRequest(event: RunnerRunTerminalEvent) {
-  const interaction = readKestrelTerminalInteraction(event);
-  const approval = interaction?.approval;
-  if (!(interaction?.kind === "approval" && approval)) return null;
+  if (
+    event.type !== "run.completed" ||
+    event.payload.result.output.status !== "WAITING"
+  ) {
+    return null;
+  }
+  const rawInteraction = event.payload.result.output.waitFor?.interaction;
+  if (rawInteraction === undefined) return null;
+  let interaction: ReturnType<typeof parseRunnerInteractionRequest>;
+  try {
+    interaction = parseRunnerInteractionRequest(rawInteraction);
+  } catch {
+    return null;
+  }
+  if (
+    interaction.version !== RUNNER_HOSTED_TOOL_APPROVAL_INTERACTION_V4 ||
+    interaction.kind !== "approval"
+  ) {
+    return null;
+  }
+  const approval = interaction.approval as RunnerHostedToolApprovalInteractionV4["approval"];
   const operation = operationForToolName(approval.toolName);
   if (!operation) return null;
   const metadata =
     event.type === "run.completed"
       ? asRecord(event.payload.result.output.waitFor?.metadata)
       : null;
-  const input = asRecord(approval.input) ?? asRecord(metadata?.toolInput);
+  const input = asRecord(metadata?.toolInput);
   if (!input) return null;
   const repository = readString(input.repository);
   if (!repository) return null;

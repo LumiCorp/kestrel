@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   encodeConversationMessageCursor,
+  HOSTED_APPROVAL_PRODUCER_PROTOCOL,
   parseConversationMessageCursor,
   type RunnerActorMetadata,
 } from "@kestrel-agents/protocol";
@@ -28,6 +29,7 @@ import type {
   RunEvent,
   RunLogEntry,
   RunToolUpdateV1,
+  RunToolUpdateV2,
   ToolRuntimeStatus,
   UserTerminalReadResult,
   UserTerminalRecord,
@@ -86,6 +88,7 @@ import type {
   RunnerCommandMetadata,
   RunnerPingCommandPayload,
   SessionDescribeCommandPayload,
+  SessionDescribedEventPayload,
   SessionStateCommandPayload,
   TaskGraphGetCommandPayload,
   TaskGraphUpdateCommandPayload,
@@ -140,6 +143,18 @@ import {
   type KestrelOneProfileOverlay,
 } from "../../src/profile/kestrelOnePolicy.js";
 import {
+  DEFAULT_ACT_SUBMODE,
+  resolveEffectiveToolDecisionV1,
+  resolveToolApprovalDispositionV1,
+  type EffectiveToolDecisionV1,
+} from "../../src/mode/contracts.js";
+import { buildExecutionPolicyFromPack } from "../../src/mode/approvalPolicyPacks.js";
+import {
+  hashCanonical,
+  toToolDescriptorRefV1,
+} from "../../src/kestrel/contracts/tool-contract.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
+import {
   type DelegationTaskUpdate,
   KestrelChatRuntime,
   type KestrelChatRuntimeOptions,
@@ -174,6 +189,7 @@ interface ActiveRunEntry {
   abortController: AbortController;
   runId?: string | undefined;
   cancelRequested?: boolean | undefined;
+  cancellationReason?: CancellationReason | undefined;
   finalizingAnswer?: boolean | undefined;
   exactEffectCandidate?: {
     runId: string;
@@ -192,6 +208,10 @@ export interface RunnerProfileProvider {
 export type RunnerProfileSourcePolicy =
   | "inline-or-registered"
   | "registered-only";
+
+export interface RunnerSessionDescriber {
+  describeSession(sessionId: string): Promise<SessionDescribedEventPayload | undefined>;
+}
 
 export interface RunnerRuntime {
   runTurn(
@@ -328,6 +348,7 @@ export interface RunnerRuntime {
           inbox?: import("../../src/orchestration/contracts.js").OperatorInboxSnapshot | undefined;
           view?: import("../../src/orchestration/contracts.js").OperatorThreadView | undefined;
           result?: RunTurnResult | undefined;
+          modeResolution?: import("../../src/mode/contracts.js").ModeResolutionV1 | undefined;
         };
         completion: Promise<RunTurnResult>;
       }>)
@@ -604,6 +625,7 @@ export class RunnerHost {
   private readonly diagnosticsStore: Pick<DiagnosticLogStore, "append">;
   private readonly exactEffectResultStore: ExactEffectResultStore | undefined;
   private readonly exactEffectResultTenantId: string | undefined;
+  private readonly sessionDescriber: RunnerSessionDescriber | undefined;
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly commandBySession = new Map<string, string>();
   private readonly commandTypeBySession = new Map<
@@ -634,6 +656,7 @@ export class RunnerHost {
       diagnosticsStore?: Pick<DiagnosticLogStore, "append"> | undefined;
       exactEffectResultStore?: ExactEffectResultStore | undefined;
       exactEffectResultTenantId?: string | undefined;
+      sessionDescriber?: RunnerSessionDescriber | undefined;
     } = {},
   ) {
     this.writer = writer;
@@ -644,6 +667,7 @@ export class RunnerHost {
     this.diagnosticsStore = options.diagnosticsStore ?? new DiagnosticLogStore();
     this.exactEffectResultStore = options.exactEffectResultStore;
     this.exactEffectResultTenantId = options.exactEffectResultTenantId?.trim() || undefined;
+    this.sessionDescriber = options.sessionDescriber;
   }
 
   async effectResultGet(commandId: string, payload: EffectResultGetCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
@@ -709,7 +733,20 @@ export class RunnerHost {
       profile: resolution.resolvedProfile,
       environmentPresetId: payload.environmentPresetId,
     });
-    this.writer.emit("execution-profile.resolved", resolution, { commandId });
+    const exactToolDecisions = payload.exactToolNames === undefined
+      ? undefined
+      : resolveExactToolPreflightDecisions(
+          resolution.resolvedProfile,
+          payload.exactToolNames,
+        );
+    this.writer.emit(
+      "execution-profile.resolved",
+      {
+        ...resolution,
+        ...(exactToolDecisions === undefined ? {} : { exactToolDecisions }),
+      },
+      { commandId },
+    );
   }
 
   runStart(
@@ -931,7 +968,11 @@ export class RunnerHost {
         this.writer.emit("run.cancelled", {
           sessionId: turn.sessionId,
           runId: emittedRunId,
-          result: buildNonResponsiveTerminalResult({ status: "CANCELLED", sessionId: turn.sessionId, runId: emittedRunId }),
+        result: buildCancelledTerminalResult(terminalResult, {
+          sessionId: turn.sessionId,
+          runId: emittedRunId,
+          reason: active.cancellationReason ?? "user_requested",
+        }),
         }, { commandId, runId: emittedRunId, sessionId: turn.sessionId });
         return;
       }
@@ -1477,12 +1518,11 @@ export class RunnerHost {
             rejectDurablyCompletedCancellation();
             return;
           }
-          if (claim.status !== "cancelled") {
+          if (claim.status !== "cancelled" && claim.status !== "started") {
             return this.emitRunCancelNotFound(commandId, payload, active.runId);
           }
         }
-        active.cancelRequested = true;
-        active.abortController.abort();
+        requestActiveRunCancellation(active, "user_requested");
         cancelledRunId = active.runId;
         cancelled = true;
       }
@@ -1550,32 +1590,34 @@ export class RunnerHost {
     payload: SessionDescribeCommandPayload,
     metadata?: RunnerCommandMetadata
   ): Promise<void> {
+    if (this.sessionDescriber !== undefined) {
+      const described = await this.sessionDescriber.describeSession(payload.sessionId);
+      this.emitSessionDescription(commandId, payload.sessionId, described);
+      return;
+    }
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.describeSession === "function") {
         const described = await runtime.describeSession(payload.sessionId);
         if (described !== undefined) {
-          this.writer.emit("session.described", described, {
-            commandId,
-            sessionId: described.sessionId,
-            ...(described.threadId !== undefined
-              ? { threadId: described.threadId }
-              : {}),
-          });
+          this.emitSessionDescription(commandId, payload.sessionId, described);
           return;
         }
       }
     }
-    this.writer.emit(
-      "session.described",
-      {
-        sessionId: payload.sessionId,
-        version: 0,
-      },
-      {
-        commandId,
-        sessionId: payload.sessionId,
-      }
-    );
+    this.emitSessionDescription(commandId, payload.sessionId, undefined);
+  }
+
+  private emitSessionDescription(
+    commandId: string,
+    sessionId: string,
+    described: SessionDescribedEventPayload | undefined,
+  ): void {
+    const payload = described ?? { sessionId, version: 0 };
+    this.writer.emit("session.described", payload, {
+      commandId,
+      sessionId: payload.sessionId,
+      ...(payload.threadId !== undefined ? { threadId: payload.threadId } : {}),
+    });
   }
 
   async sessionState(
@@ -2013,8 +2055,12 @@ export class RunnerHost {
           this.writer.emit("run.started", {
             sessionId,
             eventType: "user.reply",
-            ...(payload.interactionMode !== undefined ? { interactionMode: payload.interactionMode } : {}),
-            ...(payload.actSubmode !== undefined ? { actSubmode: payload.actSubmode } : {}),
+            ...(execution.accepted.modeResolution?.interactionMode !== undefined
+              ? { interactionMode: execution.accepted.modeResolution.interactionMode }
+              : payload.interactionMode !== undefined ? { interactionMode: payload.interactionMode } : {}),
+            ...(execution.accepted.modeResolution?.actSubmode !== undefined
+              ? { actSubmode: execution.accepted.modeResolution.actSubmode }
+              : payload.actSubmode !== undefined ? { actSubmode: payload.actSubmode } : {}),
           }, {
             commandId,
             sessionId,
@@ -2031,10 +2077,10 @@ export class RunnerHost {
               this.writer.emit("run.cancelled", {
                 sessionId: completedSessionId,
                 runId,
-                result: buildNonResponsiveTerminalResult({
-                  status: "CANCELLED",
+                result: buildCancelledTerminalResult(result, {
                   sessionId: completedSessionId,
                   runId,
+                  reason: active.cancellationReason ?? "user_requested",
                 }),
               }, { commandId, sessionId: completedSessionId, runId, threadId: payload.threadId });
               return;
@@ -3021,8 +3067,7 @@ export class RunnerHost {
     this.closing = true;
     if (options.abortActiveRuns === true) {
       for (const active of this.activeRuns.values()) {
-        active.cancelRequested = true;
-        active.abortController.abort();
+        requestActiveRunCancellation(active, "runner_shutdown");
       }
     }
     await Promise.allSettled([...this.activeExecutions]);
@@ -3431,7 +3476,7 @@ export class RunnerHost {
     );
   }
 
-  private emitToolUpdate(update: RunToolUpdateV1): void {
+  private emitToolUpdate(update: RunToolUpdateV1 | RunToolUpdateV2): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     if (
       (normalizedUpdate.phase === "started" || normalizedUpdate.phase === "completed") &&
@@ -3806,6 +3851,94 @@ function buildNonResponsiveTerminalResult(input: {
   };
 }
 
+function buildCancelledTerminalResult(
+  result: RunTurnResult,
+  identity: {
+    sessionId: string;
+    runId: string;
+    reason: CancellationReason;
+  },
+): RunTurnResult {
+  const telemetry = projectCancellationTelemetry(result.output.telemetry);
+  return {
+    assistantText: null,
+    output: {
+      status: "FAILED",
+      sessionId: identity.sessionId,
+      runId: identity.runId,
+      quality: {
+        citationCoverage: safeNonNegativeNumber(
+          result.output.quality.citationCoverage,
+        ),
+        unresolvedClaims: safeNonNegativeNumber(
+          result.output.quality.unresolvedClaims,
+        ),
+        reworkRate: safeNonNegativeNumber(result.output.quality.reworkRate),
+        thrashIndex: safeNonNegativeNumber(result.output.quality.thrashIndex),
+      },
+      errors: [{
+        code: "RUN_CANCELLED",
+        message: "Run cancelled.",
+        details: {
+          cancellationReason: identity.reason,
+          modelWorkRecorded: telemetry.modelCalls > 0,
+          validationRejections: telemetry.validationRejections ?? 0,
+        },
+      }],
+      telemetry,
+    },
+  };
+}
+
+type CancellationReason = "user_requested" | "runner_shutdown";
+
+function requestActiveRunCancellation(
+  active: ActiveRunEntry,
+  reason: CancellationReason,
+): void {
+  if (active.cancelRequested === true) return;
+  active.cancelRequested = true;
+  active.cancellationReason = reason;
+  active.abortController.abort();
+}
+
+function projectCancellationTelemetry(
+  telemetry: RunTurnResult["output"]["telemetry"],
+): RunTurnResult["output"]["telemetry"] {
+  const required = {
+    stepsExecuted: safeNonNegativeNumber(telemetry.stepsExecuted),
+    toolCalls: safeNonNegativeNumber(telemetry.toolCalls),
+    modelCalls: safeNonNegativeNumber(telemetry.modelCalls),
+    durationMs: safeNonNegativeNumber(telemetry.durationMs),
+  };
+  const optional = {} as Record<string, number>;
+  for (const field of [
+    "effectToolCalls",
+    "actionModelCalls",
+    "maintenanceModelCalls",
+    "inputTokens",
+    "cachedInputTokens",
+    "cacheWriteInputTokens",
+    "outputTokens",
+    "reasoningTokens",
+    "totalTokens",
+    "pricedCostUsd",
+    "validationRejections",
+  ] as const) {
+    const value = telemetry[field];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      optional[field] = value;
+    }
+  }
+  return { ...required, ...optional };
+}
+
+function safeNonNegativeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : 0;
+}
+
 function isSessionVersionConflictError(error: unknown): error is Error {
   return (
     error instanceof Error &&
@@ -3889,6 +4022,12 @@ function createDefaultProfileProvider(): RunnerProfileProvider {
           id: payload.environmentPresetId,
           version: provenance.environmentPreset.version,
         },
+        ...(payload.environmentPresetId === "workspace_hosted"
+          ? {
+              hostedApprovalProducerProtocol:
+                HOSTED_APPROVAL_PRODUCER_PROTOCOL,
+            }
+          : {}),
         resolvedProfile: registered.profile,
       };
     },
@@ -3989,4 +4128,96 @@ function buildDefaultExecutionProfileProvenance(
         }
       : {}),
   };
+}
+
+function resolveExactToolPreflightDecisions(
+  profile: TuiProfile,
+  exactToolNames: readonly string[],
+): Record<string, EffectiveToolDecisionV1> {
+  const decisions: Record<string, EffectiveToolDecisionV1> = {};
+  const actorToolAccess = new Set(profile.toolAllowlist ?? []);
+  const executionPolicy = buildExecutionPolicyFromPack(
+    profile.approvalPolicyPackId,
+  );
+
+  for (const toolName of exactToolNames) {
+    const descriptor = defaultToolCatalog.getDescriptor(toolName);
+    if (descriptor === undefined) {
+      throw Object.assign(
+        new Error(
+          `Exact-tool preflight cannot resolve canonical descriptor '${toolName}'.`,
+        ),
+        {
+          code: "EXACT_TOOL_DESCRIPTOR_NOT_FOUND",
+          details: { toolName },
+        },
+      );
+    }
+    const configuredApprovalMode =
+      profile.kestrelOneAppApprovalModes?.[toolName];
+    const approvalPolicyEvidence =
+      profile.kestrelOneAppApprovalPolicies?.[toolName];
+    const hasHostedAppPolicy =
+      configuredApprovalMode !== undefined ||
+      approvalPolicyEvidence !== undefined;
+    const upstreamAuthority = hasHostedAppPolicy
+      ? {
+          kind: "hosted_app_policy" as const,
+          revision: hashCanonical({
+            toolId: toolName,
+            configuredAppApprovalMode: configuredApprovalMode,
+            approvalPolicyEvidence,
+            minimumApprovalMode:
+              descriptor.capability.minimumApprovalMode ?? "auto",
+          }),
+        }
+      : {
+          kind: "runtime_policy" as const,
+          revision: hashCanonical({ toolId: toolName, policy: "runtime" }),
+        };
+    const approvalAuthority = {
+      kind: upstreamAuthority.kind,
+      revision: hashCanonical({
+        version: "tool-approval-authority-v1",
+        descriptor: toToolDescriptorRefV1(descriptor),
+        upstream: upstreamAuthority,
+      }),
+    };
+    const approvalDisposition = approvalPolicyEvidence !== undefined
+      ? resolveToolApprovalDispositionV1({
+          environment: approvalPolicyEvidence.environment,
+          project: approvalPolicyEvidence.project,
+          subject: approvalPolicyEvidence.subject,
+          minimum:
+            descriptor.capability.minimumApprovalMode ??
+            approvalPolicyEvidence.minimum,
+          authority: approvalAuthority,
+        })
+      : resolveToolApprovalDispositionV1({
+          environment: configuredApprovalMode ?? "auto",
+          minimum: descriptor.capability.minimumApprovalMode ?? "auto",
+          authority: approvalAuthority,
+        });
+    const requiredCapabilities = [
+      ...(descriptor.capability.approvalCapabilities ?? []).filter(
+        (capability) => capability !== "external.confirm",
+      ),
+      ...(approvalDisposition.mode === "ask"
+        ? (["external.confirm"] as const)
+        : []),
+    ];
+
+    decisions[toolName] = resolveEffectiveToolDecisionV1({
+      interactionMode: "build",
+      actSubmode: profile.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
+      toolClass: descriptor.capability.executionClass,
+      allowedInteractionModes: descriptor.capability.allowedInteractionModes,
+      executionPolicy,
+      requiredCapabilities: [...new Set(requiredCapabilities)],
+      approvalDisposition,
+      actorAccess: actorToolAccess.has(toolName),
+    });
+  }
+
+  return decisions;
 }

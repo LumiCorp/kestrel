@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { RunnerProfile } from "@kestrel-agents/sdk/runner";
 import {
+  resolveKestrelOneToolProfileConfiguration,
   resolveKestrelOneToolCapability,
   restrictKestrelOneProfileTools,
 } from "./kestrel-tool-profile";
@@ -22,6 +23,10 @@ const profile = {
 } as RunnerProfile;
 
 test("hosted runtime tools resolve to the existing App capability owner", () => {
+  assert.deepEqual(resolveKestrelOneToolCapability("exec_command"), {
+    appKey: "built_in.workspace",
+    capabilityKey: "executeCommand",
+  });
   assert.deepEqual(resolveKestrelOneToolCapability("internet.research"), {
     appKey: "tavily",
     capabilityKey: "research",
@@ -30,7 +35,77 @@ test("hosted runtime tools resolve to the existing App capability owner", () => 
     appKey: "built_in.weather",
     capabilityKey: "getWeather",
   });
+  assert.deepEqual(resolveKestrelOneToolCapability("browser.navigate"), {
+    appKey: "built_in.browser",
+    capabilityKey: "navigate",
+  });
   assert.equal(resolveKestrelOneToolCapability("unknown.tool"), null);
+});
+
+test("hosted Browser profile exposes only enabled capabilities and preserves approval semantics", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile: { ...profile, toolAllowlist: ["browser.snapshot", "browser.navigate", "browser.upload", "browser.download"] },
+    effectiveCapabilities: [
+      "app:built_in.browser.snapshot:auto",
+      "app:built_in.browser.navigate:auto",
+      "app:built_in.browser.upload:auto",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, ["browser.snapshot", "browser.navigate", "browser.upload"]);
+  assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    "browser.snapshot": "auto",
+    "browser.navigate": "auto",
+    "browser.upload": "ask",
+  });
+});
+
+test("hosted command visibility and approval follow effective App policy", () => {
+  const commandProfile = {
+    ...profile,
+    toolAllowlist: ["exec_command"],
+  };
+  const ask = restrictKestrelOneProfileTools({
+    profile: commandProfile,
+    effectiveCapabilities: [
+      "app:built_in.workspace.executeCommand:ask",
+    ],
+    approvalPolicies: [
+      {
+        appKey: "built_in.workspace",
+        capabilityKey: "executeCommand",
+        environment: "auto",
+        project: "ask",
+        minimum: "auto",
+      },
+    ],
+  });
+  assert.deepEqual(ask.toolAllowlist, ["exec_command"]);
+  assert.deepEqual(ask.kestrelOneAppApprovalModes, {
+    exec_command: "ask",
+  });
+  assert.deepEqual(ask.kestrelOneAppApprovalPolicies, {
+    exec_command: {
+      environment: "auto",
+      project: "ask",
+      minimum: "auto",
+    },
+  });
+
+  const automatic = restrictKestrelOneProfileTools({
+    profile: commandProfile,
+    effectiveCapabilities: [
+      "app:built_in.workspace.executeCommand:auto",
+    ],
+  });
+  assert.deepEqual(automatic.toolAllowlist, ["exec_command"]);
+  assert.equal(automatic.kestrelOneAppApprovalModes?.exec_command, "auto");
+
+  const blocked = restrictKestrelOneProfileTools({
+    profile: commandProfile,
+    effectiveCapabilities: [],
+  });
+  assert.deepEqual(blocked.toolAllowlist, []);
+  assert.deepEqual(blocked.kestrelOneAppApprovalModes, {});
 });
 
 test("calendar tools are exposed only for effective Project capabilities", () => {
@@ -55,6 +130,31 @@ test("calendar tools are exposed only for effective Project capabilities", () =>
     "kestrel.files.open": "auto",
     "kestrel_one.google_calendar_list_events": "auto",
     "kestrel_one.google_calendar_check_availability": "ask",
+  });
+});
+
+test("Gmail tools are exposed only for their effective capability and keep send approval", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile: {
+      ...profile,
+      toolAllowlist: [
+        "kestrel_one.gmail_search_messages",
+        "kestrel_one.gmail_get_message",
+        "kestrel_one.gmail_send_message",
+      ],
+    },
+    effectiveCapabilities: [
+      "app:google_workspace.gmail.messages.search:auto",
+      "app:google_workspace.gmail.messages.send:ask",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, [
+    "kestrel_one.gmail_search_messages",
+    "kestrel_one.gmail_send_message",
+  ]);
+  assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    "kestrel_one.gmail_search_messages": "auto",
+    "kestrel_one.gmail_send_message": "ask",
   });
 });
 
@@ -99,12 +199,45 @@ test("Microsoft 365 tools follow effective capability packs", () => {
   });
 });
 
+test("Teams chat messages require their own effective read capability", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile: {
+      ...profile,
+      toolAllowlist: [
+        "kestrel_one.microsoft_365_list_chats",
+        "kestrel_one.microsoft_365_list_chat_messages",
+      ],
+    },
+    effectiveCapabilities: [
+      "app:microsoft_365.teams.chat.read:auto",
+      "app:microsoft_365.teams.chat.messages.read:auto",
+    ],
+  });
+  assert.deepEqual(restricted.toolAllowlist, [
+    "kestrel_one.microsoft_365_list_chats",
+    "kestrel_one.microsoft_365_list_chat_messages",
+  ]);
+});
+
 test("calendar tools are removed when the user has no effective capability", () => {
   const restricted = restrictKestrelOneProfileTools({
     profile,
     effectiveCapabilities: [],
   });
   assert.deepEqual(restricted.toolAllowlist, []);
+});
+
+test("a materialized email receipt adds only the receipt-scoped automatic reader", () => {
+  const configuration = resolveKestrelOneToolProfileConfiguration({
+    availableToolNames: [],
+    effectiveCapabilities: [],
+    emailAttachmentReadAvailable: true,
+  });
+  assert.deepEqual(configuration.additionalToolNames, [
+    "kestrel_one.email_get_attachment",
+  ]);
+  assert.deepEqual(configuration.kestrelOneAppApprovalModes, {});
+  assert.deepEqual(configuration.kestrelOneAppApprovalPolicies, {});
 });
 
 test("Workspace preview tools follow Environment App approval capabilities", () => {

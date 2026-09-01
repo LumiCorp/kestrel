@@ -1,5 +1,18 @@
 import type {
   DesktopBridgeInfo,
+  DesktopBrowserPersonalDomainPartitionV1,
+  DesktopBrowserPersonalDomainListRequest,
+  DesktopBrowserPersonalDomainProjectionV1,
+  DesktopBrowserPersonalDomainProvenanceV1,
+  DesktopBrowserPersonalDomainRecordV1,
+  DesktopBrowserPersonalDomainRevokeRequest,
+  DesktopBrowserPersonalDomainsV1,
+  DesktopBrowserViewerBindingV1,
+  DesktopBrowserViewerFrameV1,
+  DesktopBrowserViewerInputRequestV1,
+  DesktopBrowserViewerInputV1,
+  DesktopBrowserViewerLeaseRequestV1,
+  DesktopBrowserViewerStateV1,
   DesktopBootState,
   DesktopLaunchState,
   DesktopOnboardingDraftInput,
@@ -107,6 +120,8 @@ import type {
   KestrelOneAccountStatus,
   KestrelOneAuthorizationSessionView,
   KestrelOneDesktopPreview,
+  KestrelOneReceivingConnection,
+  KestrelOneReceivingDomain,
   KestrelOneSubmittedTurn,
   KestrelOneThreadSnapshot,
 } from "../../../src/localCore/kestrelOneAccount.js";
@@ -121,16 +136,42 @@ import type {
   WorkspaceSkillSource,
 } from "../../../src/skills/contracts.js";
 export {
+  DESKTOP_BROWSER_PERSONAL_DOMAIN_PARTITION_VERSION,
+  DESKTOP_BROWSER_PERSONAL_DOMAIN_PROVENANCE_VERSION,
+  DESKTOP_BROWSER_PERSONAL_DOMAIN_RECORD_VERSION,
+  DESKTOP_BROWSER_PERSONAL_DOMAINS_VERSION,
+  DESKTOP_BROWSER_VIEWER_FRAME_VERSION,
+  DESKTOP_BROWSER_VIEWER_INPUT_VERSION,
+  DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
+  DESKTOP_BROWSER_VIEWER_STATE_VERSION,
   DESKTOP_BRIDGE_CAPABILITIES,
   DESKTOP_BRIDGE_VERSION,
   DESKTOP_LEGACY_UI_STORAGE_KEYS,
   DESKTOP_UI_STATE_SOURCE,
   DESKTOP_UI_STATE_RENDERER_SOURCE,
   DESKTOP_UI_STATE_VERSION,
+  parseDesktopBrowserPersonalDomainListRequest,
+  parseDesktopBrowserPersonalDomainRevokeRequest,
+  parseDesktopBrowserViewerBinding,
+  parseDesktopBrowserViewerInputRequest,
+  parseDesktopBrowserViewerLeaseRequest,
   parseDesktopProviderModelCatalogRequest,
 } from "../../../src/desktopShell/contracts.js";
 export type {
   DesktopAttachmentMetadata,
+  DesktopBrowserPersonalDomainPartitionV1,
+  DesktopBrowserPersonalDomainListRequest,
+  DesktopBrowserPersonalDomainProjectionV1,
+  DesktopBrowserPersonalDomainProvenanceV1,
+  DesktopBrowserPersonalDomainRecordV1,
+  DesktopBrowserPersonalDomainRevokeRequest,
+  DesktopBrowserPersonalDomainsV1,
+  DesktopBrowserViewerBindingV1,
+  DesktopBrowserViewerFrameV1,
+  DesktopBrowserViewerInputRequestV1,
+  DesktopBrowserViewerInputV1,
+  DesktopBrowserViewerLeaseRequestV1,
+  DesktopBrowserViewerStateV1,
   DesktopCapabilityPackId,
   DesktopCredentialedModelProvider,
   DesktopBridgeCapabilityId,
@@ -275,9 +316,21 @@ export type {
   KestrelOneAccountStatus,
   KestrelOneAuthorizationSessionView,
   KestrelOneDesktopPreview,
+  KestrelOneReceivingConnection,
+  KestrelOneReceivingDomain,
   KestrelOneSubmittedTurn,
   KestrelOneThreadSnapshot,
 } from "../../../src/localCore/kestrelOneAccount.js";
+
+export type DesktopKestrelOneReceivingConnectionReadResult =
+  | {
+      status: "ok";
+      connection: KestrelOneReceivingConnection;
+    }
+  | {
+      status: "authorization_rejected";
+      httpStatus: 401 | 403;
+    };
 export type {
   KestrelUninstallApplyResultV1,
   KestrelUninstallPlanOptions,
@@ -479,6 +532,36 @@ export interface DesktopBridge {
   ): Promise<DesktopCapabilityConfigurationResult>;
   getSettings(): Promise<DesktopRendererSettings>;
   getKestrelOneAccount(): Promise<KestrelOneAccountStatus>;
+  listBrowserPersonalDomains(
+    input: DesktopBrowserPersonalDomainListRequest,
+  ): Promise<DesktopBrowserPersonalDomainProjectionV1>;
+  revokeBrowserPersonalDomain(
+    input: DesktopBrowserPersonalDomainRevokeRequest,
+  ): Promise<DesktopBrowserPersonalDomainProjectionV1>;
+  connectBrowserViewer(
+    input: DesktopBrowserViewerBindingV1,
+  ): Promise<DesktopBrowserViewerStateV1>;
+  readBrowserViewerFrame(
+    input: DesktopBrowserViewerBindingV1,
+  ): Promise<DesktopBrowserViewerFrameV1>;
+  acceptBrowserTakeover(
+    input: DesktopBrowserViewerBindingV1,
+  ): Promise<DesktopBrowserViewerStateV1>;
+  renewBrowserInputLease(
+    input: DesktopBrowserViewerBindingV1 & { leaseId: string },
+  ): Promise<DesktopBrowserViewerStateV1>;
+  sendBrowserViewerInput(
+    input: DesktopBrowserViewerInputRequestV1,
+  ): Promise<DesktopBrowserViewerStateV1>;
+  returnBrowserControl(
+    input: DesktopBrowserViewerBindingV1 & { leaseId: string },
+  ): Promise<DesktopBrowserViewerStateV1>;
+  disconnectBrowserViewer(
+    input: DesktopBrowserViewerBindingV1,
+  ): Promise<void>;
+  closeBrowserViewerSession(
+    input: DesktopBrowserViewerBindingV1,
+  ): Promise<void>;
   startKestrelOneAuthorization(input: {
     baseUrl: string;
   }): Promise<KestrelOneAuthorizationSessionView>;
@@ -486,6 +569,19 @@ export interface DesktopBridge {
     sessionId: string,
   ): Promise<KestrelOneAuthorizationSessionView>;
   signOutKestrelOneAccount(): Promise<KestrelOneAccountStatus>;
+  getKestrelOneReceivingConnection(
+    organizationId: string,
+  ): Promise<DesktopKestrelOneReceivingConnectionReadResult>;
+  inspectKestrelOneReceivingDomains(input: {
+    organizationId: string;
+    apiKey?: string | undefined;
+  }): Promise<KestrelOneReceivingDomain[]>;
+  saveKestrelOneReceivingConnection(input: {
+    organizationId: string;
+    receivingDomainId?: string | undefined;
+    receivingDomain?: string | undefined;
+    apiKey?: string | undefined;
+  }): Promise<KestrelOneReceivingConnection>;
   getKestrelOneThread(threadId: string): Promise<KestrelOneThreadSnapshot>;
   submitKestrelOneTurn(input: {
     threadId: string;
@@ -508,6 +604,9 @@ export interface DesktopBridge {
     desktopName: string;
   }): Promise<DesktopEnvironmentStatusProjection>;
   refreshKestrelOneEnrollments(): Promise<DesktopEnvironmentStatusProjection>;
+  refreshDesktopModelReadiness(): Promise<
+    import("../../../src/localCore/contracts.js").LocalCoreModelReadiness
+  >;
   setKestrelOneCapacity(
     capacity: number,
   ): Promise<DesktopEnvironmentStatusProjection>;

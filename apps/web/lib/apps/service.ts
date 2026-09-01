@@ -3,9 +3,15 @@ import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getCoreAppDefinition, listCoreAppDefinitions } from "./catalog";
 import type {
+  BrowserEnvironmentAppCapabilityGrantInput,
   CreateEnvironmentAppConnectionInput,
   EnvironmentAppCapabilityGrantInput,
 } from "./contracts";
+import {
+  HOSTED_BROWSER_APP_KEY,
+  HOSTED_BROWSER_DOMAIN_POLICY_CAPABILITY_KEY,
+  readHostedBrowserEnvironmentSettings,
+} from "./browser-domain-service";
 import {
   type AppCredentialPayload,
   decryptAppCredential,
@@ -93,6 +99,7 @@ export class AppServiceError extends Error {
     | "APP_CONNECTION_NOT_SUPPORTED"
     | "APP_CONNECTION_CONFLICT"
     | "APP_CONNECTION_NOT_FOUND"
+    | "APP_SETTINGS_INVALID"
     | "ENVIRONMENT_NOT_FOUND";
 
   constructor(code: AppServiceError["code"], message: string) {
@@ -543,10 +550,14 @@ export async function disconnectPersonalAppConnection(input: {
       );
     await transaction
       .delete(schema.projectAppConnections)
-      .where(eq(schema.projectAppConnections.connectionId, lockedConnection.id));
+      .where(
+        eq(schema.projectAppConnections.connectionId, lockedConnection.id),
+      );
     await transaction
       .delete(schema.appConnectionResources)
-      .where(eq(schema.appConnectionResources.connectionId, lockedConnection.id));
+      .where(
+        eq(schema.appConnectionResources.connectionId, lockedConnection.id),
+      );
     const [updated] = await transaction
       .update(schema.appConnections)
       .set({
@@ -893,6 +904,13 @@ export async function getEnvironmentAppConfiguration(input: {
         loggingMode: grant?.loggingMode ?? capability.defaultLoggingMode,
         rateLimitMode: grant?.rateLimitMode ?? capability.defaultRateLimitMode,
         inheritedDefault: !grant,
+        browserSettings:
+          input.appKey === HOSTED_BROWSER_APP_KEY &&
+          capability.key === HOSTED_BROWSER_DOMAIN_POLICY_CAPABILITY_KEY
+            ? readHostedBrowserEnvironmentSettings(
+                grant?.settings ?? capability.defaultSettings,
+              )
+            : null,
       };
     }),
   };
@@ -1199,7 +1217,9 @@ export async function saveEnvironmentAppCapabilityGrant(input: {
   environmentId: string;
   appKey: string;
   capabilityKey: string;
-  grant: EnvironmentAppCapabilityGrantInput;
+  grant:
+    | EnvironmentAppCapabilityGrantInput
+    | BrowserEnvironmentAppCapabilityGrantInput;
 }) {
   await requireEnvironmentApp(input);
   const capability = await knowledgeDb.query.appCapabilities.findFirst({
@@ -1239,6 +1259,20 @@ export async function saveEnvironmentAppCapabilityGrant(input: {
       enabled: input.grant.enabled,
     }),
   };
+  const isBrowserDomainPolicy =
+    input.appKey === HOSTED_BROWSER_APP_KEY &&
+    input.capabilityKey === HOSTED_BROWSER_DOMAIN_POLICY_CAPABILITY_KEY;
+  if (isBrowserDomainPolicy && !("settings" in input.grant)) {
+    throw new AppServiceError(
+      "APP_SETTINGS_INVALID",
+      "Browser Environment settings are required.",
+    );
+  }
+  const settings = isBrowserDomainPolicy
+    ? readHostedBrowserEnvironmentSettings(
+        "settings" in input.grant ? input.grant.settings : null,
+      )
+    : capability.defaultSettings;
   const now = new Date();
   const [savedGrant] = await knowledgeDb
     .insert(schema.environmentAppCapabilityGrants)
@@ -1247,7 +1281,7 @@ export async function saveEnvironmentAppCapabilityGrant(input: {
       appKey: input.appKey,
       capabilityKey: input.capabilityKey,
       ...grant,
-      settings: capability.defaultSettings,
+      settings,
       createdAt: now,
       updatedAt: now,
     })
@@ -1257,7 +1291,11 @@ export async function saveEnvironmentAppCapabilityGrant(input: {
         schema.environmentAppCapabilityGrants.appKey,
         schema.environmentAppCapabilityGrants.capabilityKey,
       ],
-      set: { ...grant, updatedAt: now },
+      set: {
+        ...grant,
+        ...(isBrowserDomainPolicy ? { settings } : {}),
+        updatedAt: now,
+      },
     })
     .returning();
   if (!savedGrant)

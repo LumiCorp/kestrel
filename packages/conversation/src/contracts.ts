@@ -169,8 +169,11 @@ export interface ConversationLinkPresentation {
   label?: string | undefined;
 }
 
-export interface ConversationInteractionPresentation<Approval = unknown> {
-  version: "v1";
+export interface ConversationInteractionPresentation<
+  Approval = unknown,
+  Version extends string = "v1",
+> {
+  version: Version;
   requestId: string;
   kind: "user_input" | "approval" | "mcp_sampling" | "mcp_elicitation";
   eventType: string;
@@ -181,9 +184,9 @@ export interface ConversationInteractionPresentation<Approval = unknown> {
   source?: "runtime" | "mcp" | undefined;
   status: "pending" | "processing" | "resolved" | "cancelled" | "failed";
   approvalOutcome?: {
-    decision: "approved" | "denied";
-    authorizationState: "pending" | "accepted" | "failed";
-    effectState: "not_started" | "started" | "unknown";
+    decision: "approved" | "denied" | "expired";
+    authorizationState: "pending" | "accepted" | "denied" | "expired" | "failed";
+    effectState: "not_started" | "started" | "committed" | "unknown";
     failureCode?: string | undefined;
     publicMessage?: string | undefined;
     retryEligible: boolean;
@@ -195,6 +198,18 @@ export interface ConversationStatusPresentation {
   runId?: string | undefined;
   errorCode?: string | undefined;
   errorMessage?: string | undefined;
+  telemetry?: {
+    modelCalls?: number | undefined;
+    inputTokens?: number | undefined;
+    cachedInputTokens?: number | undefined;
+    cacheWriteInputTokens?: number | undefined;
+    outputTokens?: number | undefined;
+    reasoningTokens?: number | undefined;
+    totalTokens?: number | undefined;
+    durationMs?: number | undefined;
+    pricedCostUsd?: number | undefined;
+    validationRejections?: number | undefined;
+  } | undefined;
 }
 
 export interface ConversationDialogMessagePresentation {
@@ -207,6 +222,7 @@ export interface ConversationDialogMessagePresentation {
   text: string;
   createdAt: string;
   dialogStatus: "open" | "closed";
+  dialogActivity?: "idle" | "working" | "waiting" | "interrupted" | undefined;
   status?: "failed" | "cancelled" | undefined;
 }
 

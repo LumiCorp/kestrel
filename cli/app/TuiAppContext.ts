@@ -56,7 +56,17 @@ export interface TuiAppContext {
     output?: NormalizedOutput | undefined,
     eventId?: string | undefined,
   ): Promise<void>;
-  persistSessionAndUi(): Promise<void>;
+  appendSessionHistoryLine(
+    sessionId: string,
+    role: TranscriptLine["role"],
+    text: string,
+    data?: Record<string, unknown> | undefined,
+    output?: NormalizedOutput | undefined,
+    eventId?: string | undefined,
+  ): Promise<void>;
+  persistSessionAndUi(options?: {
+    requireSessionSave?: boolean | undefined;
+  }): Promise<void>;
   persistUiState(): Promise<void>;
   persistActiveProfile(profile: TuiProfile): Promise<void>;
   getActiveRunnerMetadata(): RunnerCommandMetadata;

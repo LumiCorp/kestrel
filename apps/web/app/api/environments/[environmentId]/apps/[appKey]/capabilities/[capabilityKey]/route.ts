@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAdminEvent } from "@/lib/admin/logs";
-import { environmentAppCapabilityGrantSchema } from "@/lib/apps/contracts";
+import {
+  browserEnvironmentAppCapabilityGrantSchema,
+  environmentAppCapabilityGrantSchema,
+} from "@/lib/apps/contracts";
 import { saveEnvironmentAppCapabilityGrant } from "@/lib/apps/service";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
@@ -21,16 +24,18 @@ export async function PUT(
       appKey: string;
       capabilityKey: string;
     }>;
-  }
+  },
 ) {
   try {
     const { organizationId, session } = await requireOrganizationAdmin();
     const params = paramsSchema.parse(await context.params);
     const appKey = decodeURIComponent(params.appKey);
     const capabilityKey = decodeURIComponent(params.capabilityKey);
-    const input = environmentAppCapabilityGrantSchema.parse(
-      await request.json()
-    );
+    const payload = await request.json();
+    const input =
+      appKey === "built_in.browser" && capabilityKey === "request_grant"
+        ? browserEnvironmentAppCapabilityGrantSchema.parse(payload)
+        : environmentAppCapabilityGrantSchema.parse(payload);
     const grant = await saveEnvironmentAppCapabilityGrant({
       organizationId,
       environmentId: params.environmentId,
@@ -51,6 +56,9 @@ export async function PUT(
         capabilityKey,
         enabled: grant.enabled,
         approvalMode: grant.approvalMode,
+        ...(appKey === "built_in.browser" && capabilityKey === "request_grant"
+          ? { browserSettingsUpdated: true }
+          : {}),
       },
     });
     return NextResponse.json({ grant });

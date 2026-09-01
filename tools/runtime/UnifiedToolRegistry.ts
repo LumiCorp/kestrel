@@ -23,17 +23,22 @@ import {
   type ToolSurfaceSnapshotV1,
   type ToolDescriptorV1,
 } from "../../src/kestrel/contracts/tool-contract.js";
-import type {
-  AgentToolResultV2,
-  PreparedToolCallV1,
-  ResolvedModelToolIntentV1,
+import {
+  parseDurablePreparedInvocationId,
+  parsePreparedToolCallV1,
+  type AgentToolResultV2,
+  type PreparedToolCallV1,
+  type ResolvedModelToolIntentV1,
 } from "../../src/kestrel/contracts/tool-invocation.js";
 import {
   createPreparedToolCallV1,
+  createPreparedToolApprovalAuthorityV2,
+  createStableToolApprovalIdentityV1,
   createToolSurfaceForDescriptorsV1,
   executePinnedToolCallV1,
   fingerprintToolRunScopeV1,
   resolveModelToolIntentV1,
+  readHostedStableApprovalContext,
   RUNTIME_DEADLINE_BUDGET_ADAPTER_ID,
   type PinnedToolExecutionV1,
 } from "../../src/io/ToolInvocationSupport.js";
@@ -75,10 +80,19 @@ import { normalizeToolActionInput } from "./normalizeToolInput.js";
 import type { SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { applyExternalDeadlineToolBudget } from "../../src/engine/ExecutionEngineSupport.js";
 import {
+  applyRememberedThreadApprovalV1,
   resolveToolApprovalDispositionV1,
   type ToolApprovalDispositionV1,
 } from "../../src/mode/contracts.js";
 import { isFileTextReadToolName } from "../../src/runtime/fileTextReadTools.js";
+import { withPreparedExecCommandApprovalContext } from "./approvedExecCommandContext.js";
+import type { RunnerWorkflowRunAuthorityV1 } from "@kestrel-agents/protocol";
+import {
+  BROWSER_SERVICE_PORT_VERSION,
+  isBrowserToolName,
+  isConformingBrowserServicePort,
+} from "../../src/browser/contracts.js";
+import { createKestrelOneBrowserService } from "../kestrelOne/browserService.js";
 
 type CapabilityManifestItem = ToolCapabilityMetadata & {
   name: string;
@@ -132,10 +146,16 @@ type PinnedExecutionSource = {
   ) => (input: unknown) => Promise<unknown>;
   retain?: (() => void) | undefined;
   release?: (() => Promise<void> | void) | undefined;
+  releasePrepared?: ((prepared: PreparedToolCallV1) => Promise<void> | void) | undefined;
   transformInput?:
-    | ((input: Record<string, unknown>) => Record<string, unknown>)
+    | ((input: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>)
     | undefined;
   inputAdapterId?: string | undefined;
+  resolveExecutionClass?: ((input: Record<string, unknown>) => import("../../src/mode/contracts.js").ToolExecutionClass) | undefined;
+  prepareInputAdapter?: ((input: Record<string, unknown>) =>
+    | import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1
+    | Promise<import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolInputAdapterV1>) | undefined;
+  resolvePolicy?: ((input: Record<string, unknown>) => Promise<import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined>) | undefined;
 };
 
 interface WorkspaceSkillReadProgress {
@@ -146,6 +166,8 @@ interface WorkspaceSkillReadProgress {
 const MODEL_VISIBLE_RUNTIME_TOOL_NAMES = new Set([
   "dialog.open",
   "dialog.send",
+  "dialog.read",
+  "dialog.list",
   "dialog.close",
 ]);
 export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
@@ -200,6 +222,35 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     string,
     PinnedExecutionSource
   >();
+  private readonly terminalPreparedExecutionKeysByOwner = new Map<
+    string,
+    Set<string>
+  >();
+  private readonly preparedExecutionOwnersBySession = new Map<
+    string,
+    Set<string>
+  >();
+  private readonly releasedPreparedExecutionSessions = new Set<string>();
+  private readonly executingPreparedExecutionKeys = new Set<string>();
+  private readonly activePreparedExecutionCompletions = new Map<
+    string,
+    Promise<void>
+  >();
+  private readonly releasingPreparedExecutions = new Map<
+    string,
+    Promise<void>
+  >();
+  private readonly releasingToolSurfaceSnapshots = new Map<
+    string,
+    Promise<void>
+  >();
+  private readonly activeToolSurfaceSnapshotCreations = new Set<
+    Promise<void>
+  >();
+  private closed = false;
+  private closeComplete = false;
+  private closeAttempt: Promise<void> | undefined;
+  private defaultMcpManagerClosed = false;
   private registryGenerationSequence = 0;
   private registryGeneration = "tool-registry:uninitialized";
 
@@ -231,8 +282,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         .toModelTools(builtInNames)
         .map((tool) => [tool.name, tool] as const),
     );
-    const codeExecuteDefinition = codeExecuteDefinitionForProfile(this.builtInContext.codeMode);
-    this.builtInDescriptors.set("code.execute", createBuiltInToolDescriptor(codeExecuteDefinition));
+    const codeExecuteDefinition = codeExecuteDefinitionForProfile(
+      this.builtInContext.codeMode,
+    );
+    this.builtInDescriptors.set(
+      "code.execute",
+      createBuiltInToolDescriptor(codeExecuteDefinition),
+    );
     this.builtInToolSpecs.set("code.execute", {
       name: codeExecuteDefinition.name,
       description: codeExecuteDefinition.description,
@@ -256,6 +312,17 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       });
     }
     this.activateRegistryGeneration();
+  }
+
+  bindOrchestrationServices(
+    services: Pick<SharedToolContext, "delegationService" | "dialogService">,
+  ): void {
+    if (services.delegationService !== undefined) {
+      this.builtInContext.delegationService = services.delegationService;
+    }
+    if (services.dialogService !== undefined) {
+      this.builtInContext.dialogService = services.dialogService;
+    }
   }
 
   updateAllowlist(names: string[]): void {
@@ -484,58 +551,85 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   async createToolSurfaceSnapshot(
     options: ToolGatewayCallOptions = {},
   ): Promise<ToolSurfaceSnapshotV1> {
-    await this.ensureExecutionAuthorization(options.runContext);
-    if (this.initialized === false) {
-      await this.refreshRuntime();
-    }
-    const requestedNames =
-      options.toolNames === undefined ? undefined : new Set(options.toolNames);
-    const descriptors = (
-      requestedNames === undefined
-        ? this.listExposedDescriptors(options.runContext)
-        : this.listActivatableDescriptors(options.runContext)
-    ).filter((descriptor) => requestedNames?.has(descriptor.toolId) ?? true);
-    const snapshotGeneration = hashCanonical({
-      version: "tool-snapshot-generation-v1",
-      activeGeneration: this.registryGeneration,
-      scopeFingerprint: fingerprintToolRunScopeV1(options.runContext),
-      descriptors: descriptors.map(toToolDescriptorRefV1),
+    if (this.closed) throw this.toolSurfaceCreationUnavailable();
+    let completeCreation!: () => void;
+    const creation = new Promise<void>((resolve) => {
+      completeCreation = resolve;
     });
-    const snapshot = createToolSurfaceForDescriptorsV1({
-      descriptors,
-      registryGeneration: snapshotGeneration,
-      runContext: options.runContext,
-    });
-    const executions = new Map<string, PinnedExecutionSource>();
+    this.activeToolSurfaceSnapshotCreations.add(creation);
     try {
-      for (const descriptor of descriptors) {
-        executions.set(
-          descriptor.toolId,
-          this.createPinnedExecutionSource(
-            descriptor,
-            snapshot.tools.find(
-              (activation) =>
-                activation.descriptor.toolId === descriptor.toolId,
-            )!,
-            options.runContext,
-          ),
-        );
+      await this.ensureExecutionAuthorization(options.runContext);
+      if (this.closed) throw this.toolSurfaceCreationUnavailable();
+      if (this.initialized === false) {
+        await this.refreshRuntime();
       }
-    } catch (error) {
-      await Promise.all(
-        [...executions.values()].map((source) => source.release?.()),
-      );
-      throw error;
-    }
-    this.toolSurfaceSnapshots.set(snapshot.snapshotId, snapshot);
-    this.toolSurfaceExecutions.set(snapshot.snapshotId, executions);
-    if (options.runContext !== undefined) {
-      this.toolSurfaceRunIds.set(snapshot.snapshotId, {
-        runId: options.runContext.runId,
-        sessionId: options.runContext.sessionId,
+      if (this.closed) throw this.toolSurfaceCreationUnavailable();
+      const requestedNames =
+        options.toolNames === undefined
+          ? undefined
+          : new Set(options.toolNames);
+      const descriptors = (
+        requestedNames === undefined
+          ? this.listExposedDescriptors(options.runContext)
+          : this.listActivatableDescriptors(options.runContext)
+      ).filter((descriptor) => requestedNames?.has(descriptor.toolId) ?? true);
+      const snapshotGeneration = hashCanonical({
+        version: "tool-snapshot-generation-v1",
+        activeGeneration: this.registryGeneration,
+        scopeFingerprint: fingerprintToolRunScopeV1(options.runContext),
+        descriptors: descriptors.map(toToolDescriptorRefV1),
       });
+      const snapshot = createToolSurfaceForDescriptorsV1({
+        descriptors,
+        registryGeneration: snapshotGeneration,
+        runContext: options.runContext,
+      });
+      const executions = new Map<string, PinnedExecutionSource>();
+      try {
+        for (const descriptor of descriptors) {
+          executions.set(
+            descriptor.toolId,
+            this.createPinnedExecutionSource(
+              descriptor,
+              snapshot.tools.find(
+                (activation) =>
+                  activation.descriptor.toolId === descriptor.toolId,
+              )!,
+              options.runContext,
+            ),
+          );
+        }
+      } catch (error) {
+        await Promise.all(
+          [...executions.values()].map((source) => source.release?.()),
+        );
+        throw error;
+      }
+      this.toolSurfaceSnapshots.set(snapshot.snapshotId, snapshot);
+      this.toolSurfaceExecutions.set(snapshot.snapshotId, executions);
+      if (options.runContext !== undefined) {
+        this.toolSurfaceRunIds.set(snapshot.snapshotId, {
+          runId: options.runContext.runId,
+          sessionId: options.runContext.sessionId,
+        });
+      }
+      return snapshot;
+    } finally {
+      completeCreation();
+      this.activeToolSurfaceSnapshotCreations.delete(creation);
     }
-    return snapshot;
+  }
+
+  private toolSurfaceCreationUnavailable(): RuntimeFailure {
+    return createRuntimeFailure(
+      "TOOL_PINNED_HANDLER_UNAVAILABLE",
+      "Tool registry is closed and cannot create a tool surface snapshot.",
+      {
+        subsystem: "tooling",
+        classification: "configuration",
+        recoverable: false,
+      },
+    );
   }
 
   resolveModelToolIntent(input: {
@@ -560,9 +654,22 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     input: Parameters<ToolGateway["prepareToolCall"]>[0],
     options: ToolGatewayCallOptions = {},
   ): Promise<PreparedToolCallV1> {
+    // Validate before resolving or retaining the pinned execution source.
+    parseDurablePreparedInvocationId(input.callId, "prepared tool call.callId");
     const authorizationProvider = await this.ensureExecutionAuthorization(
       options.runContext,
     );
+    if (this.closed) {
+      throw createRuntimeFailure(
+        "TOOL_PINNED_HANDLER_UNAVAILABLE",
+        "Tool registry is closed and cannot prepare a tool call.",
+        {
+          subsystem: "tooling",
+          classification: "configuration",
+          recoverable: false,
+        },
+      );
+    }
     const snapshotSource =
       input.origin.kind === "model"
         ? this.toolSurfaceExecutions
@@ -571,7 +678,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         : this.findPinnedExecutionSource(input.activation);
     let source =
       snapshotSource ??
-      this.rehydrateStaticBuiltInExecution(input, options.runContext);
+      this.rehydratePreparedExecution(input, options.runContext);
+    let sourceOwnsPreparedReference = false;
     if (source === undefined) {
       throw createRuntimeFailure(
         "TOOL_PINNED_HANDLER_UNAVAILABLE",
@@ -594,6 +702,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         input.activation,
         options.runContext,
       );
+      // createPinnedExecutionSource owns the initial pin. Retaining it again
+      // would create a second reference with no corresponding owner.
+      sourceOwnsPreparedReference = true;
     }
     let retainedSnapshotReference = false;
     try {
@@ -607,7 +718,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           { recoverable: false, toolName: input.activation.descriptor.toolId },
         );
       }
-      source.retain?.();
+      if (sourceOwnsPreparedReference === false) {
+        source.retain?.();
+      }
       retainedSnapshotReference = true;
       const inputValidator = compileToolJsonSchemaV1(
         source.pinned.descriptor.inputSchema,
@@ -622,7 +735,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       const transformedInput =
         source.transformInput === undefined
           ? validatedInput
-          : source.transformInput(validatedInput);
+          : await source.transformInput(validatedInput);
       const transformedValidatedInput = validatePinnedInput(
         source.pinned.descriptor.toolId,
         transformedInput,
@@ -647,6 +760,59 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         inputValidator,
         this.builtInDescriptors.has(source.pinned.descriptor.toolId),
       );
+      const normalizedEffectiveInput = asRecord(effectiveInput);
+      const browserResolvedPolicy = await source.resolvePolicy?.(
+        normalizedEffectiveInput ?? {},
+      );
+      const effectivePolicy = browserResolvedPolicy === undefined
+        ? input.policy
+        : {
+            decision: browserResolvedPolicy.decision,
+            policyRevision: hashCanonical({
+              upstreamPolicyRevision: input.policy.policyRevision,
+              browserPolicyRevision: browserResolvedPolicy.policyRevision,
+            }),
+          };
+      const execCommandContinuation =
+        input.activation.descriptor.toolId === "exec_command" &&
+        typeof normalizedEffectiveInput?.sessionId === "string" &&
+        normalizedEffectiveInput.command === undefined;
+      const workflowAuthorityAllows = authorizeWorkflowRunToolCall({
+        runContext: options.runContext,
+        toolId: input.activation.descriptor.toolId,
+        toolFamily: this.builtInCapabilities.get(
+          input.activation.descriptor.toolId,
+        )?.toolFamily,
+        descriptorContractRevision: input.activation.descriptor.contractRevision,
+        effectiveInput: normalizedEffectiveInput ?? {},
+        execCommandContinuation,
+      });
+      const hostedApprovalScope = options.runContext === undefined
+        ? undefined
+        : readHostedStableApprovalContext(options.runContext);
+      const rememberedExecCommandMatch =
+        input.activation.descriptor.toolId === "exec_command" &&
+        !execCommandContinuation &&
+        hostedApprovalScope?.actor.actorType === "end_user" &&
+        this.resolveScopedContext(options.runContext).builtInContext.kestrelOne
+          ?.rememberedToolApprovalEvidence?.some((evidence) => {
+            const scope = evidence.scope;
+            const normalized = asRecord(effectiveInput);
+            return evidence.organizationId === hostedApprovalScope.organizationId &&
+              evidence.environmentId === hostedApprovalScope.environmentId &&
+              evidence.projectId === hostedApprovalScope.projectId &&
+              evidence.threadId === hostedApprovalScope.threadId &&
+              evidence.actorUserId === hostedApprovalScope.actor.actorId &&
+              evidence.toolIdentity.toolId === input.activation.descriptor.toolId &&
+              evidence.toolIdentity.descriptorContractRevision === input.activation.descriptor.contractRevision &&
+              evidence.toolIdentity.approvalAuthorityRevision === input.approval?.authorityRevision &&
+              scope.kind === "exec_command_exact" &&
+              scope.command === normalized?.command &&
+              scope.cwd === normalized?.cwd &&
+              scope.envMode === normalized?.envMode &&
+              JSON.stringify(scope.envNames) ===
+                JSON.stringify(Array.isArray(normalized?.envNames) ? [...normalized.envNames].sort() : []);
+          }) === true;
       if (budgeted.shortCircuitResult !== undefined) {
         source = {
           ...source,
@@ -656,9 +822,44 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               budgeted.shortCircuitResult,
         };
       }
+      const preservesBrowserApprovalAuthority =
+        isBrowserToolName(input.activation.descriptor.toolId) &&
+        effectivePolicy.decision === "allow";
+      const stableApproval =
+        (effectivePolicy.decision === "approval_required" ||
+          preservesBrowserApprovalAuthority) &&
+        !workflowAuthorityAllows &&
+        !rememberedExecCommandMatch &&
+        !execCommandContinuation &&
+        input.approval !== undefined &&
+        options.runContext !== undefined
+          ? createPreparedToolApprovalAuthorityV2({
+              activation: input.activation,
+              executionClass: source.resolveExecutionClass?.(asRecord(effectiveInput) ?? {}) ??
+                source.pinned.descriptor.capability.executionClass,
+              effectiveInput: asRecord(effectiveInput) ?? {},
+              policyRevision: effectivePolicy.policyRevision,
+              approvalAuthorityRevision: input.approval.authorityRevision,
+              capabilities: input.approvalCapabilities ?? [],
+              runContext: options.runContext,
+            })
+          : undefined;
       const prepared = createPreparedToolCallV1({
-        ...input,
+        runId: input.runId,
+        sessionId: input.sessionId,
+        callId: input.callId,
+        activation: input.activation,
+        origin: input.origin,
         effectiveInput: asRecord(effectiveInput) ?? {},
+        policy: workflowAuthorityAllows || rememberedExecCommandMatch || execCommandContinuation
+          ? { ...effectivePolicy, decision: "allow" }
+          : effectivePolicy,
+        ...((effectivePolicy.decision !== "approval_required" &&
+            !preservesBrowserApprovalAuthority) ||
+          input.approval === undefined
+          ? {}
+          : { approval: input.approval }),
+        ...(stableApproval ?? {}),
         inputAdapters: [
           ...(source.inputAdapterId === undefined
             ? []
@@ -668,6 +869,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                   metadata: {},
                 },
               ]),
+          ...(source.prepareInputAdapter === undefined
+            ? []
+            : [await source.prepareInputAdapter(asRecord(effectiveInput) ?? {})]),
           ...(input.activation.descriptor.toolId === "dev.shell.run" ||
           input.activation.descriptor.toolId === "exec_command"
             ? [
@@ -680,7 +884,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         ],
       });
       const preparedKey = preparedExecutionKey(prepared);
-      if (this.preparedExecutions.has(preparedKey)) {
+      if (
+        this.preparedExecutions.has(preparedKey) ||
+        this.isPreparedExecutionTerminal(prepared, preparedKey) ||
+        this.executingPreparedExecutionKeys.has(preparedKey)
+      ) {
         throw createRuntimeFailure(
           "TOOL_PREPARED_CALL_COLLISION",
           `Prepared tool call '${prepared.callId}' is already active.`,
@@ -701,7 +909,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   async inspectToolCall(
     input: Parameters<NonNullable<ToolGateway["inspectToolCall"]>>[0],
     options: ToolGatewayCallOptions = {},
-  ): Promise<{ effectiveInput: Record<string, unknown> }> {
+  ): Promise<{
+    effectiveInput: Record<string, unknown>;
+    executionClass?: import("../../src/mode/contracts.js").ToolExecutionClass | undefined;
+    policy?: import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined;
+  }> {
     const authorizationProvider = await this.ensureExecutionAuthorization(
       options.runContext,
     );
@@ -713,7 +925,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         : this.findPinnedExecutionSource(input.activation);
     let source =
       snapshotSource ??
-      this.rehydrateStaticBuiltInExecution(input, options.runContext);
+      this.rehydratePreparedExecution(input, options.runContext);
     if (source === undefined) {
       throw createRuntimeFailure(
         "TOOL_PINNED_HANDLER_UNAVAILABLE",
@@ -761,7 +973,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       const transformedInput =
         source.transformInput === undefined
           ? validatedInput
-          : source.transformInput(validatedInput);
+          : await source.transformInput(validatedInput);
       const transformedValidatedInput = validatePinnedInput(
         source.pinned.descriptor.toolId,
         transformedInput,
@@ -776,13 +988,20 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               input: transformedValidatedInput,
               runtimeBudgetRemainingMs: options.runtimeBudgetRemainingMs,
             });
-      return {
-        effectiveInput: validatePinnedInput(
+      const effectiveInput = validatePinnedInput(
           source.pinned.descriptor.toolId,
           budgeted.input,
           inputValidator,
           this.builtInDescriptors.has(source.pinned.descriptor.toolId),
-        ),
+        );
+      const normalizedEffectiveInput = asRecord(effectiveInput) ?? {};
+      const policy = await source.resolvePolicy?.(normalizedEffectiveInput);
+      return {
+        effectiveInput: normalizedEffectiveInput,
+        ...(source.resolveExecutionClass === undefined
+          ? {}
+          : { executionClass: source.resolveExecutionClass(normalizedEffectiveInput) }),
+        ...(policy === undefined ? {} : { policy }),
       };
     } finally {
       if (source !== snapshotSource) await source.release?.();
@@ -794,49 +1013,87 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     options: ToolGatewayCallOptions = {},
   ): Promise<AgentToolResultV2> {
     const key = preparedExecutionKey(prepared);
-    const preparedSource =
-      this.preparedExecutions.get(key) ??
-      this.rehydrateStaticBuiltInExecution(prepared, options.runContext);
-    if (preparedSource === undefined) {
-      throw createRuntimeFailure(
-        "TOOL_PINNED_HANDLER_UNAVAILABLE",
-        `Prepared tool call '${prepared.callId}' has no pinned live handler.`,
-        {
-          subsystem: "tooling",
-          classification: "configuration",
-          recoverable: false,
-          toolName: prepared.activation.descriptor.toolId,
-          registryGeneration: prepared.activation.registryGeneration,
-        },
-      );
+    if (
+      this.closed ||
+      this.isPreparedExecutionTerminal(prepared, key) ||
+      this.executingPreparedExecutionKeys.has(key) ||
+      this.releasingPreparedExecutions.has(key)
+    ) {
+      throw this.preparedExecutionUnavailable(prepared);
     }
+    const retainedSource = this.preparedExecutions.get(key);
+    if (
+      retainedSource === undefined &&
+      this.releasedPreparedExecutionSessions.has(prepared.sessionId)
+    ) {
+      throw this.preparedExecutionUnavailable(prepared);
+    }
+    // A source-free call is a restart recovery, not an ordinary execution.
+    // Rehydration therefore requires explicit current run authority. This
+    // keeps bounded run cleanup from reopening stale no-authority replay.
+    const preparedSource =
+      retainedSource ??
+      (options.runContext === undefined
+        ? undefined
+        : this.rehydratePreparedExecution(prepared, options.runContext));
+    if (preparedSource === undefined) {
+      throw this.preparedExecutionUnavailable(prepared);
+    }
+    this.preparedExecutions.delete(key);
+    this.markPreparedExecutionTerminal(prepared, key);
+    this.executingPreparedExecutionKeys.add(key);
+    let completeActiveExecution!: () => void;
+    const activeExecutionCompletion = new Promise<void>((resolve) => {
+      completeActiveExecution = resolve;
+    });
+    this.activePreparedExecutionCompletions.set(key, activeExecutionCompletion);
     const source = this.rebindPreparedBuiltInForManagedWorktree(
       preparedSource,
       prepared,
       options.runContext,
     );
     try {
-      let persistCompletedCapabilityRawOutput: ((rawOutput: unknown) => Promise<void>) | undefined;
-      const preparedHandler = source.createHandler({
-        ...options,
-        persistCompletedCapabilityRawOutput: (rawOutput) => {
-          if (persistCompletedCapabilityRawOutput === undefined) {
-            throw new Error("Capability result persistence is unavailable for this prepared execution.");
-          }
-          return persistCompletedCapabilityRawOutput(rawOutput);
+      let persistCompletedCapabilityRawOutput:
+        | ((rawOutput: unknown) => Promise<void>)
+        | undefined;
+      let acknowledgeExternalEffect: (() => Promise<void>) | undefined;
+      const preparedHandler = source.createHandler(
+        {
+          ...options,
+          acknowledgeExternalEffect: async () => {
+            if (acknowledgeExternalEffect === undefined) {
+              throw new Error(
+                "External-effect dispatch acknowledgement is unavailable for this prepared execution.",
+              );
+            }
+            await acknowledgeExternalEffect();
+          },
+          persistCompletedCapabilityRawOutput: (rawOutput) => {
+            if (persistCompletedCapabilityRawOutput === undefined) {
+              throw new Error(
+                "Capability result persistence is unavailable for this prepared execution.",
+              );
+            }
+            return persistCompletedCapabilityRawOutput(rawOutput);
+          },
         },
-      }, prepared);
+        prepared,
+      );
       let result = await executePinnedToolCallV1({
         prepared,
         pinned: {
           ...source.pinned,
           handler: (toolInput, lifecycle) => {
-            persistCompletedCapabilityRawOutput = lifecycle?.persistCompletedCapabilityResult;
+            persistCompletedCapabilityRawOutput =
+              lifecycle?.persistCompletedCapabilityResult;
+            acknowledgeExternalEffect = lifecycle?.acknowledgeExternalEffect;
             return preparedHandler(toolInput);
           },
         },
         signal: options.signal,
-        persistCompletedCapabilityResult: options.persistCompletedCapabilityResult,
+        persistCompletedCapabilityResult:
+          options.persistCompletedCapabilityResult,
+        acknowledgeExternalEffect: options.acknowledgeExternalEffect,
       });
       if (
         result.outcome.kind === "failure" &&
@@ -854,27 +1111,48 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             options.runContext,
           );
           try {
-            let persistRetryCapabilityRawOutput: ((rawOutput: unknown) => Promise<void>) | undefined;
-            const retryHandler = retrySource.createHandler({
-              ...options,
-              persistCompletedCapabilityRawOutput: (rawOutput) => {
-                if (persistRetryCapabilityRawOutput === undefined) {
-                  throw new Error("Capability result persistence is unavailable for this prepared execution.");
-                }
-                return persistRetryCapabilityRawOutput(rawOutput);
+            let persistRetryCapabilityRawOutput:
+              | ((rawOutput: unknown) => Promise<void>)
+              | undefined;
+            let acknowledgeRetryExternalEffect: (() => Promise<void>) | undefined;
+            const retryHandler = retrySource.createHandler(
+              {
+                ...options,
+                acknowledgeExternalEffect: async () => {
+                  if (acknowledgeRetryExternalEffect === undefined) {
+                    throw new Error(
+                      "External-effect dispatch acknowledgement is unavailable for this prepared execution.",
+                    );
+                  }
+                  await acknowledgeRetryExternalEffect();
+                },
+                persistCompletedCapabilityRawOutput: (rawOutput) => {
+                  if (persistRetryCapabilityRawOutput === undefined) {
+                    throw new Error(
+                      "Capability result persistence is unavailable for this prepared execution.",
+                    );
+                  }
+                  return persistRetryCapabilityRawOutput(rawOutput);
+                },
               },
-            }, prepared);
+              prepared,
+            );
             result = await executePinnedToolCallV1({
               prepared,
               pinned: {
                 ...retrySource.pinned,
                 handler: (toolInput, lifecycle) => {
-                  persistRetryCapabilityRawOutput = lifecycle?.persistCompletedCapabilityResult;
+                  persistRetryCapabilityRawOutput =
+                    lifecycle?.persistCompletedCapabilityResult;
+                  acknowledgeRetryExternalEffect =
+                    lifecycle?.acknowledgeExternalEffect;
                   return retryHandler(toolInput);
                 },
               },
               signal: options.signal,
-              persistCompletedCapabilityResult: options.persistCompletedCapabilityResult,
+              persistCompletedCapabilityResult:
+                options.persistCompletedCapabilityResult,
+              acknowledgeExternalEffect: options.acknowledgeExternalEffect,
             });
           } finally {
             await retrySource.release?.();
@@ -889,10 +1167,160 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         progress: this.workspaceSkillReadProgress,
       })) as AgentToolResultV2;
     } finally {
-      this.preparedExecutions.delete(key);
-      if (source !== preparedSource) await source.release?.();
-      await preparedSource.release?.();
+      let preparedReleaseFailure: unknown;
+      try {
+        const releaseResults = await Promise.allSettled([
+          ...(source === preparedSource ? [] : [source.release?.()]),
+          preparedSource.release?.(),
+        ]);
+        const preparedSourceResult = releaseResults.at(-1);
+        if (preparedSourceResult?.status === "rejected") {
+          // Preserve failed ownership so explicit release or close can retry.
+          if (retainedSource !== undefined) {
+            this.preparedExecutions.set(key, retainedSource);
+          }
+        }
+        preparedReleaseFailure = releaseResults.find(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
+        )?.reason;
+      } finally {
+        this.executingPreparedExecutionKeys.delete(key);
+        completeActiveExecution();
+        this.activePreparedExecutionCompletions.delete(key);
+      }
+      if (preparedReleaseFailure !== undefined) throw preparedReleaseFailure;
     }
+  }
+
+  async resolvePreparedExternalEffectDispatch(
+    input: PreparedToolCallV1,
+    options: Pick<ToolGatewayCallOptions, "runContext"> = {},
+  ): Promise<
+    | import("../../src/io/ToolInvocationSupport.js").DurableExternalEffectDispatchV1
+    | undefined
+  > {
+    const prepared = parsePreparedToolCallV1(input);
+    if (
+      defaultToolCatalog.getDurableExternalEffectDispatch(
+        prepared.activation.descriptor.toolId,
+      ) === undefined
+    ) {
+      return;
+    }
+    const key = preparedExecutionKey(prepared);
+    const retainedSource = this.preparedExecutions.get(key);
+    const source =
+      retainedSource ??
+      (options.runContext === undefined
+        ? undefined
+        : this.rehydratePreparedExecution(prepared, options.runContext));
+    if (source === undefined) return;
+    try {
+      if (
+        hashCanonical(source.pinned.activation) !==
+        hashCanonical(prepared.activation)
+      ) {
+        return;
+      }
+      const executionClass =
+        source.resolveExecutionClass?.(prepared.effectiveInput) ??
+        source.pinned.descriptor.capability.executionClass;
+      return executionClass === "external_side_effect"
+        ? source.pinned.durableExternalEffectDispatch
+        : undefined;
+    } finally {
+      if (source !== retainedSource) await source.release?.();
+    }
+  }
+
+  async releasePreparedToolCall(prepared: PreparedToolCallV1): Promise<void> {
+    const exactPrepared = parsePreparedToolCallV1(prepared);
+    const key = preparedExecutionKey(exactPrepared);
+    const existingRelease = this.releasingPreparedExecutions.get(key);
+    if (existingRelease !== undefined) {
+      await existingRelease;
+      return;
+    }
+    if (
+      this.closed ||
+      this.isPreparedExecutionTerminal(exactPrepared, key) ||
+      this.executingPreparedExecutionKeys.has(key)
+    ) return;
+    const retainedSource = this.preparedExecutions.get(key);
+    const source =
+      retainedSource ?? this.rehydratePreparedReleaseExecution(exactPrepared);
+    if (source === undefined) {
+      this.markPreparedExecutionTerminal(exactPrepared, key);
+      return;
+    }
+    const release = Promise.resolve().then(async () => {
+      await source.releasePrepared?.(exactPrepared);
+      this.markPreparedExecutionTerminal(exactPrepared, key);
+      await source.release?.();
+    });
+    this.releasingPreparedExecutions.set(key, release);
+    try {
+      await release;
+      if (
+        retainedSource !== undefined &&
+        this.preparedExecutions.get(key) === source
+      ) {
+        this.preparedExecutions.delete(key);
+      }
+    } finally {
+      this.releasingPreparedExecutions.delete(key);
+    }
+  }
+
+  private isPreparedExecutionTerminal(
+    prepared: PreparedToolCallV1,
+    key: string,
+  ): boolean {
+    return (
+      this.terminalPreparedExecutionKeysByOwner
+        .get(preparedExecutionOwnerKey(prepared.runId, prepared.sessionId))
+        ?.has(key) === true
+    );
+  }
+
+  private markPreparedExecutionTerminal(
+    prepared: PreparedToolCallV1,
+    key: string,
+  ): void {
+    const ownerKey = preparedExecutionOwnerKey(
+      prepared.runId,
+      prepared.sessionId,
+    );
+    const ownedKeys =
+      this.terminalPreparedExecutionKeysByOwner.get(ownerKey) ??
+      new Set<string>();
+    ownedKeys.add(key);
+    this.terminalPreparedExecutionKeysByOwner.set(ownerKey, ownedKeys);
+    const sessionOwners =
+      this.preparedExecutionOwnersBySession.get(prepared.sessionId) ??
+      new Set<string>();
+    sessionOwners.add(ownerKey);
+    this.preparedExecutionOwnersBySession.set(
+      prepared.sessionId,
+      sessionOwners,
+    );
+  }
+
+  private preparedExecutionUnavailable(
+    prepared: PreparedToolCallV1,
+  ): RuntimeFailure {
+    return createRuntimeFailure(
+      "TOOL_PINNED_HANDLER_UNAVAILABLE",
+      `Prepared tool call '${prepared.callId}' has no pinned live handler.`,
+      {
+        subsystem: "tooling",
+        classification: "configuration",
+        recoverable: false,
+        toolName: prepared.activation.descriptor.toolId,
+        registryGeneration: prepared.activation.registryGeneration,
+      },
+    );
   }
 
   private rebindPreparedBuiltInForManagedWorktree(
@@ -923,24 +1351,71 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   async releaseToolSurfaceSnapshot(snapshotId: string): Promise<void> {
+    if (this.closed) return;
+    const existingRelease = this.releasingToolSurfaceSnapshots.get(snapshotId);
+    if (existingRelease !== undefined) {
+      await existingRelease;
+      return;
+    }
     const executions = this.toolSurfaceExecutions.get(snapshotId);
     this.toolSurfaceSnapshots.delete(snapshotId);
-    this.toolSurfaceExecutions.delete(snapshotId);
-    this.toolSurfaceRunIds.delete(snapshotId);
-    if (executions !== undefined) {
-      await Promise.all(
-        [...executions.values()].map((source) => source.release?.()),
-      );
+    if (executions === undefined) {
+      this.toolSurfaceRunIds.delete(snapshotId);
+      return;
+    }
+    const release = this.releaseToolSurfaceExecutionEntries(
+      snapshotId,
+      executions,
+    );
+    this.releasingToolSurfaceSnapshots.set(snapshotId, release);
+    try {
+      await release;
+      this.toolSurfaceRunIds.delete(snapshotId);
+    } finally {
+      this.releasingToolSurfaceSnapshots.delete(snapshotId);
     }
   }
 
-  async releaseToolRun(_runId: string, sessionId: string): Promise<void> {
+  private async releaseToolSurfaceExecutionEntries(
+    snapshotId: string,
+    executions: Map<string, PinnedExecutionSource>,
+  ): Promise<void> {
+    const results = await Promise.allSettled(
+      [...executions.entries()].map(async ([toolId, source]) => {
+        await source.release?.();
+        if (executions.get(toolId) === source) executions.delete(toolId);
+      }),
+    );
+    if (executions.size === 0) {
+      this.toolSurfaceExecutions.delete(snapshotId);
+    }
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failure !== undefined) throw failure.reason;
+  }
+
+  async releaseToolRun(runId: string, sessionId: string): Promise<void> {
+    if (this.closed) return;
     const snapshotIds = [...this.toolSurfaceRunIds.entries()]
       .filter(([, owner]) => owner.sessionId === sessionId)
       .map(([snapshotId]) => snapshotId);
     for (const snapshotId of snapshotIds) {
       await this.releaseToolSurfaceSnapshot(snapshotId);
     }
+    // The terminal continuation may have a different run ID from the run that
+    // prepared the call. Collapse the owners recorded while those calls were
+    // made instead of manufacturing an ineffective continuation owner.
+    const preparedOwnerKeys =
+      this.preparedExecutionOwnersBySession.get(sessionId) ?? new Set<string>();
+    for (const ownerKey of preparedOwnerKeys) {
+      this.terminalPreparedExecutionKeysByOwner.delete(ownerKey);
+    }
+    this.preparedExecutionOwnersBySession.delete(sessionId);
+    // One bounded session fence prevents source-free stale rehydration after
+    // cleanup. A fresh registry has no fence and can still perform an
+    // explicitly authorized restart recovery.
+    this.releasedPreparedExecutionSessions.add(sessionId);
   }
 
   getDescriptor(
@@ -959,8 +1434,17 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     const allowlist = scopedContext.allowlist;
     const activeBuiltInContext = scopedContext.builtInContext;
     const mcpStatus = this.resolveMcpSnapshot(options.runContext);
+    const workflowAuthority = readWorkflowRunAuthority(options.runContext);
 
     for (const name of allowlist) {
+      if (
+        workflowAuthority !== undefined &&
+        (workflowAuthority.activeStep.kind === "kestrel"
+          ? workflowAuthority.manifest.nativeTools.some(entry => entry.toolId === name)
+          : workflowAuthority.manifest.actions.some(entry => entry.nodeId === workflowAuthority.activeStep.nodeId && entry.toolId === name)) === false
+      ) {
+        continue;
+      }
       const builtIn = this.builtInToolSpecs.get(name);
       if (builtIn !== undefined) {
         if (
@@ -1046,7 +1530,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           upstreamAuthority,
           options.runContext,
         );
-        const approvalDisposition: ToolApprovalDispositionV1 | undefined =
+        const baselineApprovalDisposition: ToolApprovalDispositionV1 | undefined =
           approvalPolicyEvidence !== undefined
             ? resolveToolApprovalDispositionV1({
                 environment: approvalPolicyEvidence.environment,
@@ -1063,6 +1547,47 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                   minimum: builtIn.minimumApprovalMode ?? "auto",
                   authority: approvalAuthority,
                 });
+        const stableToolIdentity = createStableToolApprovalIdentityV1({
+          toolId: name,
+          descriptorContractRevision: descriptor.contractRevision,
+          approvalAuthorityRevision: approvalAuthority.revision,
+        });
+        const hostedScope = options.runContext === undefined
+          ? undefined
+          : readHostedStableApprovalContext(options.runContext);
+        const exactRememberedEvidenceMatch =
+          name !== "exec_command" &&
+          hostedScope?.actor.actorType === "end_user" &&
+          activeBuiltInContext.kestrelOne?.rememberedToolApprovalEvidence?.some(
+            (evidence) =>
+              evidence.organizationId === hostedScope.organizationId &&
+              evidence.environmentId === hostedScope.environmentId &&
+              evidence.projectId === hostedScope.projectId &&
+              evidence.threadId === hostedScope.threadId &&
+              evidence.actorUserId === hostedScope.actor.actorId &&
+              evidence.toolIdentity.toolId === stableToolIdentity.toolId &&
+              evidence.toolIdentity.descriptorContractRevision ===
+                stableToolIdentity.descriptorContractRevision &&
+              evidence.toolIdentity.approvalAuthorityRevision ===
+                stableToolIdentity.approvalAuthorityRevision,
+          ) === true;
+        const approvalDisposition = baselineApprovalDisposition === undefined
+          ? undefined
+          : applyRememberedThreadApprovalV1({
+              disposition: baselineApprovalDisposition,
+              exactEvidenceMatch: exactRememberedEvidenceMatch,
+              currentPolicy: {
+                environment:
+                  approvalPolicyEvidence?.environment ??
+                  configuredAppApprovalMode!,
+                project: approvalPolicyEvidence?.project,
+                subject: approvalPolicyEvidence?.subject,
+                minimum:
+                  builtIn.minimumApprovalMode ??
+                  approvalPolicyEvidence?.minimum ??
+                  "auto",
+              },
+            });
         if (approvalDisposition?.mode === "deny") continue;
         const appApprovalMode =
           approvalDisposition?.mode ?? configuredAppApprovalMode;
@@ -1167,28 +1692,133 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   async close(): Promise<void> {
-    await Promise.all([
-      this.mcpManager.close(),
-      ...[...this.hostedMcpScopes.values()].map((scope) =>
-        scope.manager.close(),
-      ),
-      ...[...this.retiredHostedMcpManagers].map((manager) => manager.close()),
-    ]);
-    this.hostedMcpScopes.clear();
-    this.retiredHostedMcpManagers.clear();
-    this.workspaceSkillReadProgress.clear();
-    for (const release of this.releaseExecutionTicketRegistrationByRun.values()) {
-      release();
+    if (this.closeComplete) return;
+    if (this.closeAttempt !== undefined) {
+      await this.closeAttempt;
+      return;
     }
-    this.releaseExecutionTicketRegistrationByRun.clear();
-    for (const provider of this.authorizationProvidersByRun.values())
-      provider.close();
-    this.authorizationProvidersByRun.clear();
-    this.authorizationProvidersBySession.clear();
+    this.closed = true;
+    const attempt = this.performClose();
+    this.closeAttempt = attempt;
+    try {
+      await attempt;
+      this.closeComplete = true;
+    } finally {
+      if (this.closeAttempt === attempt) this.closeAttempt = undefined;
+    }
+  }
+
+  private async performClose(): Promise<void> {
+    // Provider shutdown must never race an active external effect. New
+    // executions are already rejected because closed was set synchronously.
+    await Promise.allSettled([
+      ...this.activePreparedExecutionCompletions.values(),
+      ...this.activeToolSurfaceSnapshotCreations,
+    ]);
+    await Promise.allSettled([
+      ...this.releasingPreparedExecutions.values(),
+      ...this.releasingToolSurfaceSnapshots.values(),
+    ]);
+
     this.toolSurfaceSnapshots.clear();
-    this.toolSurfaceExecutions.clear();
     this.toolSurfaceRunIds.clear();
-    this.preparedExecutions.clear();
+    this.terminalPreparedExecutionKeysByOwner.clear();
+    this.preparedExecutionOwnersBySession.clear();
+    this.releasedPreparedExecutionSessions.clear();
+
+    const ownershipReleaseResults = await Promise.allSettled([
+      ...[...this.toolSurfaceExecutions.entries()].map(
+        async ([snapshotId, executions]) =>
+          this.releaseToolSurfaceExecutionEntries(snapshotId, executions),
+      ),
+      ...[...this.preparedExecutions.entries()].map(async ([key, source]) => {
+        await source.release?.();
+        if (this.preparedExecutions.get(key) === source) {
+          this.preparedExecutions.delete(key);
+        }
+      }),
+    ]);
+    const ownershipFailure = ownershipReleaseResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+
+    this.workspaceSkillReadProgress.clear();
+    this.executionTicketsByRun.clear();
+    this.executionTicketsBySession.clear();
+    const registrationReleaseResults = await Promise.allSettled(
+      [...this.releaseExecutionTicketRegistrationByRun.entries()].map(
+        async ([runId, release]) => {
+          release();
+          this.releaseExecutionTicketRegistrationByRun.delete(runId);
+        },
+      ),
+    );
+    const providers = new Set(this.authorizationProvidersByRun.values());
+    for (const sessionProviders of this.authorizationProvidersBySession.values()) {
+      for (const provider of sessionProviders.values()) providers.add(provider);
+    }
+    const authorizationCloseResults = await Promise.allSettled(
+      [...providers].map(async (provider) => {
+        provider.close();
+        for (const [runId, candidate] of this.authorizationProvidersByRun) {
+          if (candidate === provider)
+            this.authorizationProvidersByRun.delete(runId);
+        }
+        for (const [sessionId, sessionProviders] of this
+          .authorizationProvidersBySession) {
+          for (const [runId, candidate] of sessionProviders) {
+            if (candidate === provider) sessionProviders.delete(runId);
+          }
+          if (sessionProviders.size === 0) {
+            this.authorizationProvidersBySession.delete(sessionId);
+          }
+        }
+      }),
+    );
+    // A provider remains open while any pinned ownership still needs a retry.
+    // Independent credential cleanup above is still attempted in this pass.
+    const managerCloseResults: PromiseSettledResult<void>[] = [];
+    if (ownershipFailure === undefined) {
+      const managers = new Map<McpToolProvider, () => void>();
+      if (this.defaultMcpManagerClosed === false) {
+        managers.set(this.mcpManager, () => {
+          this.defaultMcpManagerClosed = true;
+        });
+      }
+      for (const scope of this.hostedMcpScopes.values()) {
+        managers.set(scope.manager, () => {
+          for (const [grantId, candidate] of this.hostedMcpScopes) {
+            if (candidate.manager === scope.manager) {
+              this.hostedMcpScopes.delete(grantId);
+            }
+          }
+          this.retiredHostedMcpManagers.delete(scope.manager);
+        });
+      }
+      for (const manager of this.retiredHostedMcpManagers) {
+        if (managers.has(manager)) continue;
+        managers.set(manager, () => {
+          this.retiredHostedMcpManagers.delete(manager);
+        });
+      }
+      managerCloseResults.push(
+        ...(await Promise.allSettled(
+          [...managers.entries()].map(async ([manager, markClosed]) => {
+            await manager.close();
+            markClosed();
+          }),
+        )),
+      );
+    }
+    const cleanupFailure = [
+      ...ownershipReleaseResults,
+      ...managerCloseResults,
+      ...registrationReleaseResults,
+      ...authorizationCloseResults,
+    ].find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (cleanupFailure !== undefined) throw cleanupFailure.reason;
   }
 
   private activateRegistryGeneration(): void {
@@ -1251,8 +1881,6 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       revision: hashCanonical({
         version: "tool-approval-authority-v1",
         descriptor: toToolDescriptorRefV1(descriptor),
-        activeGeneration: this.registryGeneration,
-        scopeFingerprint: fingerprintToolRunScopeV1(runContext),
         upstream,
       }),
     };
@@ -1294,14 +1922,55 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           { recoverable: false, toolName: descriptor.toolId },
         );
       }
+      const hasExecutionClassResolver =
+        defaultToolCatalog.resolveExecutionClass(descriptor.toolId, {}) !== undefined;
+      const hasPreparedInputAdapter =
+        defaultToolCatalog.prepareInputAdapter(descriptor.toolId, {}) !== undefined;
+      const resolveExecutionClass = (input: Record<string, unknown>) =>
+        defaultToolCatalog.resolveExecutionClass(descriptor.toolId, input) ??
+        descriptor.capability.executionClass;
+      const durableExternalEffectDispatch =
+        defaultToolCatalog.getDurableExternalEffectDispatch(
+          descriptor.toolId,
+        );
       return {
-        pinned: { descriptor, activation, validator, normalizer },
+        pinned: {
+          descriptor,
+          activation,
+          validator,
+          normalizer,
+          ...(hasExecutionClassResolver ? { resolveExecutionClass } : {}),
+          ...(durableExternalEffectDispatch === undefined
+            ? {}
+            : { durableExternalEffectDispatch }),
+        },
         inputAdapterId: "kestrel.builtin-input-normalizer:v1",
-        transformInput: (input) => {
+        ...(hasExecutionClassResolver ? { resolveExecutionClass } : {}),
+        ...(hasPreparedInputAdapter === false ? {} : {
+          prepareInputAdapter: (input: Record<string, unknown>) =>
+            defaultToolCatalog.prepareInputAdapter(
+              descriptor.toolId,
+              input,
+              activeContext,
+            )!,
+        }),
+        releasePrepared: (prepared: PreparedToolCallV1) =>
+          defaultToolCatalog.releasePrepared(
+            descriptor.toolId,
+            prepared,
+            activeContext,
+          ),
+        resolvePolicy: (input: Record<string, unknown>) =>
+          defaultToolCatalog.resolvePolicy(descriptor.toolId, activeContext, input),
+        transformInput: async (input) => {
           const normalized = normalizeToolActionInput(
             descriptor.toolId,
             input,
             activeContext.fileSystem?.workspaceRoot,
+            {
+              workspaceAppRoot: activeContext.workspace?.appRoot,
+              devShellEnvMode: activeContext.devShell?.envMode,
+            },
           );
           validateBuiltInToolInputContract(descriptor.toolId, normalized);
           const record = asRecord(normalized);
@@ -1312,44 +1981,67 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               { recoverable: false, toolName: descriptor.toolId },
             );
           }
-          return record;
+          return await prepareDesktopGmailMutationInput({
+            toolName: descriptor.toolId,
+            input: record,
+            context: activeContext,
+          });
         },
         createHandler: (handlerOptions: ToolGatewayCallOptions, prepared) => {
+          const baseExecutionContext =
+            prepared === undefined
+              ? activeContext
+              : {
+                  ...activeContext,
+                  runtime: {
+                    ...activeContext.runtime,
+                    runId: activeContext.runtime?.runId ?? prepared.runId,
+                    sessionId:
+                      activeContext.runtime?.sessionId ?? prepared.sessionId,
+                    toolCallId: prepared.callId,
+                  },
+                  ...(descriptor.toolId === "code.execute" &&
+                  activeContext.sandboxCapabilityRuntime !== undefined
+                    ? {
+                        sandboxCapabilityRuntime: {
+                          ...activeContext.sandboxCapabilityRuntime,
+                          preparedPolicy: prepared.policy,
+                          ...(prepared.approval === undefined
+                            ? {}
+                            : { preparedApproval: prepared.approval }),
+                        },
+                      }
+                    : {}),
+                };
           const executionContext = prepared === undefined
-            ? activeContext
-            : {
-                ...activeContext,
-                runtime: {
-                  ...activeContext.runtime,
-                  runId: activeContext.runtime?.runId ?? prepared.runId,
-                  sessionId: activeContext.runtime?.sessionId ?? prepared.sessionId,
-                  toolCallId: prepared.callId,
-                },
-                ...(descriptor.toolId === "code.execute" && activeContext.sandboxCapabilityRuntime !== undefined
-                  ? {
-                      sandboxCapabilityRuntime: {
-                        ...activeContext.sandboxCapabilityRuntime,
-                        preparedPolicy: prepared.policy,
-                        ...(prepared.approval === undefined ? {} : { preparedApproval: prepared.approval }),
-                      },
-                    }
-                  : {}),
-              };
-          const contextWithResultPersistence = handlerOptions.persistCompletedCapabilityRawOutput === undefined
-            ? executionContext
-            : {
-                ...executionContext,
-                persistCompletedCapabilityResult: handlerOptions.persistCompletedCapabilityRawOutput,
-              };
+            ? baseExecutionContext
+            : withPreparedExecCommandApprovalContext(
+                baseExecutionContext,
+                prepared,
+              );
+          const contextWithResultPersistence =
+            handlerOptions.persistCompletedCapabilityRawOutput === undefined
+              ? executionContext
+              : {
+                  ...executionContext,
+                  persistCompletedCapabilityResult:
+                    handlerOptions.persistCompletedCapabilityRawOutput,
+                  acknowledgeExternalEffect:
+                    handlerOptions.acknowledgeExternalEffect,
+                };
           const handlers = defaultToolCatalog.createRawHandlers(
             [descriptor.toolId],
             handlerOptions.console === undefined
-              ? { ...contextWithResultPersistence, signal: handlerOptions.signal }
+              ? {
+                  ...contextWithResultPersistence,
+                  signal: handlerOptions.signal,
+                }
               : {
                   ...contextWithResultPersistence,
                   toolConsole: handlerOptions.console,
                   signal: handlerOptions.signal,
                 },
+            prepared,
           );
           const handler = handlers[descriptor.toolId];
           if (handler === undefined) {
@@ -1395,13 +2087,16 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     };
   }
 
-  private rehydrateStaticBuiltInExecution(
+  private rehydratePreparedExecution(
     input: { activation: PreparedToolCallV1["activation"] },
     runContext: ToolRunContext | undefined,
   ): PinnedExecutionSource | undefined {
-    const descriptor = this.builtInDescriptors.get(
-      input.activation.descriptor.toolId,
-    );
+    const descriptor =
+      this.builtInDescriptors.get(input.activation.descriptor.toolId) ??
+      this.resolveExposedMcpTool(
+        input.activation.descriptor.toolId,
+        runContext,
+      )?.descriptor;
     const blockedResumeScope = resolveBlockedResumeScope(runContext);
     const scopeMatches =
       input.activation.scopeFingerprint ===
@@ -1430,6 +2125,60 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     return this.createPinnedExecutionSource(
       descriptor,
       input.activation,
+      runContext,
+    );
+  }
+
+  /**
+   * Rebuilds only a fixed built-in release hook after process restart. The
+   * prepared activation and stable hosted authority remain the identity; the
+   * current execution ticket supplies transport authority and is never read
+   * from persisted prepared-call input.
+   */
+  private rehydratePreparedReleaseExecution(
+    prepared: PreparedToolCallV1,
+  ): PinnedExecutionSource | undefined {
+    const descriptor = this.builtInDescriptors.get(
+      prepared.activation.descriptor.toolId,
+    );
+    if (
+      descriptor === undefined ||
+      hashCanonical(toToolDescriptorRefV1(descriptor)) !==
+        hashCanonical(prepared.activation.descriptor)
+    ) return;
+    const stable = prepared.stableAuthority;
+    const executionTicket =
+      this.executionTicketsByRun.get(prepared.runId) ??
+      this.resolveUnambiguousSessionExecutionTicket(prepared.sessionId);
+    const runContext: ToolRunContext | undefined =
+      stable === undefined || executionTicket === undefined
+        ? undefined
+        : {
+            runId: prepared.runId,
+            sessionId: prepared.sessionId,
+            payload: {
+              actor: stable.actor,
+              hostedApprovalAuthority: {
+                organizationId: stable.organizationId,
+                environmentId: stable.environmentId,
+                projectId: stable.projectId,
+                threadId: stable.threadId,
+              },
+              mcpContext: {
+                organizationId: stable.organizationId,
+                environmentId: stable.environmentId,
+                projectId: stable.projectId,
+                threadId: stable.threadId,
+                ...(typeof stable.resourceAuthority.gatewayUrl === "string"
+                  ? { gatewayUrl: stable.resourceAuthority.gatewayUrl }
+                  : {}),
+              },
+            },
+            sessionState: {},
+          };
+    return this.createPinnedExecutionSource(
+      descriptor,
+      prepared.activation,
       runContext,
     );
   }
@@ -1844,6 +2593,8 @@ function resolveScopedRunContext(
     workspace.workspaceRoot.trim().length > 0
       ? workspace.workspaceRoot
       : undefined;
+  const effectiveWorkspaceRoot =
+    workspaceRoot ?? baseContext.fileSystem?.workspaceRoot ?? process.cwd();
   const attachmentReadOnlyRoots = readAttachmentReadOnlyRoots(payload);
   const workspaceToolContext = {
     ...(typeof workspace?.appRoot === "string" &&
@@ -1875,7 +2626,7 @@ function resolveScopedRunContext(
   );
   const sourceWriteGuardAllowedWriteRoots =
     resolveDevShellSourceWriteAllowedWriteRoots(
-      workspaceRoot,
+      effectiveWorkspaceRoot,
       sourceWriteAuthority,
       trustedManagedWorktree,
     );
@@ -1926,12 +2677,21 @@ function resolveScopedRunContext(
         }
       : {}),
   };
+  if (
+    scopedBaseContext.browserService === undefined &&
+    scopedBaseContext.kestrelOne?.executionTicket
+  ) {
+    scopedBaseContext.browserService = createKestrelOneBrowserService(
+      scopedBaseContext,
+    );
+  }
   return {
     allowlist: toolAllowlist === undefined ? fallback : new Set(toolAllowlist),
     builtInContext: withDefaultFileSystemPolicy({
       ...scopedBaseContext,
       fileSystem: {
-        workspaceRoot: workspaceRoot ?? scopedBaseContext.fileSystem?.workspaceRoot ?? process.cwd(),
+        workspaceRoot:
+          effectiveWorkspaceRoot,
         tempRoots: scopedBaseContext.fileSystem?.tempRoots ?? [],
         readOnlyRoots: [
           ...(scopedBaseContext.fileSystem?.readOnlyRoots ?? []),
@@ -1948,12 +2708,17 @@ function readAttachmentReadOnlyRoots(payload: unknown): string[] {
     ? record.attachments
     : asRecord(record?.turn)?.attachments;
   if (Array.isArray(attachments) === false) return [];
-  return [...new Set(attachments.flatMap((attachment) => {
-    const attachmentPath = asRecord(attachment)?.path;
-    return typeof attachmentPath === "string" && attachmentPath.trim().length > 0
-      ? [path.dirname(path.resolve(attachmentPath))]
-      : [];
-  }))];
+  return [
+    ...new Set(
+      attachments.flatMap((attachment) => {
+        const attachmentPath = asRecord(attachment)?.path;
+        return typeof attachmentPath === "string" &&
+          attachmentPath.trim().length > 0
+          ? [path.dirname(path.resolve(attachmentPath))]
+          : [];
+      }),
+    ),
+  ];
 }
 
 function readExecutionTicketRunId(ticket: string): string | undefined {
@@ -2036,15 +2801,23 @@ function resolveRuntimeToolRunContext(
   const projectContext =
     asRecord(payloadRecord?.projectContext) ??
     asRecord(metadata?.projectContext);
+  const workspace = asRecord(payloadRecord?.workspace);
   const missionControl =
     asRecord(payloadRecord?.missionControl) ??
     asRecord(metadata?.missionControl);
   const projectId =
     asNonEmptyString(projectContext?.projectId) ??
-    asNonEmptyString(missionControl?.projectId);
+    asNonEmptyString(missionControl?.projectId) ??
+    asNonEmptyString(workspace?.projectId);
   const threadId =
     asNonEmptyString(orchestration?.threadId) ??
     asNonEmptyString(metadata?.threadId);
+  const turnId = asNonEmptyString(metadata?.turnId);
+  const activeTurnId = asNonEmptyString(metadata?.activeTurnId);
+  const activeTurnAttachments =
+    turnId !== undefined && activeTurnId === turnId
+      ? projectActiveTurnAttachmentMetadata(payloadRecord?.attachments)
+      : undefined;
   const activeTaskId =
     asNonEmptyString(orchestration?.activeTaskId) ??
     asNonEmptyString(orchestration?.taskId) ??
@@ -2066,11 +2839,51 @@ function resolveRuntimeToolRunContext(
     ...(projectId !== undefined ? { projectId } : {}),
     ...(approvalId !== undefined ? { approvalId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
+    ...(turnId !== undefined && activeTurnId === turnId ? { turnId } : {}),
+    ...(activeTurnAttachments === undefined ? {} : { activeTurnAttachments }),
     ...(activeTaskId !== undefined ? { activeTaskId } : {}),
     ...(delegationId !== undefined ? { delegationId } : {}),
     ...(delegationDepth !== undefined ? { delegationDepth } : {}),
     ...(rootDelegationId !== undefined ? { rootDelegationId } : {}),
   };
+}
+
+function projectActiveTurnAttachmentMetadata(value: unknown) {
+  if (!Array.isArray(value)) return;
+  const attachments = value.map((candidate) => {
+    const record = asRecord(candidate);
+    const attachmentId = asNonEmptyString(record?.attachmentId);
+    const filename = asNonEmptyString(record?.filename);
+    const declaredMediaType = asNonEmptyString(record?.declaredMediaType) ??
+      "application/octet-stream";
+    const detectedMediaType = asNonEmptyString(record?.detectedMediaType) ??
+      asNonEmptyString(record?.mimeType);
+    const sha256 = asNonEmptyString(record?.sha256);
+    const sizeBytes = record?.sizeBytes;
+    if (
+      attachmentId === undefined ||
+      filename === undefined ||
+      detectedMediaType === undefined ||
+      sha256 === undefined ||
+      !/^[0-9a-f]{64}$/u.test(sha256) ||
+      !Number.isSafeInteger(sizeBytes) ||
+      Number(sizeBytes) < 0
+    ) return;
+    return {
+      attachmentId,
+      filename,
+      declaredMediaType,
+      detectedMediaType,
+      sizeBytes: Number(sizeBytes),
+      sha256,
+    };
+  });
+  if (attachments.some((attachment) => attachment === undefined)) return;
+  const resolved = attachments as NonNullable<typeof attachments[number]>[];
+  if (new Set(resolved.map((attachment) => attachment.attachmentId)).size !== resolved.length) {
+    return;
+  }
+  return resolved;
 }
 
 function readPendingApprovalId(state: unknown): string | undefined {
@@ -2233,9 +3046,81 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function resolveBlockedResumeScope(
+function readWorkflowRunAuthority(
   runContext: ToolRunContext | undefined,
-):
+): RunnerWorkflowRunAuthorityV1 | undefined {
+  const value = asRecord(asRecord(runContext?.payload)?.workflowRunAuthority);
+  if (value === undefined) return undefined;
+  if (
+    value.version !== "runner_workflow_run_authority_v2" ||
+    asRecord(value.manifest)?.version !== "workflow_capability_manifest_v2"
+  ) {
+    throw createRuntimeFailure(
+      "WORKFLOW_RUN_AUTHORITY_INVALID",
+      "Workflow run authority is malformed.",
+      { recoverable: false, subsystem: "tooling" },
+    );
+  }
+  return value as unknown as RunnerWorkflowRunAuthorityV1;
+}
+
+export function authorizeWorkflowRunToolCall(input: {
+  runContext?: ToolRunContext | undefined;
+  toolId: string;
+  toolFamily?: string | undefined;
+  descriptorContractRevision: string;
+  effectiveInput: Record<string, unknown>;
+  execCommandContinuation: boolean;
+}): boolean {
+  const authority = readWorkflowRunAuthority(input.runContext);
+  if (authority === undefined) return false;
+  if (input.toolFamily === "runtime") return true;
+  if (authority.activeStep.kind === "kestrel") {
+    const native = authority.manifest.nativeTools.find(entry => entry.toolId === input.toolId);
+    if (native?.descriptorContractRevision === input.descriptorContractRevision) return true;
+  }
+
+  if (authority.activeStep.kind !== "action") throw createRuntimeFailure("WORKFLOW_RUN_AUTHORITY_EXCEEDED", `Workflow activation does not authorize tool '${input.toolId}' in this Kestrel step.`, { recoverable: false, subsystem: "tooling", toolName: input.toolId });
+  const resolvedActionInput = authority.activeStep.resolvedInput;
+  const matchingIdentity = authority.manifest.actions.filter(
+    (entry) =>
+      entry.nodeId === authority.activeStep.nodeId &&
+      entry.toolId === input.toolId &&
+      entry.descriptorContractRevision === input.descriptorContractRevision,
+  );
+  const allowed = matchingIdentity.some((entry) => {
+    if (input.toolId === "exec_command") {
+      if (input.execCommandContinuation) return true;
+      const scope = entry.rememberedApprovalScope;
+      return scope.kind === "exec_command_exact" &&
+        scope.command === input.effectiveInput.command &&
+        scope.cwd === input.effectiveInput.cwd &&
+        scope.envMode === input.effectiveInput.envMode &&
+        JSON.stringify(scope.envNames) === JSON.stringify(
+          Array.isArray(input.effectiveInput.envNames)
+            ? [...input.effectiveInput.envNames].sort()
+            : [],
+        );
+    }
+    return hashCanonical(resolvedActionInput) === hashCanonical(input.effectiveInput);
+  });
+  if (allowed) return true;
+
+  throw createRuntimeFailure(
+    "WORKFLOW_RUN_AUTHORITY_EXCEEDED",
+    `Workflow activation does not authorize tool '${input.toolId}' with this input.`,
+    {
+      recoverable: false,
+      subsystem: "tooling",
+      toolName: input.toolId,
+      workflowId: authority.workflowId,
+      workflowVersionId: authority.workflowVersionId,
+      workflowRunId: authority.workflowRunId,
+    },
+  );
+}
+
+function resolveBlockedResumeScope(runContext: ToolRunContext | undefined):
   | {
       runId: string;
       mcpContext?: Record<string, unknown> | undefined;
@@ -2252,12 +3137,9 @@ function resolveBlockedResumeScope(
     metadata?.blockedRunId,
     orchestration?.blockedRunId,
     blockedToolScope?.runId,
-  ]
-    .flatMap((value) =>
-      typeof value === "string" && value.trim().length > 0
-        ? [value.trim()]
-        : [],
-    );
+  ].flatMap((value) =>
+    typeof value === "string" && value.trim().length > 0 ? [value.trim()] : [],
+  );
   const distinct = [...new Set(candidates)];
   if (distinct.length !== 1) {
     return;
@@ -2290,6 +3172,10 @@ function withoutGrantId(
 
 function preparedExecutionKey(prepared: PreparedToolCallV1): string {
   return `${prepared.runId}\0${prepared.sessionId}\0${prepared.callId}`;
+}
+
+function preparedExecutionOwnerKey(runId: string, sessionId: string): string {
+  return `${runId}\0${sessionId}`;
 }
 
 function validatePinnedInput(
@@ -2350,7 +3236,8 @@ function createBuiltInSchemaValidationError(
       toolName,
       "fs.read_text only reads the first page. Continue with fs.read_text_page using the exact returned nextPage.input.",
       {
-        nextSuggestedAction: "Call fs.read_text_page with the exact nextPage.input returned by fs.read_text.",
+        nextSuggestedAction:
+          "Call fs.read_text_page with the exact nextPage.input returned by fs.read_text.",
         validationErrors: errors.map((error) => ({
           instancePath: error.instancePath,
           schemaPath: error.schemaPath,
@@ -2513,6 +3400,36 @@ function isRuntimeBuiltInTool(
   return capability?.freshnessClass === "runtime";
 }
 
+async function prepareDesktopGmailMutationInput(input: {
+  toolName: string;
+  input: Record<string, unknown>;
+  context: SharedToolContext;
+}): Promise<Record<string, unknown>> {
+  const operation = input.toolName === "google_workspace.send_gmail"
+    ? "gmail.messages.send" as const
+    : input.toolName === "google_workspace.reply_gmail"
+      ? "gmail.messages.reply" as const
+      : undefined;
+  if (operation === undefined) return input.input;
+  const threadId = input.context.runtime?.threadId ?? input.context.runtime?.sessionId;
+  if (!threadId?.trim()) {
+    throw createRuntimeFailure(
+      "GOOGLE_WORKSPACE_THREAD_REQUIRED",
+      "Gmail sends require an active Desktop Thread.",
+      { subsystem: "tooling", classification: "configuration", recoverable: true, toolName: input.toolName },
+    );
+  }
+  const prepare = input.context.googleWorkspaceService?.prepareApprovalInput;
+  if (prepare === undefined) {
+    throw createRuntimeFailure(
+      "GOOGLE_WORKSPACE_GMAIL_PREPARATION_UNAVAILABLE",
+      "Desktop Gmail exact-approval preparation is unavailable.",
+      { subsystem: "tooling", classification: "configuration", recoverable: true, toolName: input.toolName },
+    );
+  }
+  return await prepare(operation, input.input, { threadId });
+}
+
 function isBuiltInToolDisabledByContext(
   name: string,
   context: SharedToolContext,
@@ -2522,6 +3439,9 @@ function isBuiltInToolDisabledByContext(
   }
   if (name.startsWith("dev.shell.")) {
     return context.devShell?.enabled !== true;
+  }
+  if (isBrowserToolName(name)) {
+    return !isConformingBrowserServicePort(context.browserService);
   }
 
   return false;
@@ -2537,6 +3457,10 @@ function toToolRuntimeStatus(
     providers: {
       mcp: status,
       tools: context.providerConfigurations?.list() ?? [],
+      browser: {
+        contractVersion: BROWSER_SERVICE_PORT_VERSION,
+        ready: isConformingBrowserServicePort(context.browserService),
+      },
     },
   };
 }

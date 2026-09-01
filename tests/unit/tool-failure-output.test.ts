@@ -46,6 +46,33 @@ test("developer shell startup failure exposes only safe actionable diagnostics",
   assert.doesNotMatch(result.modelContext.text, /sensitive raw service output/u);
 });
 
+test("developer shell migration failure exposes bootstrap phase without raw diagnostics", () => {
+  const result = buildAgentToolFailureResult({
+    toolName: "exec_command",
+    input: { command: "python3 -m http.server 8000" },
+    error: createRuntimeFailure(
+      "DEV_SHELL_SERVICE_UNAVAILABLE",
+      "Developer shell storage migration failed.",
+      {
+        bootstrapReason: "migration_failed",
+        failureReason: "migration_failed",
+        failurePhase: "service_bootstrap",
+        nextSuggestedAction:
+          "The command did not run. Repair developer-shell storage connectivity or configuration, then retry the original command. Changing the command cannot repair service bootstrap.",
+        logTail:
+          "connect ECONNREFUSED postgres://operator:secret@database.invalid/control",
+      },
+    ),
+  });
+  const visible = result.auditRecord.output as Record<string, unknown>;
+
+  assert.equal(visible.failurePhase, "service_bootstrap");
+  assert.equal(visible.failureReason, "migration_failed");
+  assert.match(String(visible.nextSuggestedAction), /command did not run/u);
+  assert.equal(visible.logTail, undefined);
+  assert.doesNotMatch(result.modelContext.text, /operator:secret/u);
+});
+
 test("failed dev.shell.run output keeps command output and execution context visible", () => {
   const output = buildRecoverableToolFailureOutput({
     toolName: "dev.shell.run",

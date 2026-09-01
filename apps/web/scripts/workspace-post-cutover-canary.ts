@@ -1,4 +1,6 @@
+import { parseRunnerHostedToolApprovalInteractionV4 } from "@kestrel-agents/protocol";
 import { hasCompletedExecCommandCanaryProof } from "../lib/environments/workspace-command-canary";
+import type { ThreadInteractionView } from "../lib/turns/client-contract";
 import {
   createWorkspaceCanaryTurnBody,
   readWorkspaceCanaryTurnStatus,
@@ -7,6 +9,10 @@ import {
   type WorkspaceCanaryModel,
 } from "./lib/workspace-canary-model";
 import { parseWorkspaceCanaryRevision } from "./lib/workspace-canary-revision";
+import {
+  assertExecCommandNoSpendPreflight,
+  isCurrentExecCommandApprovalActionable,
+} from "./lib/workspace-command-approval-canary";
 
 type EnvironmentState = {
   binding?: {
@@ -32,6 +38,23 @@ type WorkspaceApplication = {
   port: number;
   desiredState: "running" | "stopped";
   status: "starting" | "running" | "stopped" | "failed";
+};
+
+type CanaryMessage = {
+  role?: unknown;
+  metadata?: { kestrelTurnId?: unknown } | null;
+  parts?: unknown;
+};
+
+type ThreadSnapshot = {
+  messages?: CanaryMessage[];
+  interactions?: ThreadInteractionView[];
+};
+
+type ExactExecCommandApproval = {
+  interactionId: string;
+  requestId: string;
+  turnId: string;
 };
 
 export {};
@@ -84,6 +107,11 @@ const canaryModel: WorkspaceCanaryModel = selectWorkspaceCanaryModel(
 );
 
 try {
+  const exactToolPreflight = await requestJson<unknown>(
+    `/api/threads/${threadId}/workspace/canary/exact-tool-preflight`,
+    { method: "POST" },
+  );
+  assertExecCommandNoSpendPreflight(exactToolPreflight);
   await runAgentCommandCanary(agentCommandMarker);
 
   const created = await workspaceJson<{
@@ -255,6 +283,9 @@ process.stdout.write(
         "optimistic_file_editing",
         "stale_file_write_rejected",
         "audited_terminal_execution",
+        "agent_exec_command_no_spend_preflight",
+        "agent_exec_command_reached_ask_first_card",
+        "agent_exec_command_approve_once_submitted",
         "agent_exec_command_completed",
         "audited_pty_round_trip",
         "supervised_application_start_stop",
@@ -312,6 +343,7 @@ async function runAgentCommandCanary(marker: string) {
   assert(Boolean(turnId), "The build-mode command canary turn was not queued.");
 
   const deadline = Date.now() + AGENT_TURN_TIMEOUT_MS;
+  let approval: ExactExecCommandApproval | null = null;
   while (Date.now() < deadline) {
     const queue = await requestJson<{
       turns?: Array<{ id?: string; status?: string }>;
@@ -319,20 +351,183 @@ async function runAgentCommandCanary(marker: string) {
     const turn = queue.turns?.find((candidate) => candidate.id === turnId);
     const status = readWorkspaceCanaryTurnStatus(turn?.status);
     if (status === "completed") {
-      const snapshot = await requestJson<{ messages?: Array<{
-        role?: unknown;
-        metadata?: { kestrelTurnId?: unknown } | null;
-        parts?: unknown;
-      }> }>(`/api/threads/${threadId}`);
-      assert(
-        hasCompletedExecCommandCanaryProof(snapshot.messages ?? [], turnId!, marker),
-        "The build-mode turn completed without an OK exec_command tool record containing the marker.",
+      throw new Error(
+        "The exact exec_command completed without reaching an Ask First approval card.",
       );
+    }
+    if (turn?.status === "waiting_for_input") {
+      const snapshot = await requestJson<ThreadSnapshot>(
+        `/api/threads/${threadId}`,
+      );
+      approval = findExactExecCommandApproval({
+        snapshot,
+        turnId: turnId!,
+        command,
+      });
+      if (approval) break;
+    }
+    await sleep(1000);
+  }
+  assert(
+    approval !== null,
+    "The exact exec_command did not reach its Ask First approval card before the canary timed out.",
+  );
+
+  const approvalMessageId = crypto.randomUUID();
+  const approvalResponse = await request(`/api/threads/${threadId}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      interactionResponse: {
+        requestId: approval.requestId,
+        eventType: "user.approval",
+        turnId: approval.turnId,
+        message: "Approve once",
+        decision: "approve_once",
+        reason: "Kestrel post-cutover exec_command canary",
+        messageId: approvalMessageId,
+      },
+    }),
+  });
+  await assertOk(
+    approvalResponse,
+    "Approve Once was not accepted by the durable interaction API.",
+  );
+  const replayCompleted = approvalResponse.arrayBuffer();
+
+  const completionDeadline = Date.now() + AGENT_TURN_TIMEOUT_MS;
+  while (Date.now() < completionDeadline) {
+    const queue = await requestJson<{
+      turns?: Array<{ id?: string; status?: string }>;
+    }>(`/api/threads/${threadId}/turns`);
+    const turn = queue.turns?.find((candidate) => candidate.id === turnId);
+    const status = readWorkspaceCanaryTurnStatus(turn?.status);
+    if (status === "completed") {
+      const snapshot = await requestJson<ThreadSnapshot>(
+        `/api/threads/${threadId}`,
+      );
+      assert(
+        hasApproveOnceTerminal(snapshot.interactions ?? [], approval),
+        "The exact approval interaction did not record an accepted Approve Once decision and committed effect.",
+      );
+      assert(
+        hasCompletedExecCommandCanaryProof(
+          snapshot.messages ?? [],
+          turnId!,
+          marker,
+        ),
+        "The approved build-mode turn completed without an OK exec_command tool record containing the marker.",
+      );
+      await replayCompleted;
       return;
     }
     await sleep(1000);
   }
-  throw new Error("The build-mode command canary turn timed out.");
+  throw new Error(
+    "The approved build-mode command canary did not complete before timing out.",
+  );
+}
+
+function findExactExecCommandApproval(input: {
+  snapshot: ThreadSnapshot;
+  turnId: string;
+  command: string;
+}): ExactExecCommandApproval | null {
+  const toolCalls = new Set<string>();
+  for (const message of input.snapshot.messages ?? []) {
+    if (
+      message.role !== "assistant" ||
+      message.metadata?.kestrelTurnId !== input.turnId ||
+      !Array.isArray(message.parts)
+    ) {
+      continue;
+    }
+    for (const part of message.parts) {
+      const partRecord = asRecord(part);
+      const data = asRecord(partRecord?.data);
+      const toolInput = asRecord(data?.input);
+      if (
+        partRecord?.type === "data-kestrel-tool" &&
+        data?.phase === "started" &&
+        data.toolName === "exec_command" &&
+        typeof data.toolCallId === "string" &&
+        toolInput?.command === input.command
+      ) {
+        toolCalls.add(data.toolCallId);
+      }
+    }
+  }
+
+  for (const interaction of input.snapshot.interactions ?? []) {
+    if (
+      interaction.source !== "runtime" ||
+      interaction.kind !== "approval" ||
+      interaction.eventType !== "user.approval" ||
+      interaction.status !== "pending" ||
+      interaction.turnId !== input.turnId
+    ) {
+      continue;
+    }
+    let request;
+    try {
+      request = parseRunnerHostedToolApprovalInteractionV4(
+        interaction.requestEnvelope,
+        interaction.eventType,
+      );
+    } catch {
+      continue;
+    }
+    const presentation = asRecord(request.approval.presentation);
+    const policy = asRecord(presentation?.policy);
+    const decisions = request.inputSchema.properties.decision.enum;
+    const askFirstPolicy = interaction.approvalPolicy;
+    if (
+      request.requestId === interaction.requestId &&
+      request.approval.toolName === "exec_command" &&
+      toolCalls.has(request.approval.preparedInvocationId) &&
+      decisions.length === 3 &&
+      decisions[0] === "decline" &&
+      decisions[1] === "approve_once" &&
+      decisions[2] === "remember_approval" &&
+      typeof presentation?.title === "string" &&
+      presentation.title.length > 0 &&
+      typeof presentation.summary === "string" &&
+      presentation.summary.length > 0 &&
+      policy?.mode === "ask" &&
+      (policy.reasonCode === "environment_policy" ||
+        policy.reasonCode === "project_restriction") &&
+      isCurrentExecCommandApprovalActionable(askFirstPolicy)
+    ) {
+      return {
+        interactionId: interaction.id,
+        requestId: interaction.requestId,
+        turnId: input.turnId,
+      };
+    }
+  }
+  return null;
+}
+
+function hasApproveOnceTerminal(
+  interactions: ThreadInteractionView[],
+  approval: ExactExecCommandApproval,
+) {
+  const interaction = interactions.find(
+    (candidate) => candidate.id === approval.interactionId,
+  );
+  return interaction?.requestId === approval.requestId &&
+    interaction.turnId === approval.turnId &&
+    interaction.status === "resolved" &&
+    interaction.responseEnvelope?.decision === "approve_once" &&
+    interaction.approvalOutcome?.decision === "approved" &&
+    interaction.approvalOutcome.authorizationState === "accepted" &&
+    interaction.approvalOutcome.effectState === "committed";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function recordActivation(state: EnvironmentState) {

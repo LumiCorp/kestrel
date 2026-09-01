@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import { test, describe } from "node:test";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 
 import { runTuiScenario } from "../helpers/pty.js";
+import { startFakeOpenRouterServer } from "../helpers/fake-open-router.js";
 
 describe("TUI PTY journeys", () => {
+
+const execFileAsync = promisify(execFile);
 
 test("TUI workspace journey can be opened and exited back to chat deterministically", async () => {
   const transcript = await runTuiScenario({
@@ -99,27 +107,123 @@ test("TUI scripted fresh-session startup lands in prompt-ready chat", async () =
 });
 
 test("TUI scripted chat submits non-command messages with Enter", async () => {
-  const transcript = await runTuiScenario({
-    sessionName: "ops-root",
-    freshSessionName: "ops-submit-message",
-    steps: [
-      {
-        waitFor: /ops-submit-message · CHAT/i,
-        actions: [{ typeText: "hello from scripted enter" }],
-      },
-      {
-        waitFor: />\s*hello from scripted enter/i,
-        actions: [{ key: "enter" }],
-      },
-      {
-        waitFor: /RUNNING|Run in progress|Calling decision model/i,
-      },
-    ],
-  });
+  const fakeOpenRouter = await startFakeOpenRouterServer();
+  try {
+    const transcript = await runTuiScenario({
+      sessionName: "ops-root",
+      freshSessionName: "ops-submit-message",
+      env: { OPENROUTER_BASE_URL: fakeOpenRouter.url },
+      abortPatterns: [{
+        pattern: /RUN_ACCEPTANCE_UNCONFIRMED|mismatched session, thread, view, or message identity/i,
+        reason: "TUI rejected a valid runtime-owned conversation route",
+      }],
+      steps: [
+        {
+          waitFor: /ops-submit-message · CHAT/i,
+          actions: [{ typeText: "hello from scripted enter" }],
+        },
+        {
+          waitFor: />\s*hello from scripted enter/i,
+          actions: [{ key: "enter" }],
+        },
+        {
+          waitFor: /RUNNING|Run in progress|Calling decision model/i,
+        },
+        {
+          waitFor: /COMPLETED|FAILED|completed|failed/i,
+          fromCursor: true,
+        },
+      ],
+    });
 
-  assert.match(transcript, />> hello from scripted enter/i);
-  assert.match(transcript, /RUNNING|Run in progress|Calling decision model/i);
+    assert.match(transcript, />> hello from scripted enter/i);
+    assert.match(transcript, /RUNNING|Run in progress|Calling decision model/i);
+    assert.match(transcript, /COMPLETED|FAILED|completed|failed/i);
+    assert.doesNotMatch(
+      transcript,
+      /RUN_ACCEPTANCE_UNCONFIRMED|mismatched session, thread, view, or message identity/i,
+    );
+  } finally {
+    await fakeOpenRouter.close();
+  }
 });
+
+for (const approval of [
+  { label: "explicit", reply: "/mode build" },
+  { label: "natural", reply: "Yes, switch to Build and continue." },
+]) {
+  test(`TUI ${approval.label} mode approval commits only the requested Git path`, async () => {
+    const fakeOpenRouter = await startFakeOpenRouterServer();
+    const repo = await createCommitJourneyRepository(fakeOpenRouter.url);
+    try {
+      const sessionName = `ops-commit-${approval.label}`;
+      let transcript: string;
+      try {
+        transcript = await runTuiScenario({
+          sessionName: "ops-root",
+          freshSessionName: sessionName,
+          cwd: repo,
+          env: {
+            KESTREL_CORE_CREDENTIAL_STORE: "environment",
+            KESTREL_DISABLE_DOTENV: "0",
+            OPENROUTER_BASE_URL: fakeOpenRouter.url,
+          },
+          abortPatterns: [{
+            pattern: /RUN_ACCEPTANCE_UNCONFIRMED|RUNNER_RUNTIME_ERROR|mismatched session, thread, view, message, request, or run identity/i,
+            reason: "TUI rejected the runtime-owned mode or terminal route",
+          }],
+          steps: [
+            {
+              waitFor: new RegExp(`${sessionName} · CHAT`, "i"),
+              actions: [{ typeText: "fake-openrouter-commit-journey Commit intended.txt only and leave every unrelated path uncommitted." }],
+            },
+            {
+              waitFor: />\s*fake-openrouter-commit-journey Commit intended\.txt only/i,
+              actions: [{ key: "enter" }],
+            },
+            {
+              waitFor: /requires Build\. Switch to Build/i,
+              fromCursor: true,
+              actions: [{ typeText: approval.reply }],
+            },
+            {
+              waitFor: new RegExp(`>\\s*${approval.label === "explicit" ? "\\/mode build" : "Yes, switch to Build"}`, "i"),
+              actions: [{ key: "enter" }],
+            },
+            {
+              waitFor: /Committed intended\.txt and left unrelated files untracked\./i,
+              fromCursor: true,
+            },
+          ],
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`${detail}\nFake OpenRouter requests:\n${JSON.stringify(fakeOpenRouter.requests, null, 2)}`);
+      }
+
+      const { stdout: head } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repo });
+      const { stdout: parent } = await execFileAsync("git", ["rev-parse", "HEAD^"], { cwd: repo });
+      const { stdout: committedNames } = await execFileAsync(
+        "git",
+        ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+        { cwd: repo },
+      );
+      const { stdout: status } = await execFileAsync("git", ["status", "--short"], { cwd: repo });
+      assert.notEqual(head.trim(), parent.trim());
+      assert.deepEqual(committedNames.trim().split("\n"), ["intended.txt"]);
+      assert.match(status, /\?\? node_modules\//u);
+      assert.doesNotMatch(committedNames, /node_modules/u);
+      assert.match(await readFile(path.join(repo, "intended.txt"), "utf8"), /requested change/u);
+      assert.doesNotMatch(
+        transcript,
+        /RUN_ACCEPTANCE_UNCONFIRMED|RUNNER_RUNTIME_ERROR/u,
+      );
+    } finally {
+      await fakeOpenRouter.close();
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+}
 
 test("TUI workspace journey supports deterministic arrow-key navigation", async () => {
   const transcript = await runTuiScenario({
@@ -140,4 +244,23 @@ test("TUI workspace journey supports deterministic arrow-key navigation", async 
   assert.match(transcript, />\s*Back to Chat/i);
   assert.match(transcript, /ops-root · CHAT/i);
 });
+
+async function createCommitJourneyRepository(openRouterUrl: string): Promise<string> {
+  const repo = await mkdtemp(path.join(os.tmpdir(), "kestrel-tui-commit-"));
+  await execFileAsync("git", ["init", "--quiet"], { cwd: repo });
+  await execFileAsync("git", ["config", "user.email", "kestrel-test@example.com"], { cwd: repo });
+  await execFileAsync("git", ["config", "user.name", "Kestrel Test"], { cwd: repo });
+  await writeFile(path.join(repo, "intended.txt"), "baseline\n", "utf8");
+  await writeFile(
+    path.join(repo, ".env"),
+    `OPENROUTER_API_KEY=ops-test-openrouter\nOPENROUTER_BASE_URL=${openRouterUrl}\n`,
+    "utf8",
+  );
+  await execFileAsync("git", ["add", "--", ".env", "intended.txt"], { cwd: repo });
+  await execFileAsync("git", ["commit", "--quiet", "-m", "Initial fixture"], { cwd: repo });
+  await writeFile(path.join(repo, "intended.txt"), "baseline\nrequested change\n", "utf8");
+  await mkdir(path.join(repo, "node_modules", "decoy"), { recursive: true });
+  await writeFile(path.join(repo, "node_modules", "decoy", "package.json"), "{}\n", "utf8");
+  return repo;
+}
 });

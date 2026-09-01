@@ -7,6 +7,9 @@ import {
 
 import {
   parseDesktopUiStateV1,
+  type DesktopBrowserViewerFrameV1,
+  type DesktopBrowserViewerInputV1,
+  type DesktopBrowserViewerStateV1,
   type DesktopUiStateSyncResult,
   type DesktopUiStateV1,
   type DesktopManagedProjectRun,
@@ -23,6 +26,7 @@ import type {
 import type { RuntimeReplayBundleV1 } from "../replay/RuntimeReplayBundle.js";
 import {
   parseLocalCoreDesktopExecutionConfig,
+  parseLocalCoreModelReadiness,
   parseLocalCoreBuildIdentity,
   parseLocalCoreExecutionProfileResolution,
   parseLocalCoreRuntimeStoreResetResult,
@@ -73,6 +77,8 @@ import type {
   KestrelOneAccountStatus,
   KestrelOneAuthorizationSessionView,
   KestrelOneDesktopPreview,
+  KestrelOneReceivingConnection,
+  KestrelOneReceivingDomain,
   KestrelOneSubmittedTurn,
   KestrelOneThreadSnapshot,
 } from "./kestrelOneAccount.js";
@@ -87,6 +93,15 @@ export interface LocalCoreClientOptions {
   socketPath: string;
   token: string;
   timeoutMs?: number | undefined;
+}
+
+export interface DesktopBrowserViewerApiIdentity {
+  principalId: string;
+  threadId: string;
+  projectId: string;
+  sessionId: string;
+  generation: number;
+  connectionId: string;
 }
 
 export class LocalCoreClient {
@@ -214,6 +229,108 @@ export class LocalCoreClient {
     );
   }
 
+  async adoptDesktopBrowserPersonalRevision(input: {
+    accountId: string;
+    environmentId: string;
+    personalRevision: number;
+    threadId?: string | undefined;
+    sessionId?: string | undefined;
+  }): Promise<{ personalRevision: number; closedUnauthorizedConnections: number }> {
+    return readObjectField(
+      await this.post("/v1/browser/personal-domain-revisions/adopt", input),
+      "adoption",
+      "Desktop Browser personal revision adoption",
+    );
+  }
+
+  async connectDesktopBrowserViewer(input: {
+    principalId: string;
+    threadId: string;
+    projectId: string;
+    sessionId?: string | undefined;
+    generation?: number | undefined;
+    connectionId?: string | undefined;
+  }): Promise<DesktopBrowserViewerStateV1> {
+    return readObjectField(
+      await this.request(
+        "POST",
+        "/v1/browser/viewer/connect",
+        input,
+        true,
+        { timeout: this.timeoutMs * 6 },
+      ),
+      "viewer",
+      "Desktop Browser viewer state",
+    );
+  }
+
+  async readDesktopBrowserViewerFrame(input: DesktopBrowserViewerApiIdentity): Promise<DesktopBrowserViewerFrameV1> {
+    return readObjectField(
+      await this.post("/v1/browser/viewer/frame", input),
+      "frame",
+      "Desktop Browser viewer frame",
+    );
+  }
+
+  async acceptDesktopBrowserTakeover(input: DesktopBrowserViewerApiIdentity): Promise<DesktopBrowserViewerStateV1> {
+    return readObjectField(
+      await this.post("/v1/browser/viewer/accept", input),
+      "viewer",
+      "Desktop Browser viewer state",
+    );
+  }
+
+  async renewDesktopBrowserInputLease(
+    input: DesktopBrowserViewerApiIdentity & { leaseId: string },
+  ): Promise<DesktopBrowserViewerStateV1> {
+    return readObjectField(
+      await this.post("/v1/browser/viewer/renew", input),
+      "viewer",
+      "Desktop Browser viewer state",
+    );
+  }
+
+  async sendDesktopBrowserViewerInput(
+    input: DesktopBrowserViewerApiIdentity & {
+      leaseId: string;
+      viewerInput: DesktopBrowserViewerInputV1;
+    },
+  ): Promise<DesktopBrowserViewerStateV1> {
+    return readObjectField(
+      await this.post("/v1/browser/viewer/input", input),
+      "viewer",
+      "Desktop Browser viewer state",
+    );
+  }
+
+  async returnDesktopBrowserControl(
+    input: DesktopBrowserViewerApiIdentity & { leaseId: string },
+  ): Promise<DesktopBrowserViewerStateV1> {
+    return readObjectField(
+      await this.post("/v1/browser/viewer/return", input),
+      "viewer",
+      "Desktop Browser viewer state",
+    );
+  }
+
+  async disconnectDesktopBrowserViewer(
+    input: DesktopBrowserViewerApiIdentity,
+  ): Promise<void> {
+    await this.post("/v1/browser/viewer/disconnect", input);
+  }
+
+  async loseDesktopBrowserViewerAuthority(
+    input: DesktopBrowserViewerApiIdentity,
+  ): Promise<void> {
+    await this.post("/v1/browser/viewer/authority-lost", input);
+  }
+
+  async closeDesktopBrowserViewerSession(
+    input: DesktopBrowserViewerApiIdentity,
+  ): Promise<void> {
+    await this.post("/v1/browser/viewer/close", input);
+  }
+
   async startKestrelOneAuthorization(input: {
     baseUrl: string;
   }): Promise<KestrelOneAuthorizationSessionView> {
@@ -241,6 +358,53 @@ export class LocalCoreClient {
       await this.delete("/v1/kestrel-one/account"),
       "account",
       "Kestrel One account",
+    );
+  }
+
+  async kestrelOneReceivingConnection(
+    organizationId: string,
+  ): Promise<KestrelOneReceivingConnection> {
+    return readObjectField<KestrelOneReceivingConnection>(
+      await this.get(
+        `/v1/kestrel-one/organizations/${encodeURIComponent(organizationId)}/email/receiving`,
+      ),
+      "connection",
+      "Kestrel One receiving connection",
+    );
+  }
+
+  async inspectKestrelOneReceivingDomains(input: {
+    organizationId: string;
+    apiKey?: string | undefined;
+  }): Promise<KestrelOneReceivingDomain[]> {
+    return readObjectField<KestrelOneReceivingDomain[]>(
+      await this.post(
+        `/v1/kestrel-one/organizations/${encodeURIComponent(input.organizationId)}/email/receiving/domains`,
+        { ...(input.apiKey ? { apiKey: input.apiKey } : {}) },
+      ),
+      "domains",
+      "Kestrel One receiving domains",
+    );
+  }
+
+  async saveKestrelOneReceivingConnection(input: {
+    organizationId: string;
+    receivingDomainId?: string | undefined;
+    receivingDomain?: string | undefined;
+    apiKey?: string | undefined;
+  }): Promise<KestrelOneReceivingConnection> {
+    return readObjectField<KestrelOneReceivingConnection>(
+      await this.put(
+        `/v1/kestrel-one/organizations/${encodeURIComponent(input.organizationId)}/email/receiving`,
+        {
+          ...(input.receivingDomain
+            ? { receivingDomain: input.receivingDomain }
+            : { receivingDomainId: input.receivingDomainId }),
+          ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+        },
+      ),
+      "connection",
+      "Kestrel One receiving connection",
     );
   }
 
@@ -572,6 +736,17 @@ export class LocalCoreClient {
         response,
         "executionConfig",
         "Desktop execution config",
+      ),
+    );
+  }
+
+  async refreshDesktopModelReadiness() {
+    const response = await this.post("/v1/desktop/model-readiness/refresh", {});
+    return parseLocalCoreModelReadiness(
+      readObjectField<Record<string, unknown>>(
+        response,
+        "modelReadiness",
+        "Desktop model readiness",
       ),
     );
   }
@@ -1168,7 +1343,7 @@ export class LocalCoreClient {
     path: string,
     body: unknown,
     auth: boolean,
-    options: { timeout?: "default" | "none" | undefined } = {},
+    options: { timeout?: "default" | "none" | number | undefined } = {},
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const payload = body === undefined ? undefined : JSON.stringify(body);
@@ -1177,7 +1352,14 @@ export class LocalCoreClient {
           socketPath: this.socketPath,
           path,
           method,
-          ...(options.timeout === "none" ? {} : { timeout: this.timeoutMs }),
+          ...(options.timeout === "none"
+            ? {}
+            : {
+                timeout:
+                  typeof options.timeout === "number"
+                    ? options.timeout
+                    : this.timeoutMs,
+              }),
           headers: {
             ...(auth ? { authorization: `Bearer ${this.token}` } : {}),
             ...(payload !== undefined
@@ -1224,16 +1406,16 @@ function parseCorrelatedRunnerErrorLine(
   commandId: string,
 ): string | undefined {
   if (line.length === 0) {
-    return undefined;
+    return ;
   }
   try {
     const event = parseRunnerEventV2(JSON.parse(line));
     if (event.type !== "runner.error" || event.commandId !== commandId) {
-      return undefined;
+      return ;
     }
     return JSON.stringify(event);
   } catch {
-    return undefined;
+    return ;
   }
 }
 

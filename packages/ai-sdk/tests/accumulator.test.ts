@@ -71,6 +71,31 @@ test("task dialog updates become durable presentation parts", () => {
   });
 });
 
+test("dialog activity is preserved when valid and ignored when an older producer sends an invalid optional value", () => {
+  const accumulator = createKestrelPresentationAccumulator({ assistantMessageId: "assistant-dialog-activity" });
+  const base = {
+    messageId: "dialog-message-activity",
+    dialogId: "dialog-activity",
+    name: "Reviewer",
+    childSessionId: "child-activity",
+    sender: "collaborator" as const,
+    text: "The review is ready.",
+    createdAt: "2026-07-21T12:00:00.000Z",
+    dialogStatus: "open" as const,
+  };
+  const valid = accumulator.append({
+    id: "event-dialog-working", type: "task.updated", ts: base.createdAt, sessionId: "thread-root",
+    payload: { task: {}, kind: "waiting", assistantText: null, dialogMessage: { ...base, dialogActivity: "working" } },
+  });
+  assert.equal(valid[0] && "data" in valid[0] ? valid[0].data.dialogActivity : undefined, "working");
+
+  const malformed = accumulator.append({
+    id: "event-dialog-invalid", type: "task.updated", ts: base.createdAt, sessionId: "thread-root",
+    payload: { task: {}, kind: "waiting", assistantText: null, dialogMessage: { ...base, messageId: "dialog-message-invalid", dialogActivity: "unknown" } },
+  });
+  assert.equal(malformed[0] && "data" in malformed[0] ? malformed[0].data.dialogActivity : undefined, undefined);
+});
+
 test("completed output becomes canonical assistant text", () => {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: "assistant-1",
@@ -108,6 +133,62 @@ test("completed output exposes the finalized payload to adapters", () => {
   );
 
   assert.deepEqual(snapshot.finalizedPayload, finalizedPayload);
+});
+
+test("cancelled output preserves completed telemetry and structured cancellation evidence", () => {
+  const accumulator = createKestrelPresentationAccumulator({
+    assistantMessageId: "assistant-cancelled",
+  });
+  const completed = completedEvent("Discarded terminal text.");
+  const event: RunnerRunTerminalEvent = {
+    ...completed,
+    type: "run.cancelled",
+    payload: {
+      sessionId: "session-1",
+      runId: "run-1",
+      result: {
+        ...completed.payload.result,
+        assistantText: null,
+        output: {
+          ...completed.payload.result.output,
+          status: "FAILED",
+          errors: [{
+            code: "RUN_CANCELLED",
+            message: "Run cancelled.",
+            details: {
+              cancellationReason: "user_requested",
+              modelWorkRecorded: true,
+              validationRejections: 1,
+            },
+          }],
+          telemetry: {
+            modelCalls: 1,
+            inputTokens: 120,
+            cachedInputTokens: 20,
+            outputTokens: 30,
+            reasoningTokens: 10,
+            totalTokens: 150,
+            durationMs: 1250,
+            pricedCostUsd: 0.0042,
+            validationRejections: 1,
+          },
+        },
+      },
+    },
+  };
+
+  const snapshot = accumulator.finish(event);
+  assert.equal(snapshot.terminalStatus, "cancelled");
+  assert.equal(snapshot.errorCode, "RUN_CANCELLED");
+  assert.equal(snapshot.errorDetails?.cancellationReason, "user_requested");
+  assert.deepEqual(snapshot.telemetry, event.payload.result.output.telemetry);
+  const statusPart = snapshot.message.parts.find(
+    (part) => part.type === "data-kestrel-status",
+  );
+  assert.equal(statusPart?.type, "data-kestrel-status");
+  if (statusPart?.type === "data-kestrel-status") {
+    assert.deepEqual(statusPart.data.telemetry, event.payload.result.output.telemetry);
+  }
 });
 
 test("waiting output persists one assistant prompt and its exact durable interaction", () => {

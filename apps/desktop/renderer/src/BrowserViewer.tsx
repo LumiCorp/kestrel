@@ -1,0 +1,509 @@
+import {
+  default as React,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import {
+  Bot,
+  Hand,
+  LoaderCircle,
+  Monitor,
+  TriangleAlert,
+  Unplug,
+  X,
+} from "lucide-react";
+
+import type {
+  DesktopBrowserViewerBindingV1,
+  DesktopBrowserViewerFrameV1,
+  DesktopBrowserViewerInputV1,
+  DesktopBrowserViewerStateV1,
+} from "../../src/contracts";
+
+const DESKTOP_BROWSER_VIEWER_REQUEST_VERSION: DesktopBrowserViewerBindingV1["version"] =
+  "desktop_browser_viewer_request_v1";
+const DESKTOP_BROWSER_VIEWER_INPUT_VERSION: DesktopBrowserViewerInputV1["version"] =
+  "desktop_browser_viewer_input_v1";
+
+const VIEWER_DISCOVERY_MS = 1_000;
+const VIEWER_FRAME_MS = 500;
+const VIEWER_LEASE_RENEW_MS = 15_000;
+
+export function BrowserViewer(props: { threadId: string; projectId: string }) {
+  const [viewer, setViewer] = useState<DesktopBrowserViewerStateV1>();
+  const [frame, setFrame] = useState<DesktopBrowserViewerFrameV1>();
+  const [error, setError] = useState<string>();
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const imageRef = useRef<HTMLImageElement>(null);
+
+  const binding = useMemo<DesktopBrowserViewerBindingV1>(
+    () => ({
+      version: DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
+      threadId: props.threadId,
+      projectId: props.projectId,
+      ...(viewer?.sessionId === undefined
+        ? {}
+        : {
+            sessionId: viewer.sessionId,
+            generation: viewer.generation,
+            connectionId: viewer.connectionId,
+          }),
+    }),
+    [props.threadId, props.projectId, viewer],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let expectedViewer: DesktopBrowserViewerStateV1 | undefined;
+    const discover = async () => {
+      try {
+        const next = await window.kestrelDesktop.connectBrowserViewer(
+          expectedViewer?.available
+            ? exactBinding(expectedViewer, props)
+            : {
+                version: DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
+                threadId: props.threadId,
+                projectId: props.projectId,
+              },
+        );
+        if (cancelled) return;
+        expectedViewer = next.available ? next : undefined;
+        setViewer(next);
+        setError(undefined);
+        if (!next.available) {
+          setFrame(undefined);
+        }
+      } catch {
+        if (cancelled) return;
+        setViewer(undefined);
+        setFrame(undefined);
+        setError("The live Browser viewer is temporarily unavailable.");
+      } finally {
+        if (!cancelled) {
+          // Connection refresh is also the viewer-state subscription: it makes
+          // a takeover requested after initial connection visible without
+          // adding a second event or streaming authority surface.
+          timer = setTimeout(discover, VIEWER_DISCOVERY_MS);
+        }
+      }
+    };
+    void discover();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [props.threadId, props.projectId, connectionAttempt]);
+
+  useEffect(() => {
+    if (
+      !viewer?.available ||
+      viewer.sessionId === undefined ||
+      viewer.generation === undefined ||
+      viewer.connectionId === undefined
+    )
+      return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = async () => {
+      try {
+        const next = await window.kestrelDesktop.readBrowserViewerFrame(
+          exactBinding(viewer, props),
+        );
+        if (!cancelled) {
+          setFrame(next);
+          setError(undefined);
+        }
+      } catch {
+        if (!cancelled) setError("The live Browser frame is unavailable.");
+      } finally {
+        if (!cancelled) timer = setTimeout(read, VIEWER_FRAME_MS);
+      }
+    };
+    void read();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [
+    props.threadId,
+    props.projectId,
+    viewer?.available,
+    viewer?.sessionId,
+    viewer?.generation,
+    viewer?.connectionId,
+  ]);
+
+  useEffect(() => {
+    if (
+      viewer?.inputLeaseId === undefined ||
+      viewer.sessionId === undefined ||
+      viewer.generation === undefined ||
+      viewer.connectionId === undefined
+    )
+      return;
+    const leaseId = viewer.inputLeaseId;
+    const timer = setInterval(() => {
+      void window.kestrelDesktop
+        .renewBrowserInputLease({
+          ...exactBinding(viewer, props),
+          leaseId,
+        })
+        .then(setViewer)
+        .catch(() => {
+          setViewer((current) => {
+            if (current === undefined) return current;
+            const {
+              inputLeaseId: _lease,
+              inputLeaseExpiresAt: _expiry,
+              ...withoutLease
+            } = current;
+            return withoutLease;
+          });
+        });
+    }, VIEWER_LEASE_RENEW_MS);
+    return () => clearInterval(timer);
+  }, [props.threadId, props.projectId, viewer?.inputLeaseId]);
+
+  if (!viewer?.available) {
+    return error === undefined ? null : (
+      <section
+        className="browser-viewer browser-viewer-unavailable"
+        aria-label="Browser session unavailable"
+        aria-live="polite"
+      >
+        <div className="browser-viewer-unavailable-copy">
+          <TriangleAlert aria-hidden="true" size={16} />
+          <div>
+            <strong>Browser viewer unavailable</strong>
+            <span>{error}</span>
+          </div>
+        </div>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => setConnectionAttempt((current) => current + 1)}
+        >
+          Retry
+        </button>
+      </section>
+    );
+  }
+
+  const leaseActive = viewer.inputLeaseId !== undefined;
+  const controlState = leaseActive
+    ? "human"
+    : viewer.sessionState === "human_control"
+      ? "reconnect"
+      : "agent";
+  const frameSource =
+    frame === undefined
+      ? undefined
+      : `data:${frame.mediaType};base64,${frame.dataBase64}`;
+
+  async function acceptTakeover(): Promise<void> {
+    setError(undefined);
+    try {
+      const next = await window.kestrelDesktop.acceptBrowserTakeover(binding);
+      setViewer(next);
+    } catch {
+      setError("Kestrel could not grant this viewer input control.");
+    }
+  }
+
+  async function returnControl(): Promise<void> {
+    if (viewer?.inputLeaseId === undefined) return;
+    setError(undefined);
+    try {
+      setViewer(
+        await window.kestrelDesktop.returnBrowserControl({
+          ...binding,
+          leaseId: viewer.inputLeaseId,
+        }),
+      );
+    } catch {
+      setError("Kestrel could not return Browser control to the agent.");
+    }
+  }
+
+  async function disconnect(): Promise<void> {
+    try {
+      await window.kestrelDesktop.disconnectBrowserViewer(binding);
+    } finally {
+      setViewer(undefined);
+      setFrame(undefined);
+      setConnectionAttempt((current) => current + 1);
+    }
+  }
+
+  async function closeSession(): Promise<void> {
+    try {
+      await window.kestrelDesktop.closeBrowserViewerSession(binding);
+    } finally {
+      setViewer(undefined);
+      setFrame(undefined);
+    }
+  }
+
+  async function sendPointer(
+    event: ReactPointerEvent<HTMLImageElement>,
+    phase: "move" | "down" | "up",
+  ): Promise<void> {
+    if (!leaseActive || viewer?.inputLeaseId === undefined) return;
+    event.currentTarget.parentElement?.focus();
+    const image = imageRef.current;
+    if (image === null || image.naturalWidth <= 0 || image.naturalHeight <= 0)
+      return;
+    const bounds = image.getBoundingClientRect();
+    const x = Math.max(
+      0,
+      ((event.clientX - bounds.left) * image.naturalWidth) / bounds.width,
+    );
+    const y = Math.max(
+      0,
+      ((event.clientY - bounds.top) * image.naturalHeight) / bounds.height,
+    );
+    if (phase === "down")
+      event.currentTarget.setPointerCapture(event.pointerId);
+    const modifiers = eventModifiers(event);
+    await sendInput({
+      version: DESKTOP_BROWSER_VIEWER_INPUT_VERSION,
+      kind: "pointer",
+      phase,
+      x,
+      y,
+      button: pointerButton(event.button, phase),
+      ...(modifiers === undefined ? {} : { modifiers }),
+    });
+  }
+
+  async function sendKeyboard(
+    event: ReactKeyboardEvent<HTMLElement>,
+    phase: "down" | "up",
+  ): Promise<void> {
+    if (!leaseActive || viewer?.inputLeaseId === undefined) return;
+    event.preventDefault();
+    const modifiers = eventModifiers(event);
+    await sendInput({
+      version: DESKTOP_BROWSER_VIEWER_INPUT_VERSION,
+      kind: "keyboard",
+      phase,
+      key: event.key,
+      code: event.code,
+      ...(phase === "down" && event.key.length === 1
+        ? { text: event.key }
+        : {}),
+      ...(modifiers === undefined ? {} : { modifiers }),
+    });
+  }
+
+  async function sendInput(
+    input: Parameters<
+      typeof window.kestrelDesktop.sendBrowserViewerInput
+    >[0]["input"],
+  ): Promise<void> {
+    if (viewer?.inputLeaseId === undefined) return;
+    try {
+      setViewer(
+        await window.kestrelDesktop.sendBrowserViewerInput({
+          ...binding,
+          leaseId: viewer.inputLeaseId,
+          input,
+        }),
+      );
+    } catch {
+      setError("Browser input control is no longer available.");
+    }
+  }
+
+  return (
+    <section
+      className={`browser-viewer browser-viewer-${controlState}-control`}
+      aria-label="Live Browser viewer"
+    >
+      <header className="browser-viewer-header">
+        <div className="browser-viewer-identity">
+          <span className="browser-viewer-icon" aria-hidden="true">
+            <Monitor size={15} strokeWidth={1.8} />
+          </span>
+          <div className="browser-viewer-heading">
+            <strong>Browser session</strong>
+            <span
+              className={`browser-viewer-status browser-viewer-status-${controlState}`}
+            >
+              <i aria-hidden="true" />
+              {controlState === "human"
+                ? "Human control"
+                : controlState === "reconnect"
+                  ? "Reconnect required"
+                  : "Agent control"}
+            </span>
+          </div>
+        </div>
+        <div className="browser-viewer-actions">
+          {viewer.takeoverRequested ||
+          (viewer.sessionState === "human_control" && !leaseActive) ? (
+            <button
+              className="primary-button browser-viewer-primary-action"
+              type="button"
+              onClick={() => void acceptTakeover()}
+            >
+              <Hand aria-hidden="true" size={13} />
+              {viewer.takeoverRequested ? "Take control" : "Reconnect input"}
+            </button>
+          ) : null}
+          {leaseActive ? (
+            <button
+              className="primary-button browser-viewer-primary-action"
+              type="button"
+              onClick={() => void returnControl()}
+            >
+              <Bot aria-hidden="true" size={13} />
+              Return to agent
+            </button>
+          ) : null}
+          <button
+            className="secondary-button browser-viewer-disconnect"
+            type="button"
+            aria-label="Disconnect viewer"
+            onClick={() => void disconnect()}
+          >
+            <Unplug aria-hidden="true" size={13} />
+            <span>Disconnect viewer</span>
+          </button>
+          <button
+            className="icon-button browser-viewer-close"
+            type="button"
+            title="Close Browser session"
+            aria-label="Close session"
+            onClick={() => void closeSession()}
+          >
+            <X aria-hidden="true" size={15} />
+          </button>
+        </div>
+      </header>
+      <div className="browser-viewer-viewport">
+        <div className="browser-viewer-viewport-bar" aria-hidden="true">
+          <span className="browser-viewer-window-controls">
+            <i />
+            <i />
+            <i />
+          </span>
+          <span className="browser-viewer-live-indicator">
+            <i /> Live
+          </span>
+        </div>
+        <div
+          className={`browser-viewer-frame ${leaseActive ? "browser-viewer-frame-input" : ""}`}
+          tabIndex={leaseActive ? 0 : -1}
+          aria-busy={frameSource === undefined}
+          aria-label={
+            leaseActive ? "Interactive Browser viewport" : "Browser viewport"
+          }
+          onKeyDown={(event) => void sendKeyboard(event, "down")}
+          onKeyUp={(event) => void sendKeyboard(event, "up")}
+        >
+          {frameSource === undefined ? (
+            <div className="browser-viewer-loading" role="status">
+              <LoaderCircle aria-hidden="true" size={20} />
+              <strong>Connecting to Browser</strong>
+              <span>The live page will appear here.</span>
+            </div>
+          ) : (
+            <img
+              ref={imageRef}
+              src={frameSource}
+              alt="Current Browser Session"
+              draggable={false}
+              onPointerMove={(event) => void sendPointer(event, "move")}
+              onPointerDown={(event) => void sendPointer(event, "down")}
+              onPointerUp={(event) => void sendPointer(event, "up")}
+            />
+          )}
+        </div>
+        <div className="browser-viewer-footer">
+          <span>
+            {controlState === "human" ? (
+              <>
+                <Hand aria-hidden="true" size={12} /> Keyboard and pointer input
+                are active
+              </>
+            ) : controlState === "reconnect" ? (
+              <>
+                <Unplug aria-hidden="true" size={12} /> Input paused · Reconnect
+                to continue
+              </>
+            ) : (
+              <>
+                <Bot aria-hidden="true" size={12} /> View only · Kestrel
+                controls this session
+              </>
+            )}
+          </span>
+          <span>
+            {frame === undefined ? "Connecting" : `Frame ${frame.sequence}`}
+          </span>
+        </div>
+      </div>
+      {error === undefined ? null : (
+        <p className="browser-viewer-error" role="status">
+          <TriangleAlert aria-hidden="true" size={13} />
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function exactBinding(
+  viewer: DesktopBrowserViewerStateV1,
+  props: { threadId: string; projectId: string },
+): DesktopBrowserViewerBindingV1 & {
+  sessionId: string;
+  generation: number;
+  connectionId: string;
+} {
+  if (
+    viewer.sessionId === undefined ||
+    viewer.generation === undefined ||
+    viewer.connectionId === undefined
+  ) {
+    throw new Error("Browser viewer identity is unavailable.");
+  }
+  return {
+    version: DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
+    threadId: props.threadId,
+    projectId: props.projectId,
+    sessionId: viewer.sessionId,
+    generation: viewer.generation,
+    connectionId: viewer.connectionId,
+  };
+}
+
+function eventModifiers(event: {
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+}): Array<"alt" | "control" | "meta" | "shift"> | undefined {
+  const modifiers: Array<"alt" | "control" | "meta" | "shift"> = [];
+  if (event.altKey) modifiers.push("alt");
+  if (event.ctrlKey) modifiers.push("control");
+  if (event.metaKey) modifiers.push("meta");
+  if (event.shiftKey) modifiers.push("shift");
+  return modifiers.length === 0 ? undefined : modifiers;
+}
+
+function pointerButton(
+  button: number,
+  phase: "move" | "down" | "up",
+): "none" | "left" | "middle" | "right" {
+  if (phase === "move") return "none";
+  if (button === 1) return "middle";
+  if (button === 2) return "right";
+  return "left";
+}

@@ -69,7 +69,6 @@ export interface RuntimeTurnCoordinatorServiceOptions {
   executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
   persistExecutionBoundaryDecision?: ExecutionBoundaryDecisionSink | undefined;
 }
-
 export class RuntimeTurnCoordinatorService implements RuntimeTurnCoordinator {
   private readonly defaults: CompileRuntimeTurnDefaults;
   private readonly threadRuntime: RuntimeTurnThreadRuntime | undefined;

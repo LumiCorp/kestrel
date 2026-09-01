@@ -194,7 +194,7 @@ export async function verifyAndStoreLocalCoreMcpServer(
 }
 
 function buildVerificationEnvironment(
-  baseEnv: Readonly<NodeJS.ProcessEnv>,
+  baseEnv: Readonly<Partial<NodeJS.ProcessEnv>>,
   environmentOptions: Readonly<Partial<Record<"SHELL" | "PATH", string>>>,
   credentialKeys: readonly string[],
 ): NodeJS.ProcessEnv {

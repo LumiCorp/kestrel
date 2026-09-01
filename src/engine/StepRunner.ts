@@ -16,6 +16,7 @@ import type { ProgressCode, ProgressPhase, RunEvent, RunLogEntry, RuntimeEvent, 
 import type { NormalizedOutput, RegionWorkItem, RuntimeDependencies, StepCommit, StepContext, StepIO, StepTransition } from "../kestrel/contracts/execution.js";
 import type { EffectStore, PersistedEffect, SessionRecord } from "../kestrel/contracts/store.js";
 import type { HeapPressureSample } from "../runtime/heapDiagnostics.js";
+import { parsePreparedToolCallV1 } from "../kestrel/contracts/tool-invocation.js";
 
 
 export interface StepRunnerObservabilityFrame {
@@ -50,7 +51,17 @@ function countModelAuthoredToolEffects(
       continue;
     }
     const payload = effect.payload;
-    const toolName = typeof payload.toolName === "string" ? payload.toolName : undefined;
+    let toolName =
+      typeof payload.toolName === "string" ? payload.toolName : undefined;
+    if (toolName === undefined && payload.preparedToolCall !== undefined) {
+      try {
+        toolName = parsePreparedToolCallV1(
+          payload.preparedToolCall,
+        ).activation.descriptor.toolId;
+      } catch {
+        toolName = undefined;
+      }
+    }
     guardrails.onEffectToolCall(toolName);
   }
 }
@@ -560,6 +571,16 @@ export class StepRunner {
 
       const traceStatePatch = this.deps.stripDecisionTraceFromStatePatch(transition.statePatch);
       if (traceStatePatch.strippedDecisionTrace.length > 0) {
+        for (const item of traceStatePatch.strippedDecisionTrace) {
+          if (
+            typeof item === "object" &&
+            item !== null &&
+            !Array.isArray(item) &&
+            (item as Record<string, unknown>).eventType === "decision.rejected"
+          ) {
+            input.guardrails.onValidationRejection();
+          }
+        }
         await this.deps.appendDecisionTraceEvents(
           input.runId,
           input.state.session.sessionId,

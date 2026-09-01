@@ -98,3 +98,45 @@ test("tool updates project through persisted runtime events", () => {
   const projected = readToolUpdateFromPersistedRuntimeEvent(event);
   assert.deepEqual(projected, update);
 });
+
+test("v2 tool outcome evidence survives persisted runtime projection", () => {
+  const activation = {
+    version: "v1" as const,
+    descriptor: {
+      version: "v1" as const,
+      toolId: "mcp.test.mutate",
+      sourceKind: "mcp" as const,
+      sourceId: "test",
+      contractRevision: `sha256:${"a".repeat(64)}`,
+      inputSchemaHash: `sha256:${"b".repeat(64)}`,
+      outputContractHash: `sha256:${"c".repeat(64)}`,
+    },
+    registryGeneration: "generation-1",
+    scopeFingerprint: `sha256:${"d".repeat(64)}`,
+  };
+  const update = {
+    version: "v2" as const,
+    runId: "run-approved-continuation",
+    sessionId: "session-approved",
+    ts: "2026-08-26T18:00:00.000Z",
+    seq: 3,
+    toolCallId: "prepared-call-1",
+    toolName: "mcp.test.mutate",
+    activation,
+    phase: "completed" as const,
+    outcome: {
+      version: "v1" as const,
+      callId: "prepared-call-1",
+      activation,
+      kind: "success" as const,
+      startedAt: "2026-08-26T17:59:59.000Z",
+      completedAt: "2026-08-26T18:00:00.000Z",
+      effectState: "committed" as const,
+      rawOutput: { changed: true },
+    },
+    output: { changed: true },
+  };
+
+  const event = buildPersistedRuntimeEventFromToolUpdate(update);
+  assert.deepEqual(readToolUpdateFromPersistedRuntimeEvent(event), update);
+});

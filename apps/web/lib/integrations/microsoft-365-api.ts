@@ -1,21 +1,41 @@
 import { z } from "zod";
+import {
+  normalizeMicrosoft365TeamsChats,
+  normalizeMicrosoft365TeamsMessages,
+} from "../../../../src/apps/microsoft365Teams.js";
 
 const graphCollectionSchema = z.object({
   value: z.array(z.record(z.string(), z.unknown())).default([]),
   "@odata.nextLink": z.string().optional(),
 });
 
+const teamsChatMessageSendResultSchema = z.object({
+  id: z.string().min(1),
+  chatId: z.string().min(1),
+  createdDateTime: z.string().min(1).optional(),
+});
+
 export class Microsoft365ProviderError extends Error {
   readonly code: string;
   readonly status: number;
   readonly reconnectRequired: boolean;
+  readonly outcomeUnknown: boolean;
+  readonly providerCode: string | undefined;
 
-  constructor(input: { code: string; status: number; reconnectRequired?: boolean }) {
+  constructor(input: {
+    code: string;
+    status: number;
+    reconnectRequired?: boolean;
+    outcomeUnknown?: boolean;
+    providerCode?: string;
+  }) {
     super(input.code);
     this.name = "Microsoft365ProviderError";
     this.code = input.code;
     this.status = input.status;
     this.reconnectRequired = input.reconnectRequired ?? false;
+    this.outcomeUnknown = input.outcomeUnknown ?? false;
+    this.providerCode = input.providerCode;
   }
 }
 
@@ -85,17 +105,51 @@ export async function listMicrosoftCalendarEvents(input: {
 
 export async function listMicrosoftTeamsChats(input: {
   accessToken: string;
-  chatId?: string;
   maxResults: number;
+  nextLink?: string;
   fetchImpl?: FetchLike;
 }) {
-  const url = graphUrl(
-    input.chatId
-      ? `/chats/${encodeURIComponent(input.chatId)}/messages`
-      : "/me/chats"
-  );
-  url.searchParams.set("$top", String(input.maxResults));
-  return graphCollection(input, url);
+  const url = input.nextLink ? new URL(input.nextLink) : graphUrl("/me/chats");
+  if (!input.nextLink) {
+    url.searchParams.set("$top", String(input.maxResults));
+    url.searchParams.set(
+      "$select",
+      "id,topic,chatType,createdDateTime,lastUpdatedDateTime,webUrl,members",
+    );
+    url.searchParams.set("$expand", "members");
+  }
+  const result = await graphCollection(input, url);
+  return {
+    items: normalizeMicrosoft365TeamsChats(result.items),
+    nextPage: result.nextPage,
+  };
+}
+
+export async function listMicrosoftTeamsChatMessages(input: {
+  accessToken: string;
+  chatId: string;
+  maxResults: number;
+  nextLink?: string;
+  fetchImpl?: FetchLike;
+}) {
+  const url = input.nextLink
+    ? new URL(input.nextLink)
+    : graphUrl(`/chats/${encodeURIComponent(input.chatId)}/messages`);
+  if (!input.nextLink) {
+    url.searchParams.set("$top", String(input.maxResults));
+    url.searchParams.set(
+      "$select",
+      "id,chatId,createdDateTime,lastModifiedDateTime,from,body",
+    );
+  }
+  const result = await graphCollection(input, url);
+  return {
+    items: normalizeMicrosoft365TeamsMessages({
+      chatId: input.chatId,
+      items: result.items,
+    }),
+    nextPage: result.nextPage,
+  };
 }
 
 export async function sendMicrosoftTeamsChatMessage(input: {
@@ -104,12 +158,26 @@ export async function sendMicrosoftTeamsChatMessage(input: {
   content: string;
   fetchImpl?: FetchLike;
 }) {
-  return graphRequest({
-    ...input,
-    method: "POST",
-    url: graphUrl(`/chats/${encodeURIComponent(input.chatId)}/messages`),
-    body: { body: { contentType: "text", content: input.content } },
-  });
+  try {
+    const response = await graphTeamsSendRequest({
+      ...input,
+      url: graphUrl(`/chats/${encodeURIComponent(input.chatId)}/messages`),
+      body: { body: { contentType: "text", content: input.content } },
+    });
+    const message = teamsChatMessageSendResultSchema.parse(response);
+    return {
+      id: message.id,
+      chatId: message.chatId,
+      createdAt: message.createdDateTime ?? null,
+    };
+  } catch (error) {
+    if (error instanceof Microsoft365ProviderError) throw error;
+    throw new Microsoft365ProviderError({
+      code: "MICROSOFT_365_OUTCOME_UNKNOWN",
+      status: 502,
+      outcomeUnknown: true,
+    });
+  }
 }
 
 export async function searchMicrosoftSharePointSites(input: {
@@ -140,6 +208,88 @@ async function graphCollection(
     items: response.value,
     nextPage: response["@odata.nextLink"] ?? null,
   };
+}
+
+async function graphTeamsSendRequest(input: {
+  accessToken: string;
+  url: URL;
+  body: unknown;
+  fetchImpl?: FetchLike;
+}) {
+  let response: Response;
+  try {
+    response = await (input.fetchImpl ?? fetch)(input.url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${input.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(input.body),
+    });
+  } catch {
+    throw new Microsoft365ProviderError({
+      code: "MICROSOFT_365_OUTCOME_UNKNOWN",
+      status: 502,
+      outcomeUnknown: true,
+    });
+  }
+  if (!response.ok) throw await teamsSendProviderError(response);
+  return response.json().catch(() => {
+    throw new Microsoft365ProviderError({
+      code: "MICROSOFT_365_OUTCOME_UNKNOWN",
+      status: 502,
+      outcomeUnknown: true,
+    });
+  });
+}
+
+async function teamsSendProviderError(response: Response) {
+  const providerCode = await response
+    .json()
+    .then((body: unknown) => {
+      const error = body && typeof body === "object" && "error" in body
+        ? (body as { error?: unknown }).error
+        : undefined;
+      return error && typeof error === "object" && "code" in error &&
+          typeof (error as { code?: unknown }).code === "string"
+        ? (error as { code: string }).code
+        : undefined;
+    })
+    .catch(() => undefined);
+  if (response.status === 401) {
+    return new Microsoft365ProviderError({
+      code: "MICROSOFT_365_RECONNECT_REQUIRED",
+      status: 401,
+      reconnectRequired: true,
+      ...(providerCode === undefined ? {} : { providerCode }),
+    });
+  }
+  if (response.status === 403) {
+    return new Microsoft365ProviderError({
+      code: "MICROSOFT_365_ACCESS_DENIED",
+      status: 403,
+      ...(providerCode === undefined ? {} : { providerCode }),
+    });
+  }
+  if (response.status === 429) {
+    return new Microsoft365ProviderError({
+      code: "MICROSOFT_365_RATE_LIMITED",
+      status: 429,
+      ...(providerCode === undefined ? {} : { providerCode }),
+    });
+  }
+  if (response.status >= 500) {
+    return new Microsoft365ProviderError({
+      code: "MICROSOFT_365_UNAVAILABLE",
+      status: 502,
+      ...(providerCode === undefined ? {} : { providerCode }),
+    });
+  }
+  return new Microsoft365ProviderError({
+    code: "MICROSOFT_365_PROVIDER_REJECTED",
+    status: response.status,
+    ...(providerCode === undefined ? {} : { providerCode }),
+  });
 }
 
 async function graphRequest(input: {

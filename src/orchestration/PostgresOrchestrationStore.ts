@@ -1,5 +1,5 @@
 import type { SqlExecutor } from "../store/PostgresSessionStore.js";
-import { parseRunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
+import { parseRunnerExternalApprovalBinding } from "@kestrel-agents/protocol";
 import { parseHarnessEconomicsPolicyV1 } from "../economics/policy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
@@ -8,6 +8,11 @@ import type { ApprovalGrantRecord, AssemblyBundleRecord, AssemblyChangeDecisionR
 
 import type { OrchestrationStore } from "./contracts.js";
 import { readSubAgentResultEnvelope } from "./subAgentResult.js";
+import {
+  assertMatchingThreadAssemblyRetry,
+  compareThreadAssemblyRecordsNewestFirst,
+  orderThreadAssemblyRecordAfter,
+} from "./threadAssemblyOrdering.js";
 
 export class PostgresOrchestrationStore implements OrchestrationStore {
   private readonly db: SqlExecutor;
@@ -211,6 +216,120 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
         normalizeTimestampString(record.updatedAt),
       ],
     );
+  }
+
+  async createDialog(record: DelegationRecord): Promise<boolean> {
+    await this.ensureSchema();
+    const dialog = readDialogReservation(record);
+    if (dialog === undefined) {
+      throw new Error("createDialog requires a dialog delegation record.");
+    }
+    const result = await this.db.query<{ delegation_id: string }>(
+      `WITH name_lock AS (
+         SELECT pg_advisory_xact_lock(hashtext($2), hashtext($3))
+       ), available_name AS (
+         SELECT 1
+           FROM name_lock
+          WHERE NOT EXISTS (
+            SELECT 1
+              FROM orchestration_delegations
+             WHERE parent_thread_id = $2
+               AND lower(COALESCE(policy_json -> 'dialog' ->> 'normalizedName', policy_json -> 'dialog' ->> 'name', '')) = $3
+          )
+       ), child_session AS (
+         INSERT INTO sessions (session_id)
+         SELECT $4
+           FROM available_name
+         ON CONFLICT (session_id) DO UPDATE SET session_id = EXCLUDED.session_id
+         RETURNING session_id
+       ), child_thread AS (
+         INSERT INTO orchestration_threads
+           (thread_id, session_id, title, status, parent_thread_id, metadata_json, created_at, updated_at)
+         SELECT $4, child_session.session_id, 'Delegated: ' || $6, 'IDLE', $2,
+                jsonb_build_object('delegationPrompt', $7::text), $18::timestamptz, $19::timestamptz
+           FROM available_name
+           CROSS JOIN child_session
+         ON CONFLICT (thread_id) DO NOTHING
+         RETURNING thread_id
+       )
+       INSERT INTO orchestration_delegations
+        (delegation_id, parent_thread_id, child_thread_id, parent_run_id, title, prompt, status, profile_id, provider, model, skill_pack_id, launched_by, wait_event_type, result_summary, error_message, result_contract, policy_json, created_at, updated_at)
+       SELECT $1, $2, child_thread.thread_id, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13, $14, $15, $16, $17::jsonb, $18::timestamptz, $19::timestamptz
+         FROM available_name
+         CROSS JOIN child_thread
+       RETURNING delegation_id`,
+      [
+        record.delegationId,
+        record.parentThreadId,
+        dialog.normalizedName,
+        record.childThreadId,
+        record.parentRunId ?? null,
+        record.title,
+        record.prompt,
+        record.status,
+        record.profileId ?? null,
+        record.provider ?? null,
+        record.model ?? null,
+        record.launchedBy ?? null,
+        record.waitEventType ?? null,
+        record.resultSummary ?? null,
+        record.errorMessage ?? null,
+        record.resultContract ?? null,
+        stringifySanitizedJson(buildDelegationPolicyJson(record)),
+        normalizeTimestampString(record.createdAt),
+        normalizeTimestampString(record.updatedAt),
+      ],
+    );
+    return result.rows.length === 1;
+  }
+
+  async compareAndSetDialog(record: DelegationRecord, expectedRevision: number): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.db.query<{ delegation_id: string }>(
+      `UPDATE orchestration_delegations
+          SET child_thread_id = $2,
+              parent_run_id = $3,
+              title = $4,
+              prompt = $5,
+              status = $6,
+              profile_id = $7,
+              provider = $8,
+              model = $9,
+              launched_by = $10,
+              wait_event_type = $11,
+              result_summary = $12,
+              error_message = $13,
+              result_contract = $14,
+              policy_json = $15::jsonb,
+              updated_at = $16::timestamptz
+        WHERE delegation_id = $1
+          AND CASE
+                WHEN COALESCE(policy_json -> 'dialog' ->> 'revision', '') ~ '^[0-9]+$'
+                  THEN (policy_json -> 'dialog' ->> 'revision')::bigint
+                ELSE 0
+              END = $17
+       RETURNING delegation_id`,
+      [
+        record.delegationId,
+        record.childThreadId,
+        record.parentRunId ?? null,
+        record.title,
+        record.prompt,
+        record.status,
+        record.profileId ?? null,
+        record.provider ?? null,
+        record.model ?? null,
+        record.launchedBy ?? null,
+        record.waitEventType ?? null,
+        record.resultSummary ?? null,
+        record.errorMessage ?? null,
+        record.resultContract ?? null,
+        stringifySanitizedJson(buildDelegationPolicyJson(record)),
+        normalizeTimestampString(record.updatedAt),
+        expectedRevision,
+      ],
+    );
+    return result.rows.length === 1;
   }
 
   async getDelegation(delegationId: string): Promise<DelegationRecord | null> {
@@ -748,23 +867,80 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
     return result.rows.map((row) => mapAssemblyBundleRow(row));
   }
 
-  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<void> {
+  async appendThreadAssemblyRecord(record: ThreadAssemblyRecord): Promise<ThreadAssemblyRecord> {
     await this.ensureSchema();
-    await this.db.query(
-      `INSERT INTO orchestration_thread_assembly_records
-        (record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::timestamptz)
-       ON CONFLICT (record_id) DO NOTHING`,
-      [
-        record.recordId,
-        record.threadId,
-        record.bundleId,
-        record.cause,
-        record.authority,
-        stringifySanitizedJson(record.metadata ?? null),
-        normalizeTimestampString(record.createdAt),
-      ],
-    );
+    if (typeof this.db.transaction !== "function") {
+      throw new Error(
+        "Thread assembly append requires a transactional SQL executor.",
+      );
+    }
+    return this.db.transaction(async (transaction) => {
+      const thread = await transaction.query<{ thread_id: string }>(
+        `SELECT thread_id
+           FROM orchestration_threads
+          WHERE thread_id = $1
+          FOR UPDATE`,
+        [record.threadId],
+      );
+      if (thread.rows[0] === undefined) {
+        throw new Error(`Cannot append assembly record for unknown thread ${record.threadId}.`);
+      }
+      const duplicate = await transaction.query<Record<string, unknown>>(
+        `SELECT record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at
+           FROM orchestration_thread_assembly_records
+          WHERE record_id = $1`,
+        [record.recordId],
+      );
+      if (duplicate.rows[0] !== undefined) {
+        const persisted = mapThreadAssemblyRow(duplicate.rows[0]);
+        assertMatchingThreadAssemblyRetry(record, persisted);
+        return persisted;
+      }
+      const latest = await transaction.query<Record<string, unknown>>(
+        `SELECT record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at
+           FROM orchestration_thread_assembly_records
+          WHERE thread_id = $1
+          ORDER BY created_at DESC, record_id DESC
+          LIMIT 1`,
+        [record.threadId],
+      );
+      const persisted = orderThreadAssemblyRecordAfter(
+        record,
+        latest.rows[0] === undefined ? undefined : mapThreadAssemblyRow(latest.rows[0]),
+      );
+      const inserted = await transaction.query<Record<string, unknown>>(
+        `INSERT INTO orchestration_thread_assembly_records
+          (record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::timestamptz)
+         ON CONFLICT (record_id) DO NOTHING
+         RETURNING record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at`,
+        [
+          persisted.recordId,
+          persisted.threadId,
+          persisted.bundleId,
+          persisted.cause,
+          persisted.authority,
+          stringifySanitizedJson(persisted.metadata ?? null),
+          normalizeTimestampString(persisted.createdAt),
+        ],
+      );
+      const insertedRow = inserted.rows[0];
+      if (insertedRow === undefined) {
+        const racedDuplicate = await transaction.query<Record<string, unknown>>(
+          `SELECT record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at
+             FROM orchestration_thread_assembly_records
+            WHERE record_id = $1`,
+          [record.recordId],
+        );
+        if (racedDuplicate.rows[0] === undefined) {
+          throw new Error(`Thread assembly record ${record.recordId} was not persisted.`);
+        }
+        const racedPersisted = mapThreadAssemblyRow(racedDuplicate.rows[0]);
+        assertMatchingThreadAssemblyRetry(record, racedPersisted);
+        return racedPersisted;
+      }
+      return mapThreadAssemblyRow(insertedRow);
+    });
   }
 
   async listThreadAssemblyRecords(threadId: string): Promise<ThreadAssemblyRecord[]> {
@@ -773,10 +949,12 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
       `SELECT record_id, thread_id, bundle_id, cause, authority, metadata_json, created_at
          FROM orchestration_thread_assembly_records
         WHERE thread_id = $1
-        ORDER BY created_at DESC`,
+        ORDER BY created_at DESC, record_id DESC`,
       [threadId],
     );
-    return result.rows.map((row) => mapThreadAssemblyRow(row));
+    return result.rows
+      .map((row) => mapThreadAssemblyRow(row))
+      .sort(compareThreadAssemblyRecordsNewestFirst);
   }
 
   async upsertAssemblyChangeProposal(record: AssemblyChangeProposalRecord): Promise<void> {
@@ -1068,6 +1246,15 @@ function buildDelegationPolicyJson(record: DelegationRecord): Record<string, unk
   };
 }
 
+function readDialogReservation(record: DelegationRecord): { normalizedName: string } | undefined {
+  const dialog = isRecord(record.policy?.dialog) ? record.policy?.dialog : undefined;
+  if (dialog?.version !== "v1" || typeof dialog.name !== "string") return undefined;
+  const normalizedName = typeof dialog.normalizedName === "string"
+    ? dialog.normalizedName
+    : dialog.name.trim().toLocaleLowerCase();
+  return normalizedName.length > 0 ? { normalizedName } : undefined;
+}
+
 function stripSubAgentResultFromPolicy(policy: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (policy === undefined) {
     return ;
@@ -1115,7 +1302,7 @@ function mapInteractionRequestRow(row: Record<string, unknown>): InteractionRequ
 function mapApprovalGrantRow(row: Record<string, unknown>): ApprovalGrantRecord {
   const binding = row.binding_json === null || row.binding_json === undefined
     ? undefined
-    : parseRunnerExternalApprovalBindingV1(row.binding_json);
+    : parseRunnerExternalApprovalBinding(row.binding_json);
   const decisionActor: ApprovalGrantRecord["decisionActor"] = isRecord(row.decision_actor_json) &&
     (row.decision_actor_json.actorType === "end_user" ||
       row.decision_actor_json.actorType === "operator" ||

@@ -13,6 +13,10 @@ import { filterSessions } from "./sessionSelectors.js";
 import { DetailDrawer } from "../components/DetailDrawer.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 import { StatusChip } from "../components/StatusChip.js";
+import {
+  formatTuiAssemblyLabel,
+  formatTuiEnvironmentLabel,
+} from "../../session/TuiEnvironmentPresentation.js";
 
 interface SessionsViewProps {
   sessions: TuiSessionMeta[];
@@ -70,7 +74,8 @@ export function SessionsView(props: SessionsViewProps): React.JSX.Element {
           <>
             <Text color={theme.text}>{selected.name}</Text>
             <Text color={theme.muted}>id={selected.sessionId}</Text>
-            <Text color={theme.muted}>profile={selected.profileId}</Text>
+            <Text color={theme.muted}>Agent={selected.agentProfileLabel ?? selected.profileLabel ?? selected.profileId}</Text>
+            <Text color={theme.muted}>Environment={formatTuiEnvironmentLabel(selected.environmentPresetId)}</Text>
             <Text color={theme.muted}>status={readSessionStatus(selected)}</Text>
             <Text color={theme.muted}>preview={selected.lastMessagePreview ?? "n/a"}</Text>
             <Text color={theme.muted}>updated={selected.updatedAt}</Text>
@@ -181,7 +186,7 @@ function formatAssemblySummary(session: TuiSessionMeta): string {
   }
   const provider = assembly.provider !== undefined ? `${assembly.provider.id}/${assembly.provider.model}` : undefined;
   return [
-    assembly.label ?? assembly.bundleId ?? (assembly.mode === "implicit_legacy" ? "implicit/legacy" : undefined),
+    formatTuiAssemblyLabel(assembly.environmentPresetId),
     provider,
     assembly.provider?.promptVariant !== undefined ? `variant:${assembly.provider.promptVariant}` : undefined,
     assembly.compatibility?.status !== undefined ? `compat:${assembly.compatibility.status}` : undefined,

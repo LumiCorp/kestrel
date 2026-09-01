@@ -16,6 +16,8 @@ import { AppIcon } from "@/components/apps/app-icon";
 import { GitHubProjectRepositoryGrants } from "@/components/projects/github-project-repository-grants";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -28,7 +30,11 @@ import type {
   ProjectAppCapability,
   ProjectAppConfiguration,
 } from "@/lib/apps/project-service";
-import type { AppConnectionSummary } from "@/lib/apps/types";
+import type {
+  AppConnectionSummary,
+  BrowserEnvironmentAppSettings,
+  BrowserProjectAppSettings,
+} from "@/lib/apps/types";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -162,6 +168,7 @@ export function ProjectSharedAppSheet({
     input: {
       enabled: boolean;
       approvalMode: ProjectAppCapability["approvalMode"];
+      browserSettings?: unknown;
     },
   ) {
     setBusy(`capability:${capability.key}`);
@@ -171,7 +178,15 @@ export function ProjectSharedAppSheet({
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(input),
+          body: JSON.stringify({
+            enabled: input.enabled,
+            approvalMode: input.approvalMode,
+            ...(capability.browserSettings
+              ? {
+                  settings: input.browserSettings ?? capability.browserSettings,
+                }
+              : {}),
+          }),
         },
       );
       await onChanged();
@@ -577,6 +592,27 @@ export function ProjectSharedAppSheet({
                               ))}
                             </SelectContent>
                           </Select>
+                          {capability.browserSettings &&
+                          capability.environmentBrowserSettings ? (
+                            <BrowserProjectPolicyEditor
+                              disabled={
+                                !canEdit ||
+                                !configuration.enabled ||
+                                capabilityBusy
+                              }
+                              environment={
+                                capability.environmentBrowserSettings
+                              }
+                              onSave={(browserSettings) =>
+                                void updateCapability(capability, {
+                                  enabled: capability.enabled,
+                                  approvalMode: capability.approvalMode,
+                                  browserSettings,
+                                })
+                              }
+                              settings={capability.browserSettings}
+                            />
+                          ) : null}
                         </div>
                       );
                     })}
@@ -622,5 +658,119 @@ export function ProjectSharedAppSheet({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+const PROJECT_DOMAIN_LIST_SEPARATOR = /[\n,]/u;
+function parseProjectDomainList(value: string) {
+  return value
+    .split(PROJECT_DOMAIN_LIST_SEPARATOR)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+type BrowserProjectSettingsInput = Omit<
+  BrowserProjectAppSettings,
+  "blockedPublicDomains"
+> & { blockedPublicDomains: string[] };
+
+function BrowserProjectPolicyEditor({
+  settings,
+  environment,
+  disabled,
+  onSave,
+}: {
+  settings: BrowserProjectAppSettings;
+  environment: BrowserEnvironmentAppSettings;
+  disabled: boolean;
+  onSave: (settings: BrowserProjectSettingsInput) => void;
+}) {
+  const [enabledModes, setEnabledModes] = useState([...settings.enabledModes]);
+  const [personalGrantsEnabled, setPersonalGrantsEnabled] = useState(
+    settings.personalGrantsEnabled,
+  );
+  const [blockedDomains, setBlockedDomains] = useState(
+    settings.blockedPublicDomains
+      .map((domain) => domain.canonicalDomain)
+      .join("\n"),
+  );
+  const toggleMode = (mode: "qa" | "operator", enabled: boolean) =>
+    setEnabledModes((current) =>
+      enabled
+        ? [...new Set([...current, mode])]
+        : current.filter((candidate) => candidate !== mode),
+    );
+  return (
+    <div className="mt-4 space-y-4 border-t pt-4">
+      <div>
+        <p className="font-medium text-sm">Browser Project narrowing</p>
+        <p className="mt-1 text-muted-foreground text-xs">
+          This Project can remove Environment access or add blocks. It cannot
+          add public domains or reveal anyone&apos;s remembered domains.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {(["qa", "operator"] as const).map((mode) => (
+          <div className="flex items-center justify-between gap-3" key={mode}>
+            <Label htmlFor={`browser-project-mode-${mode}`}>
+              {mode === "qa" ? "QA mode" : "Operator mode"}
+            </Label>
+            <Switch
+              checked={enabledModes.includes(mode)}
+              disabled={disabled || !environment.enabledModes.includes(mode)}
+              id={`browser-project-mode-${mode}`}
+              onCheckedChange={(checked) => toggleMode(mode, checked)}
+            />
+          </div>
+        ))}
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor="browser-project-personal-grants">
+            Personal grants
+          </Label>
+          <Switch
+            checked={personalGrantsEnabled}
+            disabled={
+              disabled ||
+              !environment.personalGrantsEnabled ||
+              !enabledModes.includes("operator")
+            }
+            id="browser-project-personal-grants"
+            onCheckedChange={setPersonalGrantsEnabled}
+          />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="browser-project-blocked-domains">
+          Additional blocked domains
+        </Label>
+        <Input
+          disabled={disabled}
+          id="browser-project-blocked-domains"
+          onChange={(event) => setBlockedDomains(event.target.value)}
+          placeholder="restricted.example.com"
+          value={blockedDomains}
+        />
+      </div>
+      <Button
+        disabled={disabled}
+        onClick={() =>
+          onSave({
+            enabledModes: enabledModes.filter((mode) =>
+              environment.enabledModes.includes(mode),
+            ),
+            personalGrantsEnabled:
+              environment.personalGrantsEnabled &&
+              enabledModes.includes("operator") &&
+              personalGrantsEnabled,
+            blockedPublicDomains: parseProjectDomainList(blockedDomains),
+          })
+        }
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        Save Browser narrowing
+      </Button>
+    </div>
   );
 }

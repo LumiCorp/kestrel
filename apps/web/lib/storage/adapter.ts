@@ -41,7 +41,10 @@ export type StorageAdapter = {
   buildObjectKey(...segments: string[]): string;
   putObject(input: PutObjectInput): Promise<{ key: string }>;
   putObjectStream(
-    input: Omit<PutObjectInput, "body"> & { body: Readable },
+    input: Omit<PutObjectInput, "body"> & {
+      body: Readable;
+      signal?: AbortSignal | undefined;
+    },
   ): Promise<{ key: string }>;
   getObjectBuffer(key: string): Promise<Buffer>;
   getObjectStream(key: string): Promise<NodeJS.ReadableStream>;
@@ -138,7 +141,12 @@ export function createS3CompatibleStorageAdapter(
           Metadata: input.metadata,
         },
       });
-      await upload.done();
+      const done = upload.done();
+      if (input.signal) {
+        await settleS3UploadWithAbort(upload, done, input.signal);
+      } else {
+        await done;
+      }
       return { key: input.key };
     },
     async getObjectBuffer(key) {
@@ -216,7 +224,9 @@ export function createLocalFilesystemStorageAdapter(
       const filePath = resolvePath(input.key);
       await mkdir(path.dirname(filePath), { recursive: true });
       try {
-        await pipeline(input.body, createWriteStream(filePath));
+        await pipeline(input.body, createWriteStream(filePath), {
+          ...(input.signal ? { signal: input.signal } : {}),
+        });
       } catch (error) {
         await rm(filePath, { force: true }).catch(() => {});
         throw error;
@@ -248,4 +258,38 @@ export function createLocalFilesystemStorageAdapter(
       }
     },
   };
+}
+
+async function settleS3UploadWithAbort(
+  upload: Upload,
+  done: Promise<unknown>,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) {
+    await upload.abort().catch(() => {});
+    await done.catch(() => {});
+    throw signal.reason;
+  }
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      action();
+    };
+    const onAbort = () => {
+      void (async () => {
+        await upload.abort().catch(() => {});
+        await done.catch(() => {});
+        finish(() => reject(signal.reason));
+      })();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    void done.then(
+      () => finish(resolve),
+      (error) => finish(() => reject(error)),
+    );
+  });
 }

@@ -84,6 +84,250 @@ class ControlledProtocolTransport implements ProtocolTransport {
   async stop(): Promise<void> {}
 }
 
+test("ProtocolClient settles conversation submissions only on the routing envelope", async () => {
+  const transport = new ControlledProtocolTransport();
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  client.onEvent((event) => seen.push(event.type));
+  let settled = false;
+  const pending = client.sendCommandWithId(
+    "cmd-sdk-conversation",
+    "conversation.message.submit",
+    {
+      profileId: "kestrel",
+      threadId: "thread-main:session-sdk-conversation",
+      messageId: "message-sdk-conversation",
+      turn: {
+        sessionId: "session-sdk-conversation",
+        message: "hello",
+      },
+    },
+  ).finally(() => {
+    settled = true;
+  });
+
+  transport.emit({
+    id: "evt-sdk-conversation-completed",
+    type: "run.completed",
+    ts: new Date().toISOString(),
+    commandId: "cmd-sdk-conversation",
+    runId: "run-sdk-conversation",
+    sessionId: "session-sdk-conversation",
+    payload: {
+      result: {
+        assistantText: "Conversation completed.",
+        output: {
+          status: "COMPLETED",
+          sessionId: "session-sdk-conversation",
+          runId: "run-sdk-conversation",
+          errors: [],
+        },
+      },
+    },
+  });
+  await Promise.resolve();
+  assert.equal(settled, false);
+
+  transport.emit({
+    id: "evt-sdk-conversation-routed",
+    type: "conversation.message.routed",
+    ts: new Date().toISOString(),
+    commandId: "cmd-sdk-conversation",
+    runId: "run-sdk-conversation",
+    sessionId: "session-sdk-conversation",
+    threadId: "thread-main:session-sdk-conversation",
+    payload: {
+      threadId: "thread-main:session-sdk-conversation",
+      sessionId: "session-sdk-conversation",
+      messageId: "message-sdk-conversation",
+      disposition: "started",
+      runId: "run-sdk-conversation",
+      view: {},
+    },
+  });
+
+  const response = await pending;
+  assert.equal(response.type, "conversation.message.routed");
+  assert.deepEqual(seen, ["run.completed", "conversation.message.routed"]);
+  await client.close();
+});
+
+test("RemoteRunnerTransport streams accepted operator controls and settles on the acceptance event", async () => {
+  let requestedUrl: string | undefined;
+  const transport = new RemoteRunnerTransport({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (input, init) => {
+      requestedUrl = String(input);
+      const command = JSON.parse(String(init?.body)) as { id: string };
+      const accepted = `event: operator.controlled\ndata: ${JSON.stringify({
+          id: "evt-operator-accepted",
+          type: "operator.controlled",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          sessionId: "session-operator-accepted",
+          threadId: "thread-operator-accepted",
+          runId: "run-operator-accepted",
+          payload: {
+            sessionId: "session-operator-accepted",
+            threadId: "thread-operator-accepted",
+            runId: "run-operator-accepted",
+            disposition: "accepted",
+          },
+        })}\n\n`;
+      const started = `event: run.started\ndata: ${JSON.stringify({
+        id: "evt-operator-run-started",
+        type: "run.started",
+        ts: new Date().toISOString(),
+        commandId: command.id,
+        sessionId: "session-operator-accepted",
+        threadId: "thread-operator-accepted",
+        runId: "run-operator-accepted",
+        payload: { sessionId: "session-operator-accepted", eventType: "user.reply" },
+      })}\n\n`;
+      const toolStarted = `event: run.tool.started\ndata: ${JSON.stringify({
+        id: "evt-operator-tool-started",
+        type: "run.tool.started",
+        ts: new Date().toISOString(),
+        commandId: command.id,
+        runId: "run-operator-accepted",
+        payload: {
+          update: {
+            version: "v1",
+            runId: "run-operator-accepted",
+            sessionId: "session-operator-accepted",
+            ts: new Date().toISOString(),
+            seq: 1,
+            toolCallId: "tool-operator-accepted",
+            toolName: "exec_command",
+            phase: "started",
+          },
+        },
+      })}\n\n`;
+      const completed = `event: run.completed\ndata: ${JSON.stringify({
+        id: "evt-operator-run-completed",
+        type: "run.completed",
+        ts: new Date().toISOString(),
+        commandId: command.id,
+        sessionId: "session-operator-accepted",
+        threadId: "thread-operator-accepted",
+        runId: "run-operator-accepted",
+        payload: {
+          result: {
+            assistantText: "Done.",
+            finalizedPayload: null,
+            output: {
+              status: "COMPLETED",
+              sessionId: "session-operator-accepted",
+              runId: "run-operator-accepted",
+              errors: [],
+            },
+          },
+        },
+      })}\n\n`;
+      return new Response(
+        `${accepted}${started}${toolStarted}${completed}`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  const client = new ProtocolClient(transport);
+  const streamed: string[] = [];
+  let resolveTerminal!: () => void;
+  const terminal = new Promise<void>((resolve) => { resolveTerminal = resolve; });
+  client.onEvent((event) => {
+    streamed.push(event.type);
+    if (event.type === "run.completed") resolveTerminal();
+  });
+
+  const response = await client.sendCommand("operator.control", {
+    action: "reply",
+    threadId: "thread-operator-accepted",
+    requestId: "request-operator-accepted",
+    message: "/mode build",
+    completionMode: "accepted",
+  });
+
+  assert.equal(requestedUrl, "http://runner.internal/commands/stream");
+  assert.equal(response.type, "operator.controlled");
+  assert.equal(response.payload.runId, "run-operator-accepted");
+  await terminal;
+  assert.deepEqual(streamed, [
+    "operator.controlled",
+    "run.started",
+    "run.tool.started",
+    "run.completed",
+  ]);
+  await client.close();
+});
+
+test("RemoteRunnerTransport rejects a resumed terminal with mismatched accepted identity", async () => {
+  const transport = new RemoteRunnerTransport({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (_input, init) => {
+      const command = JSON.parse(String(init?.body)) as { id: string };
+      const event = (type: string, body: Record<string, unknown>) =>
+        `event: ${type}\ndata: ${JSON.stringify(body)}\n\n`;
+      return new Response(
+        event("operator.controlled", {
+          id: "evt-operator-identity-accepted",
+          type: "operator.controlled",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          sessionId: "session-operator-identity",
+          threadId: "thread-operator-identity",
+          runId: "run-operator-identity",
+          payload: {
+            sessionId: "session-operator-identity",
+            threadId: "thread-operator-identity",
+            runId: "run-operator-identity",
+            disposition: "accepted",
+          },
+        }) + event("run.completed", {
+          id: "evt-operator-identity-mismatch",
+          type: "run.completed",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          sessionId: "session-other",
+          threadId: "thread-operator-identity",
+          runId: "run-operator-identity",
+          payload: {
+            result: {
+              assistantText: "Wrong session.",
+              output: {
+                status: "COMPLETED",
+                sessionId: "session-other",
+                runId: "run-operator-identity",
+                errors: [],
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  const client = new ProtocolClient(transport);
+  const streamed: string[] = [];
+  let resolveRejected!: () => void;
+  const rejected = new Promise<void>((resolve) => { resolveRejected = resolve; });
+  client.onEvent((event) => {
+    streamed.push(event.type);
+    if (event.type === "runner.error") resolveRejected();
+  });
+
+  const response = await client.sendCommand("operator.control", {
+    action: "reply",
+    threadId: "thread-operator-identity",
+    requestId: "request-operator-identity",
+    message: "/mode build",
+    completionMode: "accepted",
+  });
+  assert.equal(response.type, "operator.controlled");
+  await rejected;
+  assert.deepEqual(streamed, ["operator.controlled", "runner.error"]);
+  await client.close();
+});
+
 function cancelledResult(sessionId: string, runId: string) {
   return {
     assistantText: null,

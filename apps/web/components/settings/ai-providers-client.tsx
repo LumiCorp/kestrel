@@ -81,6 +81,7 @@ import {
   getGatewayCollectionState,
   getGatewayOverview,
 } from "@/lib/settings/gateway-presentation";
+import type { HostedModelReadiness } from "@/lib/ai/hosted-model-readiness";
 import { cn } from "@/lib/utils";
 
 type Gateway = {
@@ -116,6 +117,7 @@ type GatewayModel = {
     source?: string;
     canonicalSlug?: string;
   };
+  readiness?: HostedModelReadiness;
 };
 
 type GatewayBundle = {
@@ -168,6 +170,145 @@ function getEmptyNewModelDraft(gateway: Gateway): NewModelDraft {
 
 function formatModalityLabel(modality: GatewayModel["modality"]) {
   return `${modality.charAt(0).toUpperCase()}${modality.slice(1)}`;
+}
+
+function formatReadinessValue(value: string) {
+  return value
+    .split(/[_-]/u)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function formatReadinessTimestamp(value: string | undefined) {
+  if (!value) return;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value;
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - parsed) / 60_000));
+  if (elapsedMinutes < 60) return `${elapsedMinutes}m ago`;
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 48) return `${elapsedHours}h ago`;
+  return `${Math.floor(elapsedHours / 24)}d ago`;
+}
+
+function HostedModelReadinessSummary({
+  economicsAdmission,
+  isSaving,
+  readiness,
+}: {
+  economicsAdmission: GatewayModel["economicsAdmission"];
+  isSaving: boolean;
+  readiness: HostedModelReadiness;
+}) {
+  const isReady =
+    readiness.eligibleRoles.includes("agent.loop") &&
+    economicsAdmission?.status === "ready";
+  const evidenceObservedAt = formatReadinessTimestamp(
+    readiness.registration?.evidenceObservedAt,
+  );
+  const qualificationCheckedAt = formatReadinessTimestamp(
+    readiness.registration?.qualificationCheckedAt,
+  );
+
+  return (
+    <div
+      className="space-y-1.5 text-muted-foreground text-xs leading-5"
+      data-testid="hosted-model-readiness"
+    >
+      {isSaving ? (
+        <>
+          <Badge className="rounded-full" variant="secondary">
+            <Loader2 className="mr-1 size-3 animate-spin" />
+            Checking compatibility
+          </Badge>
+          <p>
+            Kestrel is verifying provider limits and agent compatibility. This
+            can take a moment.
+          </p>
+        </>
+      ) : readiness.approval === "unapproved" ? (
+        <>
+          <Badge className="rounded-full" variant="outline">
+            Not approved
+          </Badge>
+          <p>
+            Approve this model to verify it and make it available for agent
+            work.
+          </p>
+          <details>
+            <summary className="cursor-pointer font-medium text-foreground">
+              What approval checks
+            </summary>
+            <p className="mt-1">
+              Kestrel confirms the exact provider model, reads its token
+              limits, and tests the tool-use features agents require.
+            </p>
+          </details>
+        </>
+      ) : isReady ? (
+        <>
+          <Badge className="rounded-full">Ready</Badge>
+          <p>Available for agent work.</p>
+          {economicsAdmission?.contextWindowTokens !== undefined &&
+          economicsAdmission.maxOutputTokens !== undefined ? (
+            <p>
+              {economicsAdmission.contextWindowTokens.toLocaleString()} context
+              · {economicsAdmission.maxOutputTokens.toLocaleString()} max output
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <Badge className="rounded-full" variant="destructive">
+            Needs attention
+          </Badge>
+          <p>
+            {readiness.reachability === "unreachable"
+              ? "The provider is unavailable. Check the connection and try again."
+              : readiness.qualification === "failed"
+                ? "This model did not pass the compatibility checks required for agent work."
+                : "Compatibility checks are incomplete. Save the model again to retry them."}
+          </p>
+        </>
+      )}
+      {readiness.approval === "approved" && !isSaving ? (
+        <details>
+          <summary className="cursor-pointer font-medium text-foreground">
+            Technical details
+          </summary>
+          <div className="mt-1 space-y-1">
+            <div>
+              Provider: {formatReadinessValue(readiness.reachability)} ·
+              Qualification: {formatReadinessValue(readiness.qualification)}
+            </div>
+            <div>
+              Capability checks:{" "}
+              {readiness.capabilities
+                .map(
+                  (capability) =>
+                    `${formatReadinessValue(capability.capability)} (${formatReadinessValue(capability.state)})`,
+                )
+                .join(", ")}
+            </div>
+            {readiness.registration ? (
+              <div>
+                Evidence {readiness.registration.revision} ·{" "}
+                {readiness.registration.fingerprint}
+                {evidenceObservedAt
+                  ? ` · ${readiness.registration.evidenceSource ?? "provider"} ${evidenceObservedAt}`
+                  : ""}
+                {qualificationCheckedAt
+                  ? ` · checked ${qualificationCheckedAt}`
+                  : ""}
+              </div>
+            ) : null}
+            {economicsAdmission?.canonicalSlug ? (
+              <div>Canonical model: {economicsAdmission.canonicalSlug}</div>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
 }
 
 function isMetadataRecord(
@@ -938,7 +1079,15 @@ function GatewayModelCatalogPane({
       );
       const json = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(json.error || "Failed to save model.");
+        const fallback =
+          draft.approved && !model.approved
+            ? `Kestrel couldn't approve ${model.rawModelId}. No changes were saved. Try again; if this keeps failing, check the ${providerLabels[bundle.gateway.provider]} connection and server logs.`
+            : `Kestrel couldn't save ${model.rawModelId}. No changes were saved.`;
+        throw new Error(
+          json.code === "GATEWAY_OPERATION_FAILED"
+            ? fallback
+            : json.error || fallback,
+        );
       }
       toast.success(successMessage);
       onRefresh();
@@ -1070,7 +1219,7 @@ function GatewayModelCatalogPane({
           </Button>
         }
         className="lg:block"
-        description="Approved and default models appear first. Filter to inspect the full catalog."
+        description="Administratively approved and default models appear first. Language runtime eligibility requires current qualification evidence."
         title={providerLabels[bundle.gateway.provider]}
       >
         <SettingsDisclosure
@@ -1092,8 +1241,9 @@ function GatewayModelCatalogPane({
             </div>
             <div className="mb-5 space-y-4">
               <p className="text-muted-foreground text-xs/5">
-                Add provider model IDs, approve models for runtime, assign
-                aliases, set defaults, or remove imported entries.
+                Add provider model IDs, record administrative approval, assign
+                aliases, set defaults, or remove imported entries. Saving an
+                approved hosted model refreshes its evidence and qualification.
               </p>
               <div className="grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)] xl:grid-cols-[auto_minmax(220px,1fr)_minmax(150px,0.6fr)_minmax(150px,0.6fr)_auto]">
                 <Button
@@ -1388,13 +1538,21 @@ function GatewayModelCatalogPane({
                           )}
                         </TableCell>
                         <TableCell className="py-3 align-top">
-                          <Badge
-                            className="rounded-full"
-                            variant={draft.approved ? "default" : "outline"}
-                          >
-                            {draft.approved ? "Approved" : "Unapproved"}
-                          </Badge>
-                          {model.economicsAdmission ? (
+                          {model.modality === "language" && model.readiness ? (
+                            <HostedModelReadinessSummary
+                              economicsAdmission={model.economicsAdmission}
+                              isSaving={savingModelId === model.id}
+                              readiness={model.readiness}
+                            />
+                          ) : (
+                            <Badge
+                              className="rounded-full"
+                              variant={draft.approved ? "default" : "outline"}
+                            >
+                              {draft.approved ? "Approved" : "Unapproved"}
+                            </Badge>
+                          )}
+                          {model.economicsAdmission && !model.readiness ? (
                             <div className="mt-1 text-muted-foreground text-xs">
                               {model.economicsAdmission.status === "ready" ? (
                                 <>
@@ -1410,12 +1568,13 @@ function GatewayModelCatalogPane({
                                     </div>
                                   ) : null}
                                   <div>
-                                    Kestrel per-run allocation is configured separately.
+                                    Kestrel per-run allocation is configured
+                                    separately.
                                   </div>
                                 </>
-                              ) : (
+                              ) : draft.approved ? (
                                 "Needs economics profile"
-                              )}
+                              ) : null}
                             </div>
                           ) : null}
                         </TableCell>
@@ -1519,9 +1678,9 @@ function GatewayModelCatalogPane({
                             <IconActionButton
                               className="h-9 w-9 rounded-lg p-0"
                               disabled={
-                              Boolean(savingModelId) ||
-                              !runPodValidated ||
-                              !economicsReady
+                                Boolean(savingModelId) ||
+                                !runPodValidated ||
+                                !economicsReady
                               }
                               icon={<Star className="size-4" />}
                               label={

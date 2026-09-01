@@ -441,6 +441,7 @@ export interface DesktopProjectRegistration {
     id?: string | undefined;
     path: string;
     label: string;
+    personalAppIds?: string[] | undefined;
 }
 export type DesktopPackageManager = "npm" | "pnpm";
 export interface DesktopProjectLauncherScript {
@@ -566,7 +567,7 @@ export interface DesktopSettings {
     developerPath?: string | undefined;
     developerShellEnvMode: "inherit" | "allowlist";
     developerShellAllowedEnvNames: string[];
-    approvalPolicyPackId: "dev" | "isolated_code" | "ci_bot" | "production";
+    approvalPolicyPackId: "dev" | "isolated_code" | "ci_bot" | "hosted_workspace" | "production";
     agentStageConfig?: DesktopAgentStageConfig | undefined;
     modelTimeoutMs?: number | undefined;
     databaseUrl?: string | undefined;

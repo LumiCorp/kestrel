@@ -3,13 +3,18 @@ import assert from "node:assert/strict";
 import {
   assertGoogleCalendarRange,
   GOOGLE_CALENDAR_SCOPES,
+  GOOGLE_GMAIL_SCOPES,
+  googleWorkspacePackHealth,
+  googleWorkspaceScopesToRequest,
   googleCalendarRuntimeInputSchema,
+  hasGoogleCalendarCapabilityScopes,
   hasRequiredGoogleCalendarScopes,
   intersectGoogleCalendarApprovalModes,
   parseGoogleOAuthScopes,
+  parseSelectedGoogleWorkspacePacks,
   shouldStartGoogleCalendarOAuth,
+  shouldStartGoogleWorkspaceOAuth,
 } from "./google-calendar-contract";
-
 
 test("Google Calendar requires only the selected Calendar scopes", () => {
   const scopes = parseGoogleOAuthScopes(GOOGLE_CALENDAR_SCOPES.join(" "));
@@ -17,11 +22,28 @@ test("Google Calendar requires only the selected Calendar scopes", () => {
   assert.equal(hasRequiredGoogleCalendarScopes(scopes.slice(0, -1)), false);
   assert.equal(
     scopes.some((scope) => scope.includes("gmail")),
-    false
+    false,
   );
   assert.equal(
     scopes.some((scope) => scope.includes("drive")),
-    false
+    false,
+  );
+});
+
+test("Calendar capabilities fail closed when the granted scope set is incomplete", () => {
+  assert.equal(
+    hasGoogleCalendarCapabilityScopes({
+      grantedScopes: GOOGLE_CALENDAR_SCOPES,
+      capability: "calendar.events.read",
+    }),
+    true,
+  );
+  assert.equal(
+    hasGoogleCalendarCapabilityScopes({
+      grantedScopes: GOOGLE_CALENDAR_SCOPES.slice(0, -1),
+      capability: "calendar.events.create",
+    }),
+    false,
   );
 });
 
@@ -31,21 +53,47 @@ test("degraded Calendar connections always restart Google OAuth", () => {
       scopes: GOOGLE_CALENDAR_SCOPES,
       connectionStatus: "connected",
     }),
-    false
+    false,
   );
   assert.equal(
     shouldStartGoogleCalendarOAuth({
       scopes: GOOGLE_CALENDAR_SCOPES,
       connectionStatus: "degraded",
     }),
-    true
+    true,
   );
   assert.equal(
     shouldStartGoogleCalendarOAuth({
       scopes: GOOGLE_CALENDAR_SCOPES.slice(0, -1),
       connectionStatus: "connected",
     }),
-    true
+    true,
+  );
+});
+
+test("legacy Google connections remain Calendar-only and Gmail requests only its resource scopes", () => {
+  assert.deepEqual(parseSelectedGoogleWorkspacePacks({}), ["calendar"]);
+  assert.deepEqual(
+    googleWorkspaceScopesToRequest({
+      selectedPacks: ["calendar", "gmail"],
+      grantedScopes: GOOGLE_CALENDAR_SCOPES,
+    }),
+    GOOGLE_GMAIL_SCOPES,
+  );
+  assert.deepEqual(
+    googleWorkspacePackHealth({
+      selectedPacks: ["calendar", "gmail"],
+      grantedScopes: GOOGLE_CALENDAR_SCOPES,
+    }),
+    { calendar: "ready", gmail: "missing_scopes" },
+  );
+  assert.equal(
+    shouldStartGoogleWorkspaceOAuth({
+      selectedPacks: ["calendar", "gmail"],
+      scopes: GOOGLE_CALENDAR_SCOPES,
+      connectionStatus: "degraded",
+    }),
+    true,
   );
 });
 
@@ -56,7 +104,7 @@ test("Project Calendar policy can restrict but never widen Environment approval"
       restrictionModes: ["auto"],
       writeRequiresApproval: false,
     }),
-    "deny"
+    "deny",
   );
   assert.equal(
     intersectGoogleCalendarApprovalModes({
@@ -64,7 +112,7 @@ test("Project Calendar policy can restrict but never widen Environment approval"
       restrictionModes: ["auto"],
       writeRequiresApproval: false,
     }),
-    "ask"
+    "ask",
   );
   assert.equal(
     intersectGoogleCalendarApprovalModes({
@@ -72,7 +120,7 @@ test("Project Calendar policy can restrict but never widen Environment approval"
       restrictionModes: [],
       writeRequiresApproval: true,
     }),
-    "ask"
+    "ask",
   );
 });
 
@@ -99,7 +147,7 @@ test("Calendar inputs reject mixed all-day/timed events and oversized ranges", (
         start: { date: "2026-07-14" },
         end: { dateTime: "2026-07-15T00:00:00Z" },
       },
-    })
+    }),
   );
   assert.throws(
     () =>
@@ -107,7 +155,7 @@ test("Calendar inputs reject mixed all-day/timed events and oversized ranges", (
         timeMin: "2026-07-01T00:00:00Z",
         timeMax: "2026-08-02T00:00:00Z",
       }),
-    /31 days/u
+    /31 days/u,
   );
 });
 
@@ -118,17 +166,17 @@ test("availability inputs use opaque UUID subjects and enforce the subject cap",
       subjectIds: ["teammate@example.com"],
       timeMin: "2026-07-14T00:00:00Z",
       timeMax: "2026-07-15T00:00:00Z",
-    })
+    }),
   );
   assert.throws(() =>
     googleCalendarRuntimeInputSchema.parse({
       operation: "availability.query",
       subjectIds: Array.from(
         { length: 21 },
-        () => "ba3c7d62-c01d-4cad-ac8c-6c73f4163a58"
+        () => "ba3c7d62-c01d-4cad-ac8c-6c73f4163a58",
       ),
       timeMin: "2026-07-14T00:00:00Z",
       timeMax: "2026-07-15T00:00:00Z",
-    })
+    }),
   );
 });

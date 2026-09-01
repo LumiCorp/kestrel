@@ -40,11 +40,11 @@ test("canonical Kestrel definition is strict and canonically hashed", () => {
   assert.equal(parsed.label, "Kestrel");
   assert.equal(Object.isFrozen(KESTREL_PROFILE_DEFINITION), true);
   assert.equal(Object.isFrozen(KESTREL_PROFILE_DEFINITION.interaction), true);
-  assert.equal(Object.isFrozen(KESTREL_PROFILE_DEFINITION.reasoning.request), true);
   assert.equal(
-    parsed.revision,
-    fingerprintKestrelProfileDefinitionV1(parsed),
+    Object.isFrozen(KESTREL_PROFILE_DEFINITION.reasoning.request),
+    true,
   );
+  assert.equal(parsed.revision, fingerprintKestrelProfileDefinitionV1(parsed));
   assert.throws(
     () =>
       parseKestrelProfileDefinitionV1({
@@ -291,7 +291,7 @@ test("canonical hosted composition hydrates templates while execution preflight 
   assert.equal(composed.provenance.fingerprint, expectedFingerprint);
 });
 
-test("canonical composition rebinds evaluation to the exact selected route", () => {
+test("legacy overlay routes cannot synthesize evaluation capabilities", () => {
   const hashA = `sha256:${"a".repeat(64)}`;
   const hashB = `sha256:${"b".repeat(64)}`;
   const authoredEvaluation = createRuntimeEvaluationPolicyV1({
@@ -319,9 +319,7 @@ test("canonical composition rebinds evaluation to the exact selected route", () 
       },
     },
     calibration: { recordId: "calibration:1", recordRevision: hashA },
-    hooks: [
-      { kind: "pre_delivery", mode: "blocking", selectorIds: [] },
-    ],
+    hooks: [{ kind: "pre_delivery", mode: "blocking", selectorIds: [] }],
     budget: LEAN_RUNTIME_EVALUATION_BUDGET_V1,
     thresholds: RUNTIME_EVALUATION_THRESHOLDS_V1,
     actions: {
@@ -349,19 +347,13 @@ test("canonical composition rebinds evaluation to the exact selected route", () 
     modelRegistrationRevision: hashB,
   });
 
-  const composed = composeKestrelProfile({
-    definition,
-    environmentBinding: binding,
-  }).profile;
-  assert.equal(composed.evaluationPolicy?.judge.provider, "anthropic");
-  assert.equal(composed.evaluationPolicy?.judge.model, "claude-sonnet-4-5");
-  assert.equal(
-    composed.evaluationPolicy?.judge.modelRegistrationRevision,
-    hashB,
-  );
-  assert.notEqual(
-    composed.evaluationPolicy?.revision,
-    authoredEvaluation.revision,
+  assert.throws(
+    () =>
+      composeKestrelProfile({
+        definition,
+        environmentBinding: binding,
+      }),
+    /structured output capability must be enabled/u,
   );
 });
 

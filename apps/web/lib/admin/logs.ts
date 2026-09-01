@@ -176,3 +176,15 @@ export async function listRecentPlatformEmailEvents(limit = 10) {
     limit,
   });
 }
+
+export async function listRecentPlatformOAuthRegistrationEvents(limit = 20) {
+  return knowledgeDb.query.adminEventLogs.findMany({
+    where: (table, { and: all, eq: equals, isNull: nullValue }) =>
+      all(
+        nullValue(table.organizationId),
+        equals(table.category, "platform_oauth_registration"),
+      ),
+    orderBy: (table, { desc }) => [desc(table.createdAt)],
+    limit,
+  });
+}

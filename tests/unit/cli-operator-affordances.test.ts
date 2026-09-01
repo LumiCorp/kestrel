@@ -154,6 +154,38 @@ test("buildRuntimeOperatorAffordance ignores malformed persisted execution polic
   );
 });
 
+test("decorateOperatorAffordance counts recovering delegation as active", () => {
+  const now = new Date(0).toISOString();
+  const affordance = decorateOperatorAffordance({
+    profile: baseProfile,
+    session: {
+      ...baseSession,
+      started: true,
+      delegation: {
+        taskId: "task-recovering",
+        parentSessionId: "parent",
+        childSessionId: baseSession.sessionId,
+        childSessionName: baseSession.name,
+        title: "Recover runtime state",
+        status: "RECOVERING",
+        profileId: baseProfile.id,
+        provider: "openrouter",
+        model: "test-model",
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+  });
+
+  assert.deepEqual(affordance.taskInbox, {
+    total: 1,
+    active: 1,
+    waiting: 0,
+    completed: 0,
+    failed: 0,
+  });
+});
+
 test("decorateOperatorAffordance enriches provider and manual compaction state", () => {
   const decorated = decorateOperatorAffordance({
     base: {
@@ -370,6 +402,25 @@ test("formatOperatorAffordance includes focused thread, blocker, and next action
   assert.match(rendered, /Wait reason: Approve fs\.write_text\?/u);
   assert.match(rendered, /Expected next command: agent\.exec\.wait_approval/u);
   assert.match(rendered, /Checkpoint route: agent\.exec\.dispatch -> agent\.exec\.wait_approval \(wait_approval\)/u);
+});
+
+test("formatOperatorAffordance presents assembly environment product language", () => {
+  const rendered = formatOperatorAffordance({
+    interactionMode: "build",
+    allowedToolClasses: ["read_only"],
+    assembly: {
+      mode: "explicit",
+      threadId: "thread-safe",
+      bundleId: "bundle:kestrel:cli_safe_local",
+      label: "Kestrel on cli:cli_safe_local",
+      environmentPresetId: "cli_safe_local",
+      authority: "profile",
+      cause: "thread_start",
+    },
+  }).join("\n");
+
+  assert.match(rendered, /Assembly: Kestrel on Safe sandbox/u);
+  assert.doesNotMatch(rendered, /cli_safe_local|bundle:kestrel/u);
 });
 
 test("decorateOperatorAffordance recomputes tool classes for session-only fallback state", () => {

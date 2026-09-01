@@ -19,6 +19,8 @@ import {
   alignExecutionPolicyWithMode,
   normalizeInteractionMode,
 } from "../mode/contracts.js";
+import type { ModeResolutionV1 } from "../mode/contracts.js";
+import type { UserReplyIntent } from "./userReplyIntent.js";
 
 export type RuntimeTurnActorType = "end_user" | "operator" | "service";
 
@@ -53,6 +55,8 @@ export interface RuntimeTurnMissionControlExecution {
 }
 
 export interface RuntimeTurnInput {
+  hostedApprovalAuthority?: import("@kestrel-agents/protocol").RunnerHostedApprovalAuthorityV1;
+  workflowRunAuthority?: import("@kestrel-agents/protocol").RunnerWorkflowRunAuthorityV1;
   sessionId: string;
   runId?: string | undefined;
   eventId?: string | undefined;
@@ -61,8 +65,13 @@ export interface RuntimeTurnInput {
   noninteractive?: boolean | undefined;
   attachments?: RunTurnAttachment[] | undefined;
   resumeBlockedRun?: boolean | undefined;
+  userReplyIntent?: UserReplyIntent | undefined;
+  modeResolution?: ModeResolutionV1 | undefined;
   resumeRequestId?: string | undefined;
   recoveryOptionId?: string | undefined;
+  decision?: "decline" | "approve_once" | "remember_approval" | undefined;
+  decidingActor?: RuntimeTurnActor | undefined;
+  preparedApprovalCleanup?: import("@kestrel-agents/protocol").RunnerPreparedApprovalCleanupV1 | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: InteractionMode | undefined;
@@ -213,6 +222,15 @@ export function materializeCompiledRuntimeTurn(
   const externalDeadlineMs = readExternalDeadlineMs(prepared.metadata);
   const payload: Record<string, unknown> = {
     message: prepared.input.message,
+    ...(prepared.input.hostedApprovalAuthority !== undefined
+      ? { hostedApprovalAuthority: prepared.input.hostedApprovalAuthority }
+      : {}),
+    ...(prepared.input.workflowRunAuthority !== undefined
+      ? { workflowRunAuthority: prepared.input.workflowRunAuthority }
+      : {}),
+    ...(prepared.input.actor !== undefined
+      ? { actor: prepared.input.actor }
+      : {}),
     ...(prepared.input.attachments !== undefined
       ? { attachments: prepared.input.attachments }
       : {}),
@@ -240,11 +258,26 @@ export function materializeCompiledRuntimeTurn(
     ...(prepared.input.resumeBlockedRun === true
       ? { resumeBlockedRun: true }
       : {}),
+    ...(prepared.input.userReplyIntent !== undefined
+      ? { userReplyIntent: prepared.input.userReplyIntent }
+      : {}),
+    ...(prepared.input.modeResolution !== undefined
+      ? { modeResolution: prepared.input.modeResolution }
+      : {}),
     ...(prepared.input.resumeRequestId !== undefined
       ? { resumeRequestId: prepared.input.resumeRequestId }
       : {}),
     ...(prepared.input.recoveryOptionId !== undefined
       ? { recoveryOptionId: prepared.input.recoveryOptionId }
+      : {}),
+    ...(prepared.input.decision !== undefined
+      ? { decision: prepared.input.decision }
+      : {}),
+    ...(prepared.input.decidingActor !== undefined
+      ? { decidingActor: prepared.input.decidingActor }
+      : {}),
+    ...(prepared.input.preparedApprovalCleanup !== undefined
+      ? { preparedApprovalCleanup: prepared.input.preparedApprovalCleanup }
       : {}),
     metadata: prepared.metadata,
     orchestration: {

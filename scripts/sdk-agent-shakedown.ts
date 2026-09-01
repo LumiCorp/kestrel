@@ -445,7 +445,7 @@ export async function verifySdkAgentShakedownCodingWorkspace(workspaceRoot: stri
     "git",
     ["status", "--short", "--untracked-files=all"],
     workspaceRoot,
-    5000,
+    15_000,
   );
   const changedPaths = statusResult.stdout
     .split("\n")

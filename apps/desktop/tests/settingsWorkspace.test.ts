@@ -3,14 +3,24 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Window } from "happy-dom";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 
 import type { DesktopCapability } from "../../../src/desktopShell/contracts.js";
-import type { KestrelUninstallPlanV1 } from "../src/contracts.js";
+import type {
+  DesktopBrowserPersonalDomainProjectionV1,
+  KestrelOneAccountStatus,
+  KestrelUninstallPlanV1,
+} from "../src/contracts.js";
 import {
   DEFAULT_KESTREL_ONE_BASE_URL,
+  SettingsWorkspace,
   desktopUninstallConfirmationsSatisfied,
   getDesktopCapabilityAttentionQueue,
 } from "../renderer/src/SettingsWorkspace.js";
+import { toDesktopRendererSettings } from "../src/rendererSettings.js";
+import { createDefaultDesktopSettings } from "../src/settingsStore.js";
 
 const rendererDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -61,6 +71,130 @@ test("Settings does not let an older readiness probe overwrite a later apply res
   assert.match(source, /const refreshVersionRef = useRef\(0\)/u);
   assert.match(source, /if \(refreshVersion !== refreshVersionRef\.current\) return;/u);
   assert.match(source, /function commitCapabilityView[\s\S]*refreshVersionRef\.current \+= 1;/u);
+});
+
+test("a delayed Browser revoke cannot repaint or retarget a newly selected Environment", async () => {
+  const browser = new Window({
+    url: "http://localhost/#settings-connections",
+  });
+  const environmentARevoke =
+    deferred<DesktopBrowserPersonalDomainProjectionV1>();
+  const revokeInputs: Array<{
+    environmentId: string;
+    canonicalDomain: string;
+  }> = [];
+  Object.assign(browser, {
+    kestrelDesktop: {
+      getCapabilities: async () => ({
+        capabilities: [],
+        credentialStore: { available: true, backend: "macos_keychain" },
+        refreshedAt: "2026-08-29T12:00:00.000Z",
+      }),
+      getKestrelOneEnvironments: async () => ({
+        enrollments: [],
+        environments: [],
+        globalCapacity: 1,
+        activeRuns: 0,
+        activity: [],
+      }),
+      getKestrelOneAccount: async () => browserAccount(),
+      getPendingUninstallResult: async () => {},
+      getModelCatalog: async () => ({ models: [] }),
+      listBrowserPersonalDomains: async (input: { environmentId: string }) =>
+        browserDomainProjection(
+          input.environmentId,
+          input.environmentId === "environment-a"
+            ? "alpha.example"
+            : "bravo.example",
+        ),
+      revokeBrowserPersonalDomain: async (input: {
+        environmentId: string;
+        canonicalDomain: string;
+      }) => {
+        revokeInputs.push(input);
+        if (input.environmentId === "environment-a") {
+          return environmentARevoke.promise;
+        }
+        return browserDomainProjection(
+          input.environmentId,
+          input.canonicalDomain,
+          "revoked",
+        );
+      },
+    },
+  });
+  Object.assign(globalThis, {
+    React,
+    window: browser,
+    document: browser.document,
+    Node: browser.Node,
+    HTMLElement: browser.HTMLElement,
+    HTMLInputElement: browser.HTMLInputElement,
+    HTMLSelectElement: browser.HTMLSelectElement,
+    Event: browser.Event,
+    InputEvent: browser.InputEvent,
+    MouseEvent: browser.MouseEvent,
+    requestAnimationFrame: (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    },
+    cancelAnimationFrame: () => {},
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
+  const container = browser.document.createElement(
+    "div",
+  ) as unknown as HTMLDivElement;
+  browser.document.body.append(container);
+  const root = createRoot(container);
+
+  await act(async () => {
+    root.render(
+      React.createElement(SettingsWorkspace, {
+        settings: toDesktopRendererSettings(createDefaultDesktopSettings()),
+        onSettings: async () =>
+          toDesktopRendererSettings(createDefaultDesktopSettings()),
+        onOpenApps: () => {},
+        onAddProject: async () => {},
+        onCreateUninstallPlan: async () => {
+          throw new Error("not used");
+        },
+        onApplyUninstallPlan: async () => {
+          throw new Error("not used");
+        },
+        onRequestMicrophone: async () => {},
+        onError: () => {},
+      }),
+    );
+  });
+  await flushRenderer();
+  await flushRenderer();
+  assert.match(container.textContent ?? "", /alpha\.example/u);
+
+  act(() => revokeButton(container).click());
+  const environment = browserEnvironmentSelect(container);
+  changeRendererValue(browser, environment, "environment-b");
+  await flushRenderer();
+  assert.match(container.textContent ?? "", /bravo\.example/u);
+  assert.doesNotMatch(container.textContent ?? "", /alpha\.example/u);
+
+  await act(async () => {
+    environmentARevoke.resolve(
+      browserDomainProjection("environment-a", "alpha.example", "revoked"),
+    );
+  });
+  await flushRenderer();
+  assert.match(container.textContent ?? "", /bravo\.example/u);
+  assert.doesNotMatch(container.textContent ?? "", /alpha\.example/u);
+
+  act(() => revokeButton(container).click());
+  await flushRenderer();
+  assert.deepEqual(revokeInputs, [
+    { environmentId: "environment-a", canonicalDomain: "alpha.example" },
+    { environmentId: "environment-b", canonicalDomain: "bravo.example" },
+  ]);
+  assert.doesNotMatch(container.textContent ?? "", /Allowed · revision/u);
+
+  await act(async () => root.unmount());
 });
 
 test("tool-service recovery routes to the Apps owner", async () => {
@@ -142,3 +276,133 @@ test("Desktop uninstall confirmations require exact destructive phrases", () => 
     false,
   );
 });
+
+function browserAccount(): KestrelOneAccountStatus {
+  return {
+    status: "signed_in",
+    baseUrl: "https://kestrelagents.dev",
+    projection: {
+      account: {
+        id: "person-stable-id-1",
+        name: "Browser Person",
+        email: "browser-person@example.test",
+      },
+      organizations: [],
+      projects: [
+        {
+          id: "project-a",
+          organizationId: "organization-1",
+          name: "Project A",
+          environmentId: "environment-a",
+          environmentProvider: "desktop",
+          role: "member",
+        },
+        {
+          id: "project-b",
+          organizationId: "organization-1",
+          name: "Project B",
+          environmentId: "environment-b",
+          environmentProvider: "desktop",
+          role: "member",
+        },
+      ],
+      threads: [],
+    },
+  };
+}
+
+function browserDomainProjection(
+  environmentId: string,
+  canonicalDomain: string,
+  state: "active" | "revoked" = "active",
+): DesktopBrowserPersonalDomainProjectionV1 {
+  const authority = {
+    version: "browser_public_domain_authority_v1" as const,
+    scheme: "https" as const,
+    canonicalDomain,
+    includeSubdomains: true,
+    port: 443,
+  };
+  return {
+    accountId: "person-stable-id-1",
+    environmentId,
+    revision: state === "active" ? 1 : 2,
+    authority: {
+      version: "browser_personal_domain_authority_v1",
+      userId: "person-stable-id-1",
+      environmentId,
+      revision: state === "active" ? "1" : "2",
+      activeDomains: state === "active" ? [authority] : [],
+    },
+    domains: [
+      {
+        version: "desktop_browser_personal_domain_record_v1",
+        authority,
+        state,
+        provenance: {
+          version: "desktop_browser_personal_domain_provenance_v1",
+          source: "browser.request_grant",
+          approvalId: "approval-1",
+          approvedAt: "2026-08-29T12:00:00.000Z",
+        },
+        createdAt: "2026-08-29T12:00:00.000Z",
+        updatedAt: "2026-08-29T12:01:00.000Z",
+        ...(state === "revoked"
+          ? { revokedAt: "2026-08-29T12:01:00.000Z" }
+          : {}),
+      },
+    ],
+  };
+}
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+async function flushRenderer(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+function browserEnvironmentSelect(container: HTMLElement): HTMLSelectElement {
+  const found = [...container.querySelectorAll("select")].find((candidate) =>
+    [...candidate.options].some((option) => option.value === "environment-a"),
+  );
+  assert.ok(found, "Expected the personal Browser Environment selector.");
+  return found;
+}
+
+function revokeButton(container: HTMLElement): HTMLButtonElement {
+  const found = [...container.querySelectorAll("button")].find(
+    (candidate) => candidate.textContent?.trim() === "Revoke",
+  );
+  assert.ok(found, "Expected an active personal Browser domain revoke button.");
+  return found;
+}
+
+function changeRendererValue(
+  browser: Window,
+  control: HTMLSelectElement,
+  value: string,
+): void {
+  act(() => {
+    const setter = Object.getOwnPropertyDescriptor(
+      browser.HTMLSelectElement.prototype,
+      "value",
+    )?.set;
+    if (setter === undefined) {
+      control.value = value;
+    } else {
+      setter.call(control, value);
+    }
+    control.dispatchEvent(new browser.Event("change", { bubbles: true }));
+  });
+}

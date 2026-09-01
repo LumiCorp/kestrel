@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION } from "@kestrel-agents/protocol";
+
 import type { TuiProfile } from "../../cli/contracts.js";
 import {
   createKestrelEnvironmentBindingV1,
@@ -10,6 +12,7 @@ import {
   type KestrelProfileDefinitionV1,
 } from "../kestrel/contracts/profile.js";
 import { createRuntimeEvaluationPolicyV1 } from "../kestrel/contracts/evaluation.js";
+import { createLegacyModelCredentialRouteBindingV2 } from "../kestrel/contracts/model-route.js";
 import type { HarnessEconomicsControlV1 } from "../economics/contracts.js";
 import {
   DEFAULT_ACT_SUBMODE,
@@ -28,10 +31,16 @@ import {
   resolveModelEconomicsProfileV1,
 } from "../economics/policy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
+import { DEV_SHELL_TOOL_NAMES } from "../../tools/index.js";
+import {
+  buildExecutionPolicyFromPack,
+  getApprovalPolicyPack,
+} from "../mode/approvalPolicyPacks.js";
 
 export const KESTREL_POLICY_ID = "kestrel";
 export const KESTREL_POLICY_LABEL = "Kestrel";
-export const KESTREL_POLICY_VERSION = 4;
+export const KESTREL_POLICY_VERSION = 5;
 export const KESTREL_PROMPT_POLICY_ID = "kestrel";
 export const KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
   "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
@@ -61,6 +70,8 @@ export type KestrelPolicyDefinition = KestrelOnePolicyDefinition;
 export const KESTREL_ONE_DIALOG_TOOL_NAMES = Object.freeze([
   "dialog.open",
   "dialog.send",
+  "dialog.read",
+  "dialog.list",
   "dialog.close",
 ] as const);
 
@@ -92,7 +103,6 @@ export const KESTREL_PROFILE_DEFINITION: Readonly<KestrelProfileDefinitionV1> =
       delegation: {
         allowAgentSpawn: true,
         allowNestedCollaborators: false,
-        maxConcurrentChildSessions: 2,
         maxDepth: 2,
       },
     }),
@@ -107,6 +117,7 @@ export const KESTREL_ONE_INTERNAL_DELEGATION_TOOL_NAMES = Object.freeze([
 
 export const KESTREL_ONE_WORKSPACE_TOOL_NAMES = Object.freeze([
   "kestrel_one.search_knowledge_documents",
+  "kestrel_one.email_get_attachment",
   "kestrel_one.github_repository_read",
   "kestrel_one.github_push_agent_branch",
   "workspace.files.share",
@@ -130,6 +141,7 @@ export const KESTREL_ONE_WORKSPACE_TOOL_NAMES = Object.freeze([
   "kestrel_one.microsoft_365_send_mail",
   "kestrel_one.microsoft_365_list_events",
   "kestrel_one.microsoft_365_list_chats",
+  "kestrel_one.microsoft_365_list_chat_messages",
   "kestrel_one.microsoft_365_send_chat_message",
   "kestrel_one.microsoft_365_search_sites",
   "kestrel_one.vercel_list_projects",
@@ -301,7 +313,10 @@ export const KESTREL_ONE_ENVIRONMENT_PRESETS: Readonly<
     id: "desktop_dev_local",
     version: 1,
   }),
-  workspace_hosted: Object.freeze({ id: "workspace_hosted", version: 2 }),
+  workspace_hosted: Object.freeze({
+    id: "workspace_hosted",
+    version: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+  }),
 });
 
 export interface KestrelOneProfileOverlay {
@@ -326,6 +341,9 @@ export interface KestrelOneProfileOverlay {
     | undefined;
   kestrelOneAppApprovalPolicies?:
     | TuiProfile["kestrelOneAppApprovalPolicies"]
+    | undefined;
+  rememberedToolApprovalEvidence?:
+    | TuiProfile["rememberedToolApprovalEvidence"]
     | undefined;
   additionalToolNames?: string[] | undefined;
   mcpServers?: TuiProfile["mcpServers"] | undefined;
@@ -476,6 +494,13 @@ function composeLegacyKestrelOneProfile(
             input.overlay.kestrelOneAppApprovalPolicies,
         }
       : {}),
+    ...(input.overlay?.rememberedToolApprovalEvidence === undefined
+      ? {}
+      : {
+          rememberedToolApprovalEvidence: structuredClone(
+            input.overlay.rememberedToolApprovalEvidence,
+          ),
+        }),
     mcpServers: input.overlay?.mcpServers ?? [],
     ...(input.overlay?.ociMcpEgressBindings !== undefined
       ? {
@@ -496,10 +521,6 @@ function composeLegacyKestrelOneProfile(
     devShell: resolvedEnvironment.devShell,
     delegation: {
       allowAgentSpawn: true,
-      maxConcurrentChildSessions: normalizePositiveInteger(
-        delegationLimits?.maxConcurrentChildSessions,
-        2,
-      ),
       // This remains a compatibility/runtime budget. dialog.open separately
       // rejects collaborator contexts, so nested collaborator creation stays
       // prohibited regardless of this value.
@@ -595,7 +616,19 @@ export function composeKestrelProfile(
       ? {
           modelProvider: binding.modelRoute.provider,
           model: binding.modelRoute.model,
-          modelCredential: binding.modelRoute.credentialReference,
+          ...(binding.modelRoute.credentialReference !== undefined
+            ? {
+                modelCredential: {
+                  ...binding.modelRoute.credentialReference,
+                  routeBinding:
+                    binding.modelRoute.routeBinding ??
+                    createLegacyModelCredentialRouteBindingV2({
+                      provider: binding.modelRoute.credentialReference.provider,
+                      rawModelId: binding.modelRoute.model,
+                    }),
+                },
+              }
+            : {}),
           modelCapabilities: {
             visionInputEnabled:
               binding.modelRoute.capabilities.visionInputEnabled,
@@ -633,8 +666,6 @@ export function composeKestrelProfile(
     devShell: resolvedEnvironment.devShell,
     delegation: {
       allowAgentSpawn: definition.delegation.allowAgentSpawn,
-      maxConcurrentChildSessions:
-        definition.delegation.maxConcurrentChildSessions,
       maxDepth: definition.delegation.maxDepth,
     },
     reasoning: structuredClone(definition.reasoning),
@@ -685,17 +716,23 @@ export function createKestrelEnvironmentBindingFromOverlay(input: {
           capabilities: {
             visionInputEnabled:
               input.overlay.modelCapabilities?.visionInputEnabled === true,
-            toolCallingEnabled: true,
-            structuredOutputEnabled: true,
-            reasoningModes:
-              input.overlay.modelProvider === "ollama" ||
-              input.overlay.modelProvider === "lmstudio"
-                ? ["off", "summary"]
-                : ["off", "summary", "provider_visible"],
+            toolCallingEnabled: false,
+            structuredOutputEnabled: false,
+            reasoningModes: ["off"],
           },
           ...(input.overlay.modelCredential !== undefined
             ? { credentialReference: input.overlay.modelCredential }
             : {}),
+          ...(input.overlay.modelProvider === "lmstudio"
+            ? {}
+            : {
+                routeBinding:
+                  input.overlay.modelCredential?.routeBinding ??
+                  createLegacyModelCredentialRouteBindingV2({
+                    provider: input.overlay.modelProvider,
+                    rawModelId: input.overlay.model,
+                  }),
+              }),
         }
       : {
           kind: "runtime_configuration",
@@ -770,7 +807,7 @@ export function defaultApprovalPolicyPackForPreset(
   return presetId === "cli_safe_local" || presetId === "desktop_safe_local"
     ? "isolated_code"
     : presetId === "workspace_hosted"
-      ? "ci_bot"
+      ? "hosted_workspace"
     : "dev";
 }
 
@@ -778,17 +815,29 @@ function assertToolPolicySatisfiable(
   toolAllowlist: readonly string[],
   policyPackId: NonNullable<TuiProfile["approvalPolicyPackId"]>,
 ): void {
-  const permitsCode = policyPackId === "isolated_code" || policyPackId === "ci_bot";
-  const permitsShell = policyPackId === "dev" || policyPackId === "ci_bot";
-  if (toolAllowlist.includes("code.execute") && !permitsCode) {
-    throw new Error(
-      `Approval policy pack '${policyPackId}' does not authorize advertised tool 'code.execute'.`,
-    );
-  }
-  if (toolAllowlist.includes("exec_command") && !permitsShell) {
-    throw new Error(
-      `Approval policy pack '${policyPackId}' does not authorize advertised tool 'exec_command'.`,
-    );
+  const pack = getApprovalPolicyPack(policyPackId);
+  const compiledPolicy = buildExecutionPolicyFromPack(policyPackId);
+  const qualifyingToolNames = pack.id === "hosted_workspace"
+    ? toolAllowlist
+    : ["code.execute", ...DEV_SHELL_TOOL_NAMES].filter((toolName) =>
+        toolAllowlist.includes(toolName)
+      );
+  for (const toolName of qualifyingToolNames) {
+    const descriptor = defaultToolCatalog.getDescriptor(toolName);
+    if (descriptor === undefined) continue;
+    const toolClass = descriptor.capability.executionClass;
+    if (compiledPolicy.toolClassPolicy?.[toolClass] === false) {
+      throw new Error(
+        `Approval policy pack '${pack.id}' does not authorize advertised tool '${toolName}' class '${toolClass}'.`,
+      );
+    }
+    for (const capability of descriptor.capability.approvalCapabilities ?? []) {
+      if (compiledPolicy.capabilityPolicy?.[capability] !== true) {
+        throw new Error(
+          `Approval policy pack '${pack.id}' does not authorize advertised tool '${toolName}' capability '${capability}'.`,
+        );
+      }
+    }
   }
 }
 
@@ -812,10 +861,6 @@ export function createKestrelProfileDefinitionFromOverlay(
     delegation: {
       allowAgentSpawn: true,
       allowNestedCollaborators: false,
-      maxConcurrentChildSessions: normalizePositiveInteger(
-        overlay?.delegationLimits?.maxConcurrentChildSessions,
-        KESTREL_PROFILE_DEFINITION.delegation.maxConcurrentChildSessions,
-      ),
       maxDepth: normalizePositiveInteger(
         overlay?.delegationLimits?.maxDepth,
         KESTREL_PROFILE_DEFINITION.delegation.maxDepth,

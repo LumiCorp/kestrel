@@ -143,6 +143,8 @@
     "ecosystem:release-check": "pnpm run packages:release-check && pnpm run ecosystem:e2e && pnpm run ecosystem:next-fixture",
     "desktop:dev": "pnpm --filter @kestrel/desktop dev",
     "desktop:build": "pnpm --filter @kestrel/desktop build",
+    "browser:runtime:stage:desktop": "node --import tsx scripts/stage-browser-runtime-sources.ts darwin-arm64",
+    "browser:runtime:stage:hosted": "node --import tsx scripts/stage-browser-runtime-sources.ts linux-x64",
     "desktop:package:dir": "pnpm --filter @kestrel/desktop package:dir",
     "desktop:package:preflight": "node --import tsx scripts/check-desktop-package.ts",
     "desktop:package": "pnpm --filter @kestrel/desktop package",
@@ -287,6 +289,7 @@
     "postgres": "^3.4.7",
     "react": "^19.2.4",
     "sharp": "^0.34.5",
+    "tldts": "6.1.86",
     "tsx": "^4.19.3",
     "ws": "^8.21.1",
     "zod": "^4.3.6"

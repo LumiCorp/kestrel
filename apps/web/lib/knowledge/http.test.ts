@@ -35,6 +35,20 @@ test("attachment availability errors preserve retryable HTTP semantics", async (
   assert.equal(missing.status, 404);
 });
 
+test("workflow policy errors preserve their public code", async () => {
+  const response = errorResponse(
+    Object.assign(new Error("Choose another model."), {
+      code: "WORKFLOW_MODEL_UNSUPPORTED",
+    }),
+  );
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: "Choose another model.",
+    code: "WORKFLOW_MODEL_UNSUPPORTED",
+  });
+});
+
 test("database failures never expose query text or parameters", async () => {
   const error = Object.assign(
     new Error('Failed query: insert into "file_scope_grants" params: private-id'),

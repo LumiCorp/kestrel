@@ -23,6 +23,7 @@ import {
   summarizeToolEvidenceLedger,
 } from "../../evidenceLedger.js";
 import { readLatestArtifactVerificationFacts } from "../../artifactVerificationFacts.js";
+import { readSelectedModeSwitch } from "../../modeSwitch.js";
 
 function asPositiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
@@ -145,6 +146,7 @@ export function buildFinalizePayload(
   const mergedArtifacts = canonicalized.artifacts;
 
   const inputData = asRecord(inputRecord.data) ?? {};
+  const selectedMode = readSelectedModeSwitch(reactState.modeSwitch);
   const inputUi = asRecord(inputData.ui) ?? {};
   const decisionVerification = asRecord(reactState.decisionVerification);
   const evidenceLedger = parseEvidenceLedger(reactState.evidenceLedger);
@@ -180,6 +182,9 @@ export function buildFinalizePayload(
   } = inputData;
   const data: Record<string, unknown> = {
     ...inputDataRest,
+    ...(selectedMode !== undefined
+      ? { modeSwitch: { mode: selectedMode } }
+      : {}),
     goal: readActiveTaskGoalFromState(reactState),
     plan: reactState.plan,
     ...(decisionVerification !== undefined ? { decisionVerification } : {}),

@@ -295,6 +295,7 @@ export function createTuiConversationCommandAdapter(input: {
         recommendationId: command.recommendationId,
         mode: command.mode,
         switchMode: input.switchMode,
+        switchModeTiming: "after_retry",
         retry: () => answer(command.answer),
       });
     },

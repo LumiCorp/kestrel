@@ -34,6 +34,7 @@ import type {
   ToolGateway,
 } from "./model-io.js";
 import type { ToolSurfaceSnapshotV1 } from "./tool-contract.js";
+import type { PreparedToolCallV1 } from "./tool-invocation.js";
 import type {
   PersistedEffect,
   RuntimeStore,
@@ -41,6 +42,10 @@ import type {
   SessionRecord,
 } from "./store.js";
 import type { HeapDiagnosticsReporter } from "../../runtime/heapDiagnostics.js";
+import type {
+  RunnerApprovalActorAuthorityV1,
+  StableToolApprovalIdentityV1,
+} from "@kestrel-agents/protocol";
 
 export interface UserReplyWaitMetadata extends Record<string, unknown> {
   prompt?: string | undefined;
@@ -52,27 +57,83 @@ export interface UserReplyWaitMetadata extends Record<string, unknown> {
 export interface RuntimeInteractionRequestV1 extends Record<string, unknown> {
   version: "v1";
   requestId?: string | undefined;
-  kind: "user_input" | "approval";
+  kind: "user_input";
   eventType: string;
   prompt: string;
   inputSchema?: Record<string, unknown> | undefined;
   metadata?: Record<string, unknown> | undefined;
-  approval?:
-    | {
-        toolCallId: string;
-        toolName: string;
-        input?: unknown;
-        presentation?: unknown;
-      }
-    | undefined;
 }
+
+export interface RuntimeLocalToolApprovalInteractionV1
+  extends Record<string, unknown> {
+  version: "runner_local_tool_approval_interaction_v1";
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: {
+    type: "object";
+    additionalProperties: false;
+    required: ["decision"];
+    properties: {
+      decision: {
+        type: "string";
+        enum: Array<"decline" | "approve_once">;
+      };
+    };
+  };
+  metadata?: Record<string, unknown> | undefined;
+  approval: {
+    approvalId: string;
+    toolName: string;
+    presentation?: unknown;
+    requestedAt: string;
+    expiresAt: string;
+  };
+}
+
+export interface RuntimeHostedToolApprovalInteractionV4
+  extends Record<string, unknown> {
+  version: "runner_hosted_tool_approval_interaction_v4";
+  requestId: string;
+  kind: "approval";
+  eventType: "user.approval";
+  prompt: string;
+  inputSchema: {
+    type: "object";
+    additionalProperties: false;
+    required: ["decision"];
+    properties: {
+      decision: {
+        type: "string";
+        enum: Array<"decline" | "approve_once" | "remember_approval">;
+      };
+    };
+  };
+  metadata?: Record<string, unknown> | undefined;
+  approval: {
+    preparedInvocationId: string;
+    toolName: string;
+    stableToolIdentity: StableToolApprovalIdentityV1;
+    requestingActor: RunnerApprovalActorAuthorityV1;
+    presentation?: unknown;
+    rememberedApprovalScope: import("@kestrel-agents/protocol").RememberedApprovalScope;
+    requestedAt: string;
+    expiresAt: string;
+  };
+}
+
+export type RuntimeInteractionRequest =
+  | RuntimeInteractionRequestV1
+  | RuntimeLocalToolApprovalInteractionV1
+  | RuntimeHostedToolApprovalInteractionV4;
 
 export interface UserWaitForMatcher {
   kind: "user";
   eventType: string;
   timeoutMs?: number | undefined;
   metadata?: UserReplyWaitMetadata | undefined;
-  interaction?: RuntimeInteractionRequestV1 | undefined;
+  interaction?: RuntimeInteractionRequest | undefined;
 }
 
 export interface NonUserWaitForMatcher {
@@ -80,7 +141,7 @@ export interface NonUserWaitForMatcher {
   eventType: string;
   timeoutMs?: number | undefined;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: RuntimeInteractionRequestV1 | undefined;
+  interaction?: RuntimeInteractionRequest | undefined;
 }
 
 export interface RuntimeWaitForMatcher {
@@ -88,7 +149,7 @@ export interface RuntimeWaitForMatcher {
   eventType: string;
   timeoutMs?: number | undefined;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: RuntimeInteractionRequestV1 | undefined;
+  interaction?: RuntimeInteractionRequest | undefined;
 }
 
 export interface LegacyWaitForMatcher {
@@ -97,7 +158,7 @@ export interface LegacyWaitForMatcher {
   reason?: string | undefined;
   timeoutMs?: number;
   metadata?: Record<string, unknown> | undefined;
-  interaction?: RuntimeInteractionRequestV1 | undefined;
+  interaction?: RuntimeInteractionRequest | undefined;
 }
 
 export type WaitForMatcher = UserWaitForMatcher | NonUserWaitForMatcher | RuntimeWaitForMatcher | LegacyWaitForMatcher;
@@ -221,7 +282,27 @@ export interface StepIO {
       modelToolCallId?: string | undefined;
       toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
     },
-  ): Promise<{ effectiveInput: Record<string, unknown> }>;
+  ): Promise<{
+    effectiveInput: Record<string, unknown>;
+    executionClass?: import("../../mode/contracts.js").ToolExecutionClass | undefined;
+    policy?: import("./tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined;
+  }>;
+  prepareToolForApproval?(
+    name: string,
+    input: unknown,
+    approval: {
+      policyRevision: string;
+      authorityRevision: string;
+      capabilities: readonly string[];
+    },
+    intent?: {
+      modelToolCallId?: string | undefined;
+      toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
+    },
+  ): Promise<PreparedToolCallV1>;
+  releasePreparedToolCall?(
+    prepared: PreparedToolCallV1,
+  ): Promise<void>;
   useTool?(
     name: string,
     input: unknown,
@@ -289,8 +370,13 @@ export interface NormalizedOutput {
     maintenanceModelCalls?: number | undefined;
     durationMs: number;
     inputTokens?: number | undefined;
+    cachedInputTokens?: number | undefined;
+    cacheWriteInputTokens?: number | undefined;
     outputTokens?: number | undefined;
+    reasoningTokens?: number | undefined;
     totalTokens?: number | undefined;
+    pricedCostUsd?: number | undefined;
+    validationRejections?: number | undefined;
   };
   readBudgets?: {
     filesystemResume: FilesystemResumeReadBudgetDetail;
@@ -319,6 +405,7 @@ export interface RuntimeDependencies {
   workspaceCheckpointService?: RuntimeWorkspaceCheckpointService | undefined;
   managedTaskWorktreeService?: ManagedTaskWorktreeService | undefined;
   modelGateway: ModelGateway;
+  effectiveModelContractResolver?: import("../effective-model-contract.js").EffectiveModelContractResolverV1 | undefined;
   continuationCheckpointModel?: string | undefined;
   providerReasoningVault?: ProviderReasoningVault | undefined;
   effectRunner: EffectRunner;

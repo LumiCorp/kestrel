@@ -27,6 +27,7 @@ import {
 } from "@kestrel-agents/protocol";
 
 import type { DesktopProjectRegistration } from "../desktopShell/contracts.js";
+import { parseModelCredentialReferenceV1 } from "../kestrel/contracts/model-route.js";
 import {
   registerEmbeddedGatewayCredentialLease,
   type GatewayCredentialLease,
@@ -34,6 +35,8 @@ import {
 } from "../../cli/runtime/gateway-credential-broker.js";
 import type { LocalCoreClient } from "./client.js";
 import type { LocalCoreCredentialStore } from "./credentialStore.js";
+import type { LocalCoreModelReadiness } from "./contracts.js";
+import { isLocalCoreModelRoleReady } from "./modelReadiness.js";
 import {
   LocalCoreDesktopEnvironmentConfigStore,
   type DesktopEnvironmentWorkspaceMapping,
@@ -100,11 +103,7 @@ export type DesktopEnvironmentStatusProjection = {
     connectionStatus: "online" | "offline";
     capacity: number;
     activeRuns: number;
-    models: Array<{
-      provider: string;
-      model: string;
-      health: "ready" | "unavailable";
-    }>;
+    models: LocalCoreModelReadiness[];
     lastConnectedAt?: string | undefined;
     lastError?: string | undefined;
     workspaces: Array<{
@@ -155,6 +154,11 @@ export class LocalCoreDesktopEnvironmentManager {
   readonly #configStore: LocalCoreDesktopEnvironmentConfigStore;
   readonly #journalStore: DesktopEnvironmentJournalStore;
   readonly #coreVersion: string;
+  readonly #beforeAuthorityRemoval: (input: {
+    environmentId?: string | undefined;
+    projectIds?: readonly string[] | undefined;
+  }) => Promise<void>;
+  readonly #withAuthorityMutation: <T>(action: () => Promise<T>) => Promise<T>;
   #client: LocalCoreClient | undefined;
   #projects: DesktopProjectRegistration[] = [];
   #capacity = 1;
@@ -164,17 +168,22 @@ export class LocalCoreDesktopEnvironmentManager {
   #presenceTimer: NodeJS.Timeout | undefined;
   #pollTimer: NodeJS.Timeout | undefined;
   #enrollmentTimer: NodeJS.Timeout | undefined;
-  #advertisedModels: Array<{
-    provider: string;
-    model: string;
-    health: "ready" | "unavailable";
-  }> = [];
+  #advertisedModels: LocalCoreModelReadiness[] = [];
   readonly #activeCommands = new Map<string, ActiveDesktopCommand>();
 
   constructor(input: {
     homePath: string;
     credentialStore: LocalCoreCredentialStore;
     coreVersion: string;
+    beforeAuthorityRemoval?:
+      | ((input: {
+          environmentId?: string | undefined;
+          projectIds?: readonly string[] | undefined;
+        }) => Promise<void>)
+      | undefined;
+    withAuthorityMutation?:
+      | (<T>(action: () => Promise<T>) => Promise<T>)
+      | undefined;
   }) {
     this.#credentialStore = input.credentialStore;
     this.#configStore = new LocalCoreDesktopEnvironmentConfigStore(
@@ -182,6 +191,10 @@ export class LocalCoreDesktopEnvironmentManager {
     );
     this.#journalStore = new DesktopEnvironmentJournalStore(input.homePath);
     this.#coreVersion = input.coreVersion;
+    this.#beforeAuthorityRemoval =
+      input.beforeAuthorityRemoval ?? (async () => undefined);
+    this.#withAuthorityMutation =
+      input.withAuthorityMutation ?? (async (action) => await action());
   }
 
   async start(client: LocalCoreClient): Promise<void> {
@@ -429,30 +442,51 @@ export class LocalCoreDesktopEnvironmentManager {
   async setProjects(
     projects: DesktopProjectRegistration[],
   ): Promise<DesktopEnvironmentStatusProjection> {
-    this.#projects = projects.map(normalizeProject);
-    const config = await this.#configStore.read();
-    for (const environment of config.environments) {
-      const secret = await this.#readEnvironmentSecret(
-        environment.connectionId,
-      );
-      const workspaces = await this.#workspaceMappings({
-        connectionId: environment.connectionId,
-        privateKey: secret.privateKey,
-      });
-      await this.#configStore.update((current) => ({
-        ...current,
-        environments: current.environments.map((candidate) =>
-          candidate.connectionId === environment.connectionId
-            ? {
-                ...candidate,
-                workspaces,
-              }
-            : candidate,
+    return await this.#withAuthorityMutation(async () => {
+      const nextProjects = projects.map(normalizeProject);
+      const nextById = new Map(
+        nextProjects.flatMap((project) =>
+          project.id === undefined ? [] : [[project.id, project] as const],
         ),
-      }));
-    }
-    await this.#synchronizeAll();
-    return this.snapshot();
+      );
+      const removedOrReplacedProjectIds = this.#projects.flatMap((project) => {
+        if (project.id === undefined) return [];
+        const next = nextById.get(project.id);
+        return next === undefined ||
+          path.resolve(next.path) !== path.resolve(project.path)
+          ? [project.id]
+          : [];
+      });
+      if (removedOrReplacedProjectIds.length > 0) {
+        await this.#beforeAuthorityRemoval({
+          projectIds: removedOrReplacedProjectIds,
+        });
+      }
+      this.#projects = nextProjects;
+      const config = await this.#configStore.read();
+      for (const environment of config.environments) {
+        const secret = await this.#readEnvironmentSecret(
+          environment.connectionId,
+        );
+        const workspaces = await this.#workspaceMappings({
+          connectionId: environment.connectionId,
+          privateKey: secret.privateKey,
+        });
+        await this.#configStore.update((current) => ({
+          ...current,
+          environments: current.environments.map((candidate) =>
+            candidate.connectionId === environment.connectionId
+              ? {
+                  ...candidate,
+                  workspaces,
+                }
+              : candidate,
+          ),
+        }));
+      }
+      await this.#synchronizeAll();
+      return this.snapshot();
+    });
   }
 
   async setCapacity(
@@ -477,28 +511,33 @@ export class LocalCoreDesktopEnvironmentManager {
   async disconnect(
     connectionId: string,
   ): Promise<DesktopEnvironmentStatusProjection> {
-    const config = await this.#configStore.read();
-    const environment = config.environments.find(
-      (candidate) => candidate.connectionId === connectionId,
-    );
-    if (!environment) return this.snapshot();
-    await signedFetchJson({
-      environment,
-      secret: await this.#readEnvironmentSecret(connectionId),
-      pathname: `/api/runtime/desktop-environments/${encodeURIComponent(connectionId)}/disconnect`,
-      body: {},
-      method: "POST",
+    return await this.#withAuthorityMutation(async () => {
+      const config = await this.#configStore.read();
+      const environment = config.environments.find(
+        (candidate) => candidate.connectionId === connectionId,
+      );
+      if (!environment) return this.snapshot();
+      await this.#beforeAuthorityRemoval({
+        environmentId: environment.environmentId,
+      });
+      await signedFetchJson({
+        environment,
+        secret: await this.#readEnvironmentSecret(connectionId),
+        pathname: `/api/runtime/desktop-environments/${encodeURIComponent(connectionId)}/disconnect`,
+        body: {},
+        method: "POST",
+      });
+      await this.#credentialStore.delete(
+        `kestrel_one.environment.${connectionId}`,
+      );
+      await this.#configStore.update((current) => ({
+        ...current,
+        environments: current.environments.filter(
+          (candidate) => candidate.connectionId !== connectionId,
+        ),
+      }));
+      return this.snapshot();
     });
-    await this.#credentialStore.delete(
-      `kestrel_one.environment.${connectionId}`,
-    );
-    await this.#configStore.update((current) => ({
-      ...current,
-      environments: current.environments.filter(
-        (candidate) => candidate.connectionId !== connectionId,
-      ),
-    }));
-    return this.snapshot();
   }
 
   async #workspaceMappings(input: {
@@ -583,13 +622,7 @@ export class LocalCoreDesktopEnvironmentManager {
     if (!this.#client) return;
     try {
       const configuration = await this.#client.desktopExecutionConfig();
-      this.#advertisedModels = [
-        {
-          provider: configuration.resolvedProfile.modelProvider,
-          model: configuration.resolvedProfile.model,
-          health: "ready",
-        },
-      ];
+      this.#advertisedModels = [configuration.modelReadiness];
     } catch {
       this.#advertisedModels = [];
     }
@@ -776,7 +809,7 @@ export class LocalCoreDesktopEnvironmentManager {
       });
       return;
     }
-    const prepared = this.#prepareRunnerCommand({
+    const prepared = await this.#prepareRunnerCommand({
       environment: input.environment,
       secret: input.secret,
       commandRecord,
@@ -942,17 +975,17 @@ export class LocalCoreDesktopEnvironmentManager {
     }
   }
 
-  #prepareRunnerCommand(input: {
+  async #prepareRunnerCommand(input: {
     environment: LocalCoreDesktopEnvironment;
     secret: EnvironmentSecret;
     commandRecord: Record<string, unknown>;
     executionTicket: string;
     authorizationRenewal: unknown;
     modelGrant: unknown;
-  }): {
+  }): Promise<{
     command: RunnerCommand;
     modelCredentialReference?: GatewayCredentialReference | undefined;
-  } {
+  }> {
     const ticket = verifyEnvironmentExecutionTicket({
       token: input.executionTicket,
       publicKey: input.environment.ticketPublicKey,
@@ -1030,19 +1063,38 @@ export class LocalCoreDesktopEnvironmentManager {
           runId: ticket.runId,
         }),
       });
+      const reference = parseGatewayCredentialReference(modelCredential);
       assertDesktopModelLease(
         lease as unknown as Record<string, unknown>,
-        modelCredential,
+        reference,
         ticket,
       );
       embeddedModelLease = {
-        reference: parseGatewayCredentialReference(modelCredential),
+        reference,
         lease,
       };
     } else if (input.modelGrant !== undefined) {
       throw new Error(
         "Desktop received a model grant without a model credential reference.",
       );
+    }
+    if (
+      embeddedModelLease === undefined &&
+      profile !== undefined &&
+      typeof profile.modelProvider === "string" &&
+      typeof profile.model === "string"
+    ) {
+      const configuration = await this.#client?.desktopExecutionConfig();
+      if (configuration === undefined) {
+        throw new Error(
+          "Desktop local model admission requires an active Local Core configuration.",
+        );
+      }
+      assertCurrentDesktopLocalModelAdmission({
+        provider: profile.modelProvider,
+        model: profile.model,
+        readiness: configuration.modelReadiness,
+      });
     }
     const command = parseRunnerCommandV2({
       ...base,
@@ -1260,6 +1312,31 @@ export class LocalCoreDesktopEnvironmentManager {
           : candidate,
       ),
     }));
+  }
+}
+
+/**
+ * Local Core repeats hosted presence admission immediately before the runner
+ * receives a desktop-local command. Presence can be stale; the Core-owned
+ * V2 readiness projection cannot.
+ */
+export function assertCurrentDesktopLocalModelAdmission(input: {
+  provider: string;
+  model: string;
+  readiness: LocalCoreModelReadiness;
+}): void {
+  if (
+    input.readiness.registration.providerId !== input.provider ||
+    input.readiness.registration.modelId !== input.model
+  ) {
+    throw new Error(
+      "Desktop local model route no longer matches the current Local Core configuration.",
+    );
+  }
+  if (!isLocalCoreModelRoleReady(input.readiness, "agent.loop")) {
+    throw new Error(
+      "Desktop local model is not currently qualified for the agent.loop role.",
+    );
   }
 }
 
@@ -1602,7 +1679,7 @@ function parseDesktopCredentialEnvelope(
 
 function assertDesktopModelLease(
   lease: Record<string, unknown>,
-  reference: Record<string, unknown>,
+  reference: GatewayCredentialReference,
   ticket: {
     organizationId: string;
     environmentId: string;
@@ -1619,6 +1696,13 @@ function assertDesktopModelLease(
   ) {
     throw new Error("Desktop model grant does not match its execution.");
   }
+  if (
+    reference.routeBinding !== undefined &&
+    JSON.stringify(lease.routeBinding) !==
+      JSON.stringify(reference.routeBinding)
+  ) {
+    throw new Error("Desktop model grant route does not match its execution.");
+  }
   const expiresAt = Date.parse(requireText(lease.expiresAt, "lease.expiresAt"));
   if (
     !Number.isFinite(expiresAt) ||
@@ -1632,30 +1716,11 @@ function assertDesktopModelLease(
 function parseGatewayCredentialReference(
   value: Record<string, unknown>,
 ): GatewayCredentialReference {
-  const provider = value.provider;
-  if (
-    provider !== "openai" &&
-    provider !== "openrouter" &&
-    provider !== "anthropic" &&
-    provider !== "ollama"
-  ) {
-    throw new Error("Desktop model credential provider is invalid.");
+  try {
+    return parseModelCredentialReferenceV1(value);
+  } catch {
+    throw new Error("Desktop model credential reference is invalid.");
   }
-  return {
-    source: "kestrel-one",
-    runId: requireText(value.runId, "modelCredential.runId"),
-    gatewayId: requireText(value.gatewayId, "modelCredential.gatewayId"),
-    organizationId: requireText(
-      value.organizationId,
-      "modelCredential.organizationId",
-    ),
-    environmentId: requireText(
-      value.environmentId,
-      "modelCredential.environmentId",
-    ),
-    rawModelId: requireText(value.rawModelId, "modelCredential.rawModelId"),
-    provider,
-  };
 }
 
 function leaseProviderMatchesReference(

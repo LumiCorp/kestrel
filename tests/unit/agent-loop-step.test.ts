@@ -798,6 +798,7 @@ function modelToolIntentsFromLegacyTestAction(
       name: "kestrel_request_mode_switch",
       input: {
         requiredToolClass: record.requiredToolClass,
+        requiredCapabilities: record.requiredCapabilities,
         reason: record.reason,
       },
     });
@@ -5918,6 +5919,7 @@ test("agent loop prompts for Build mode when accepting a pending implementation 
   assert.equal(nextAction.kind, "ask_user");
   assert.equal(metadata.reason, "planner_mode_blocked");
   assert.equal(metadata.requiredToolClass, "sandboxed_only");
+  assert.deepEqual(metadata.requiredCapabilities, ["workspace.write"]);
   assert.equal(metadata.currentMode, "Plan");
   assert.equal(metadata.requiredMode, "Build");
   assert.equal(
@@ -6045,6 +6047,7 @@ test("agent loop compiles a mode switch request into one resumable user wait", a
         nextAction: {
           kind: "request_mode_switch",
           requiredToolClass: "planning_write",
+          requiredCapabilities: ["filesystem.write"],
           reason: "I need to write the agreed session plan before implementation.",
         },
       });
@@ -6060,6 +6063,7 @@ test("agent loop compiles a mode switch request into one resumable user wait", a
   assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
   assert.equal(nextAction.kind, "ask_user");
   assert.equal(metadata.reason, "planner_mode_blocked");
+  assert.deepEqual(metadata.requiredCapabilities, ["filesystem.write"]);
   assert.equal(metadata.requiredMode, "Plan");
   assert.match(String(nextAction.prompt), /write the agreed session plan/u);
   assert.match(String(nextAction.prompt), /\/mode plan/u);
@@ -6100,6 +6104,7 @@ test("agent loop explains that an external action cannot run in Chat and require
       nextAction: {
         kind: "request_mode_switch",
         requiredToolClass: "external_side_effect",
+        requiredCapabilities: ["dev.shell"],
         reason: "Starting Chirp and opening Safari requires an external action.",
       },
     }),
@@ -6110,6 +6115,7 @@ test("agent loop explains that an external action cannot run in Chat and require
   const waitFor = nextAction.waitFor as Record<string, unknown>;
   const metadata = waitFor.metadata as Record<string, unknown>;
   assert.equal(metadata.reason, "planner_mode_blocked");
+  assert.deepEqual(metadata.requiredCapabilities, ["dev.shell"]);
   assert.equal(metadata.currentMode, "Chat");
   assert.equal(metadata.requiredMode, "Build");
   assert.equal(
@@ -7007,6 +7013,68 @@ test("agent loop omits plan-only handoff control tool in build mode", async () =
   assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
 });
 
+test("agent loop continues the active request in an agent-selected mode", async () => {
+  const switchedContext = context();
+  switchedContext.event = {
+    id: "evt-switch-and-continue",
+    type: "user.message",
+    sessionId: "session-1",
+    payload: {
+      message: "Switch to Build mode and implement the request.",
+      interactionMode: "chat",
+      modeSystemV2Enabled: true,
+    },
+  };
+  switchedContext.session.state.agent = {
+    interactionMode: "build",
+    modeSystemV2Enabled: true,
+    modeSwitch: {
+      mode: "build",
+      sourceEventId: switchedContext.event.id,
+    },
+    activeTurnIntent: {
+      version: "v1",
+      turnId: switchedContext.event.id,
+      rootEventId: switchedContext.event.id,
+      objective: "Switch to Build mode and implement the request.",
+      activeTranscriptItemId: "active-user-request",
+    },
+  };
+  let selectedMode: unknown;
+  let requestToolNames: string[] = [];
+
+  const transition = await buildStep({
+    tools: [WRITE_TEXT_TOOL],
+    capabilityManifest: [
+      {
+        name: "fs.write_text",
+        description: "Write a text file",
+        capabilityClasses: ["filesystem.write"],
+        executionClass: "sandboxed_only",
+      },
+    ],
+  })(switchedContext, {
+    useModel: async (request: ModelRequest) => {
+      selectedMode = (request.input as Record<string, unknown>).interactionMode;
+      requestToolNames = (request.tools ?? []).map((tool) => tool.name);
+      return modelResponse({
+        version: "v1",
+        reason: "Continue the original request with the newly available Build tool.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.write_text",
+          input: { path: "result.txt", content: "done" },
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(selectedMode, "build");
+  assert.equal(requestToolNames.includes("fs_write_text"), true);
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+});
+
 test("agent loop rejects capability-blocked tools with explicit policy feedback", async () => {
   const buildContext = context();
   buildContext.event.payload = {
@@ -7458,10 +7526,26 @@ test("agent loop resumes a mode-blocked continuation offer after structural mode
     type: "user.reply",
     sessionId: "session-1",
     payload: {
-      message: "switch to build",
+      message: "Yes, switch to Build and continue.",
       interactionMode: "build",
       actSubmode: "safe",
       modeSystemV2Enabled: true,
+      userReplyIntent: {
+        kind: "mode_switch",
+        proceed: true,
+        interactionMode: "build",
+        confidence: "high",
+        reason: "operator_approved_mode_switch",
+      },
+      modeResolution: {
+        version: "mode_resolution_v1",
+        requestId: "request-mode-switch",
+        runId: "run-mode-resume",
+        interactionMode: "build",
+        actSubmode: "safe",
+        source: "classified_reply",
+        disposition: "resume",
+      },
     },
   };
   acceptanceContext.session.state.agent = {
@@ -7490,6 +7574,8 @@ test("agent loop resumes a mode-blocked continuation offer after structural mode
       metadata: {
         reason: "planner_mode_blocked",
         continuationId: runtimeContinuation.id,
+        requiredToolClass: "sandboxed_only",
+        requiredCapabilities: ["workspace.write"],
       },
     },
     nextAction: {
@@ -7536,6 +7622,98 @@ test("agent loop resumes a mode-blocked continuation offer after structural mode
   assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
   assert.equal(agent.pendingContinuationOffer, undefined);
   assert.equal(modelInput?.taskInstruction, "Create a Python Pong game.");
+  assert.equal(agent.interactionMode, "build");
+  assert.deepEqual(agent.latestModeResolution, acceptanceContext.event.payload.modeResolution);
+});
+
+test("agent loop closes denied mode work and re-prompts ambiguous mode replies without dispatching it", async () => {
+  const objective = "Create the requested local commit.";
+  for (const scenario of [
+    { disposition: "decline" as const, expectedAction: "cannot_satisfy" },
+    { disposition: "clarify" as const, expectedAction: "ask_user" },
+  ]) {
+    const replyContext = context();
+    replyContext.event = {
+      id: `event-mode-${scenario.disposition}`,
+      type: "user.reply",
+      sessionId: "session-1",
+      payload: {
+        message: scenario.disposition === "decline" ? "No." : "Maybe later.",
+        interactionMode: "chat",
+        modeResolution: {
+          version: "mode_resolution_v1",
+          requestId: "request-mode-original",
+          runId: `run-mode-${scenario.disposition}`,
+          interactionMode: "chat",
+          source: "classified_reply",
+          disposition: scenario.disposition,
+        },
+      },
+    };
+    replyContext.session.state.agent = {
+      interactionMode: "chat",
+      modelTranscript: transcriptForTask(objective),
+      waitingFor: {
+        kind: "user",
+        eventType: "user.reply",
+        interaction: {
+          version: "v1",
+          requestId: "request-mode-original",
+          kind: "user_input",
+          eventType: "user.reply",
+          prompt: "Switch to Build?",
+        },
+        metadata: {
+          reason: "planner_mode_blocked",
+          requiredMode: "Build",
+          requiredToolClass: "external_side_effect",
+          requiredCapabilities: ["dev.shell"],
+          blockedActionKind: "mode_switch_request",
+        },
+      },
+      nextAction: {
+        kind: "ask_user",
+        prompt: "Switch to Build?",
+        waitFor: {
+          kind: "user",
+          eventType: "user.reply",
+          metadata: {
+            reason: "planner_mode_blocked",
+            requiredMode: "Build",
+            requiredToolClass: "external_side_effect",
+            requiredCapabilities: ["dev.shell"],
+            blockedActionKind: "mode_switch_request",
+          },
+        },
+      },
+    };
+
+    const transition = await buildStep({
+      tools: [DEV_SHELL_RUN_TOOL],
+      capabilityManifest: [{
+        name: "dev.shell.run",
+        description: "Run a command.",
+        capabilityClasses: ["dev.shell"],
+        executionClass: "external_side_effect",
+      }],
+    })(replyContext, {
+      useModel: async () => {
+        throw new Error("the blocked action must not be reconsidered before resolution");
+      },
+    } satisfies StepIO);
+
+    const agent = transition.statePatch?.agent as Record<string, unknown>;
+    const nextAction = agent.nextAction as Record<string, unknown>;
+    assert.equal(nextAction.kind, scenario.expectedAction);
+    assert.equal(agent.interactionMode, "chat");
+    assert.equal(readActiveTaskGoalFromTranscript(agent.modelTranscript), objective);
+    if (scenario.disposition === "clarify") {
+      const waitFor = nextAction.waitFor as Record<string, unknown>;
+      const metadata = waitFor.metadata as Record<string, unknown>;
+      assert.deepEqual(metadata.requiredCapabilities, ["dev.shell"]);
+      assert.equal(waitFor.interaction, undefined);
+    }
+  }
 });
 
 test("agent loop rejects hidden sandboxed tool dispatch selected while still in plan mode", async () => {

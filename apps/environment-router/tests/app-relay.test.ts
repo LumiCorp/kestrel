@@ -7,8 +7,18 @@ import { ENVIRONMENT_GATEWAY_CONFIG_VERSION } from "@lumi/kestrel-environment-au
 import {
   handleAppRelay,
   isAllowedAppRequest,
+  MAX_APP_RELAY_SERIALIZED_BYTES,
 } from "../src/app-relay.js";
+import {
+  HostedBrowserEgressRegistry,
+  type HostedBrowserGatewayAuthorityV1,
+  type HostedBrowserGatewayProxyBindingV1,
+} from "../src/browser-egress.js";
 import { EnvironmentGatewayConfigClient } from "../src/gateway-config.js";
+
+test("ordinary App relay uses the settled 20 MiB serialized payload ceiling", () => {
+  assert.equal(MAX_APP_RELAY_SERIALIZED_BYTES, 20 * 1024 * 1024);
+});
 
 test("app relay refreshes expired execution tickets and enforces workspace and path scope", async () => {
   const observed: Array<Record<string, unknown>> = [];
@@ -140,6 +150,14 @@ test("app relay refreshes expired execution tickets and enforces workspace and p
 
 test("app relay allowlists only supported app methods and contracts", () => {
   assert.equal(isAllowedAppRequest(
+    "/api/kestrel/tools/email/get-attachment",
+    "POST",
+  ), true);
+  assert.equal(isAllowedAppRequest(
+    "/api/kestrel/tools/email/get-attachment",
+    "GET",
+  ), false);
+  assert.equal(isAllowedAppRequest(
     "/api/runtime/apps/built_in.previews/inspect/auto/ports/3000",
     "GET",
   ), true);
@@ -164,6 +182,32 @@ test("app relay allowlists only supported app methods and contracts", () => {
     "POST",
   ), false);
   assert.equal(isAllowedAppRequest(
+    "/api/runtime/apps/built_in.browser/navigate/auto/control/accept",
+    "POST",
+  ), true);
+  assert.equal(isAllowedAppRequest(
+    "/api/runtime/apps/built_in.browser/navigate/auto/control/invoke",
+    "POST",
+  ), true);
+  assert.equal(isAllowedAppRequest(
+    "/api/runtime/apps/built_in.browser/navigate/auto/control/commit",
+    "POST",
+  ), true);
+  for (const internalAction of ["complete", "unknown", "adopt-complete"]) {
+    assert.equal(isAllowedAppRequest(
+      `/api/runtime/apps/built_in.browser/navigate/auto/control/${internalAction}`,
+      "POST",
+    ), false);
+  }
+  assert.equal(isAllowedAppRequest(
+    "/api/runtime/apps/built_in.browser/navigate/auto/control/raw-socket",
+    "POST",
+  ), false);
+  assert.equal(isAllowedAppRequest(
+    "/api/runtime/apps/built_in.browser/navigate/auto/control/accept",
+    "GET",
+  ), false);
+  assert.equal(isAllowedAppRequest(
     "/api/runtime/github/credentials",
     "POST",
   ), true);
@@ -175,6 +219,1010 @@ test("app relay allowlists only supported app methods and contracts", () => {
     "/api/runtime/github/push",
     "GET",
   ), false);
+});
+
+test("Browser relay keeps private worker authority out of the runner and invokes once after acceptance", async () => {
+  const fixture = await createRelayFixture();
+  const controlPaths: string[] = [];
+  const workerPaths: string[] = [];
+  const privateInstruction = {
+    version: "hosted_browser_relay_instruction_v1",
+    operationId: "call-1",
+    operation: "browser.navigate",
+    sessionId: "browser-session-1",
+    generation: 1,
+    capability: "private-signed-capability",
+    machine: { appName: "kestrel-env-test", machineId: "machine-browser-1" },
+  };
+  const relay = createServer((request, response) => {
+    void handleAppRelay({
+      request,
+      response,
+      config: fixture.config,
+      fetchImpl: (async (url) => {
+        const path = new URL(String(url)).pathname;
+        controlPaths.push(path);
+        if (path.endsWith("/accept")) {
+          return Response.json({
+            ...privateInstruction,
+            phase: "accept",
+            prepared: { callId: "call-1" },
+            authority: { effectiveAllowlistRevision: "revision-1" },
+          });
+        }
+        if (path.endsWith("/invoke")) {
+          return Response.json({ ...privateInstruction, phase: "invoke" });
+        }
+        if (path.endsWith("/complete")) {
+          return Response.json({
+            version: "browser_tool_result_v1",
+            operation: "browser.navigate",
+            outcome: "navigated",
+          });
+        }
+        return Response.json({ error: { code: "unexpected" } }, { status: 500 });
+      }) as typeof fetch,
+      browserWorkerFetchImpl: (async (url) => {
+        const path = new URL(String(url)).pathname;
+        workerPaths.push(path);
+        if (path.endsWith("/accept")) return Response.json({
+          accepted: true,
+          operationId: "call-1",
+          sessionId: "browser-session-1",
+          generation: 1,
+          identity: {
+            sessionId: "browser-session-1",
+            generation: 1,
+            engineRevision: "v0.35.0",
+            chromeRevision: "152.0.7977.54",
+            imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+          },
+        });
+        if (path.endsWith("/commit")) {
+          return Response.json({ committed: true, operationId: "call-1" });
+        }
+        return Response.json({
+          version: "browser_tool_result_v1",
+          operation: "browser.navigate",
+          outcome: "navigated",
+        });
+      }) as typeof fetch,
+    });
+  });
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const address = relay.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/navigate/auto/control`;
+  const headers = {
+    authorization: `Bearer ${fixture.workspaceToken}`,
+    "content-type": "application/json",
+  };
+  try {
+    const accepted = await fetch(`${base}/accept`, {
+      method: "POST", headers, body: JSON.stringify({ prepared: { callId: "call-1" } }),
+    });
+    assert.equal(accepted.status, 200);
+    const receipt = await accepted.json() as Record<string, unknown>;
+    assert.equal(receipt.operationId, "call-1");
+    assert.equal(typeof receipt.receiptId, "string");
+    assert.doesNotMatch(JSON.stringify(receipt), /private-signed-capability|machine-browser/u);
+    const invoked = await fetch(`${base}/invoke`, {
+      method: "POST", headers,
+      body: JSON.stringify({ prepared: { callId: "call-1" }, receipt }),
+    });
+    assert.equal(invoked.status, 200);
+    const invocation = await invoked.json() as {
+      output: { outcome: string };
+      commitReceipt: Record<string, unknown>;
+    };
+    assert.equal(invocation.output.outcome, "navigated");
+    const committed = await fetch(`${base}/commit`, {
+      method: "POST", headers,
+      body: JSON.stringify({ receipt: invocation.commitReceipt }),
+    });
+    assert.equal(committed.status, 200);
+    assert.deepEqual(workerPaths, [
+      "/v1/operations/accept",
+      "/v1/operations/invoke",
+      "/v1/operations/commit",
+    ]);
+    assert.deepEqual(controlPaths.map((path) => path.split("/").at(-1)), ["accept", "invoke", "complete"]);
+  } finally {
+    relay.close();
+    fixture.config.stop();
+  }
+});
+
+test("Browser upload relay stages bytes before exposing the invoke continuation", async () => {
+  const fixture = await createRelayFixture();
+  const workerPaths: string[] = [];
+  const instruction = {
+    version: "hosted_browser_relay_instruction_v1",
+    operationId: "call-upload-stage",
+    operation: "browser.upload",
+    sessionId: "browser-session-upload",
+    generation: 1,
+    capability: "private-upload-capability",
+    machine: { appName: "kestrel-env-test", machineId: "machine-browser-upload" },
+  };
+  const relay = createServer((request, response) => void handleAppRelay({
+    request,
+    response,
+    config: fixture.config,
+    fetchImpl: (async (url) => {
+      const pathName = new URL(String(url)).pathname;
+      if (pathName.endsWith("/accept")) {
+        return Response.json({
+          ...instruction,
+          phase: "accept",
+          prepared: { callId: instruction.operationId },
+          authority: { effectiveAllowlistRevision: "revision-1" },
+        });
+      }
+      if (pathName.endsWith("/invoke")) {
+        return Response.json({ ...instruction, phase: "invoke" });
+      }
+      if (pathName.endsWith("/complete")) {
+        return Response.json({
+          version: "browser_tool_result_v1",
+          operation: "browser.upload",
+          outcome: "uploaded",
+        });
+      }
+      return Response.json({ error: { code: "unexpected" } }, { status: 500 });
+    }) as typeof fetch,
+    browserWorkerFetchImpl: (async (url) => {
+      const pathName = new URL(String(url)).pathname;
+      workerPaths.push(pathName);
+      if (pathName.endsWith("/accept")) {
+        return Response.json({
+          accepted: true,
+          operationId: instruction.operationId,
+          sessionId: instruction.sessionId,
+          generation: 1,
+          identity: {
+            sessionId: instruction.sessionId,
+            generation: 1,
+            engineRevision: "v0.35.0",
+            chromeRevision: "152.0.7977.54",
+            imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+          },
+        });
+      }
+      return Response.json({
+        version: "browser_tool_result_v1",
+        operation: "browser.upload",
+        outcome: "uploaded",
+      });
+    }) as typeof fetch,
+  }));
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const address = relay.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/upload/auto/control`;
+  const headers = {
+    authorization: `Bearer ${fixture.workspaceToken}`,
+    "content-type": "application/json",
+  };
+  try {
+    const accepted = await fetch(`${base}/accept`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ prepared: { callId: instruction.operationId } }),
+    });
+    const receipt = await accepted.json();
+    const staged = await fetch(`${base}/invoke`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ prepared: { callId: instruction.operationId }, receipt }),
+    });
+    assert.equal(staged.status, 200);
+    const stagedReceipt = await staged.json() as Record<string, unknown>;
+    assert.equal(stagedReceipt.version, "hosted_browser_upload_staged_receipt_v1");
+    assert.deepEqual(workerPaths, ["/v1/operations/accept"]);
+    const mismatched = await fetch(`${base}/invoke`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        prepared: { callId: instruction.operationId },
+        receipt: { ...stagedReceipt, operationId: "call-upload-other" },
+      }),
+    });
+    assert.equal(mismatched.status, 409);
+    assert.deepEqual(workerPaths, ["/v1/operations/accept"]);
+    const invoked = await fetch(`${base}/invoke`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        prepared: { callId: instruction.operationId },
+        receipt: stagedReceipt,
+      }),
+    });
+    assert.equal(invoked.status, 200);
+    assert.deepEqual(workerPaths, [
+      "/v1/operations/accept",
+      "/v1/operations/invoke",
+    ]);
+  } finally {
+    relay.close();
+    fixture.config.stop();
+  }
+});
+
+test("Browser upload staging is known pre-effect only after exact worker cancellation proof", async () => {
+  for (const [cancelProven, expectedCode] of [
+    [true, "BROWSER_SERVICE_UNAVAILABLE"],
+    [false, "BROWSER_ACTION_OUTCOME_UNKNOWN"],
+  ] as const) {
+    const fixture = await createRelayFixture();
+    const instruction = {
+      version: "hosted_browser_relay_instruction_v1",
+      operationId: `call-upload-cancel-${String(cancelProven)}`,
+      operation: "browser.upload",
+      sessionId: `browser-session-upload-${String(cancelProven)}`,
+      generation: 1,
+      capability: "private-upload-capability",
+      machine: { appName: "kestrel-env-test", machineId: "machine-browser-upload" },
+    };
+    let workerInvokes = 0;
+    const relay = createServer((request, response) => void handleAppRelay({
+      request,
+      response,
+      config: fixture.config,
+      fetchImpl: (async (url) => {
+        const pathName = new URL(String(url)).pathname;
+        if (pathName.endsWith("/accept")) {
+          return Response.json({
+            ...instruction,
+            phase: "accept",
+            prepared: { callId: instruction.operationId },
+            authority: { effectiveAllowlistRevision: "revision-1" },
+          });
+        }
+        return Response.json({
+          error: {
+            code: "BROWSER_SERVICE_UNAVAILABLE",
+            details: { browserOutcomeKnown: true },
+          },
+        }, { status: 503 });
+      }) as typeof fetch,
+      browserWorkerFetchImpl: (async (url) => {
+        const pathName = new URL(String(url)).pathname;
+        if (pathName.endsWith("/accept")) {
+          return Response.json({
+            accepted: true,
+            operationId: instruction.operationId,
+            sessionId: instruction.sessionId,
+            generation: 1,
+            identity: {
+              sessionId: instruction.sessionId,
+              generation: 1,
+              engineRevision: "v0.35.0",
+              chromeRevision: "152.0.7977.54",
+              imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+            },
+          });
+        }
+        if (pathName.endsWith("/cancel")) {
+          if (!cancelProven) throw new Error("cancel response lost");
+          return Response.json({
+            cancelled: true,
+            operationId: instruction.operationId,
+          });
+        }
+        workerInvokes += 1;
+        return Response.json({ error: { code: "unexpected" } }, { status: 500 });
+      }) as typeof fetch,
+    }));
+    relay.listen(0, "127.0.0.1");
+    await once(relay, "listening");
+    const address = relay.address();
+    assert.ok(address && typeof address !== "string");
+    const base = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/upload/auto/control`;
+    const headers = {
+      authorization: `Bearer ${fixture.workspaceToken}`,
+      "content-type": "application/json",
+    };
+    try {
+      const accepted = await fetch(`${base}/accept`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ prepared: { callId: instruction.operationId } }),
+      });
+      const receipt = await accepted.json();
+      const failed = await fetch(`${base}/invoke`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ prepared: { callId: instruction.operationId }, receipt }),
+      });
+      const payload = await failed.json() as { error: { code: string; details: { browserOutcomeKnown: boolean } } };
+      assert.equal(payload.error.code, expectedCode);
+      assert.equal(payload.error.details.browserOutcomeKnown, cancelProven);
+      assert.equal(workerInvokes, 0);
+    } finally {
+      relay.close();
+      fixture.config.stop();
+    }
+  }
+});
+
+test("Browser download staging cancels only a proven known pre-effect failure", async () => {
+  for (const scenario of [
+    {
+      name: "known with cancellation proof",
+      controlCode: "BROWSER_SERVICE_UNAVAILABLE",
+      controlThrows: false,
+      cancelProven: true,
+      expectedCode: "BROWSER_SERVICE_UNAVAILABLE",
+      expectedKnown: true,
+      expectedCancellations: 1,
+    },
+    {
+      name: "known without cancellation proof",
+      controlCode: "BROWSER_SERVICE_UNAVAILABLE",
+      controlThrows: false,
+      cancelProven: false,
+      expectedCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      expectedKnown: false,
+      expectedCancellations: 1,
+    },
+    {
+      name: "ready file outcome unknown",
+      controlCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      controlThrows: false,
+      cancelProven: true,
+      expectedCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      expectedKnown: false,
+      expectedCancellations: 0,
+    },
+    {
+      name: "control response lost",
+      controlCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      controlThrows: true,
+      cancelProven: true,
+      expectedCode: "BROWSER_ACTION_OUTCOME_UNKNOWN",
+      expectedKnown: false,
+      expectedCancellations: 0,
+    },
+  ] as const) {
+    const fixture = await createRelayFixture();
+    const operationId = `call-download-${scenario.name.replaceAll(" ", "-")}`;
+    const instruction = {
+      version: "hosted_browser_relay_instruction_v1",
+      operationId,
+      operation: "browser.download",
+      sessionId: `browser-session-${operationId}`,
+      generation: 1,
+      capability: `private-${operationId}`,
+      machine: { appName: "kestrel-env-test", machineId: "machine-browser-download" },
+    };
+    let cancellations = 0;
+    const relay = createServer((request, response) => void handleAppRelay({
+      request,
+      response,
+      config: fixture.config,
+      fetchImpl: (async (url) => {
+        const pathname = new URL(String(url)).pathname;
+        if (pathname.endsWith("/accept")) {
+          return Response.json({
+            ...instruction,
+            phase: "accept",
+            prepared: { callId: operationId },
+            authority: { effectiveAllowlistRevision: "revision-1" },
+          });
+        }
+        if (scenario.controlThrows) throw new Error("control response lost");
+        return Response.json({
+          error: {
+            code: scenario.controlCode,
+            details: { browserOutcomeKnown: scenario.controlCode !== "BROWSER_ACTION_OUTCOME_UNKNOWN" },
+          },
+        }, { status: scenario.controlCode === "BROWSER_SERVICE_UNAVAILABLE" ? 503 : 409 });
+      }) as typeof fetch,
+      browserWorkerFetchImpl: (async (url) => {
+        const pathname = new URL(String(url)).pathname;
+        if (pathname.endsWith("/accept")) {
+          return Response.json({
+            accepted: true,
+            operationId,
+            sessionId: instruction.sessionId,
+            generation: 1,
+            identity: {
+              sessionId: instruction.sessionId,
+              generation: 1,
+              engineRevision: "v0.35.0",
+              chromeRevision: "152.0.7977.54",
+              imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+            },
+          });
+        }
+        if (pathname.endsWith("/cancel")) {
+          cancellations += 1;
+          if (!scenario.cancelProven) throw new Error("cancel response lost");
+          return Response.json({ cancelled: true, operationId });
+        }
+        return Response.json({ error: { code: "unexpected" } }, { status: 500 });
+      }) as typeof fetch,
+    }));
+    relay.listen(0, "127.0.0.1");
+    await once(relay, "listening");
+    const address = relay.address();
+    assert.ok(address && typeof address !== "string");
+    const base = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/download/auto/control`;
+    const headers = {
+      authorization: `Bearer ${fixture.workspaceToken}`,
+      "content-type": "application/json",
+    };
+    try {
+      const accepted = await fetch(`${base}/accept`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ prepared: { callId: operationId } }),
+      });
+      const receipt = await accepted.json();
+      const failed = await fetch(`${base}/invoke`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ prepared: { callId: operationId }, receipt }),
+      });
+      const payload = await failed.json() as {
+        error: { code: string; details: { browserOutcomeKnown: boolean } };
+      };
+      assert.equal(payload.error.code, scenario.expectedCode, scenario.name);
+      assert.equal(payload.error.details.browserOutcomeKnown, scenario.expectedKnown, scenario.name);
+      assert.equal(cancellations, scenario.expectedCancellations, scenario.name);
+    } finally {
+      relay.close();
+      fixture.config.stop();
+    }
+  }
+});
+
+test("Browser relay retries a lost accept response with the same private instruction", async () => {
+  const fixture = await createRelayFixture();
+  let controlAccepts = 0;
+  const workerBodies: string[] = [];
+  const instruction = {
+    version: "hosted_browser_relay_instruction_v1",
+    phase: "accept",
+    operationId: "call-retry",
+    operation: "browser.navigate",
+    sessionId: "browser-session-retry",
+    generation: 1,
+    capability: "private-capability-retry",
+    machine: { appName: "kestrel-env-test", machineId: "machine-browser-retry" },
+    prepared: { callId: "call-retry" },
+    authority: { effectiveAllowlistRevision: "revision-1" },
+  };
+  let workerAccepts = 0;
+  const relay = createServer((request, response) => void handleAppRelay({
+    request, response, config: fixture.config,
+    fetchImpl: (async () => {
+      controlAccepts += 1;
+      return Response.json(instruction);
+    }) as typeof fetch,
+    browserWorkerFetchImpl: (async (_url, init) => {
+      workerAccepts += 1;
+      workerBodies.push(String(init?.body));
+      if (workerAccepts === 1) throw new Error("worker response lost");
+      return Response.json({
+        accepted: true,
+        operationId: "call-retry",
+        sessionId: "browser-session-retry",
+        generation: 1,
+        identity: {
+          sessionId: "browser-session-retry",
+          generation: 1,
+          engineRevision: "v0.35.0",
+          chromeRevision: "152.0.7977.54",
+          imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+        },
+      });
+    }) as typeof fetch,
+  }));
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const address = relay.address();
+  assert.ok(address && typeof address !== "string");
+  const url = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/navigate/auto/control/accept`;
+  const request = () => fetch(url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${fixture.workspaceToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ prepared: { callId: "call-retry" } }),
+  });
+  try {
+    assert.equal((await request()).status, 503);
+    assert.equal((await request()).status, 200);
+    assert.equal(controlAccepts, 1);
+    assert.equal(workerAccepts, 2);
+    assert.equal(workerBodies[1], workerBodies[0]);
+  } finally {
+    relay.close();
+    fixture.config.stop();
+  }
+});
+
+test("Browser relay returns a validated pre-dispatch result without invoking the worker", async () => {
+  const fixture = await createRelayFixture();
+  const controlPaths: string[] = [];
+  const workerPaths: string[] = [];
+  const instruction = {
+    version: "hosted_browser_relay_instruction_v1",
+    phase: "accept",
+    operationId: "call-pre",
+    operation: "browser.request_grant",
+    sessionId: "browser-session-pre",
+    generation: 1,
+    capability: "private-capability-pre",
+    machine: { appName: "kestrel-env-test", machineId: "machine-browser-pre" },
+    prepared: { callId: "call-pre" },
+    authority: { effectiveAllowlistRevision: "revision-1" },
+  };
+  const relay = createServer((request, response) => void handleAppRelay({
+    request, response, config: fixture.config,
+    fetchImpl: (async (url) => {
+      const path = new URL(String(url)).pathname;
+      controlPaths.push(path);
+      if (path.endsWith("/accept")) return Response.json(instruction);
+      return Response.json({
+        version: "browser_tool_result_v1",
+        operation: "browser.request_grant",
+        outcome: "already_allowed",
+      });
+    }) as typeof fetch,
+    browserWorkerFetchImpl: (async (url) => {
+      const path = new URL(String(url)).pathname;
+      workerPaths.push(path);
+      if (path.endsWith("/commit")) {
+        return Response.json({ committed: true, operationId: "call-pre" });
+      }
+      return Response.json({
+        completedBeforeDispatch: true,
+        operationId: "call-pre",
+        sessionId: "browser-session-pre",
+        generation: 1,
+        identity: {
+          sessionId: "browser-session-pre",
+          generation: 1,
+          engineRevision: "v0.35.0",
+          chromeRevision: "152.0.7977.54",
+          imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+        },
+        output: {
+          version: "browser_tool_result_v1",
+          operation: "browser.request_grant",
+          outcome: "already_allowed",
+        },
+      });
+    }) as typeof fetch,
+  }));
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const address = relay.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/request_grant/auto/control`;
+  const headers = {
+    authorization: `Bearer ${fixture.workspaceToken}`,
+    "content-type": "application/json",
+  };
+  try {
+    const completed = await fetch(`${base}/accept`, {
+      method: "POST", headers, body: JSON.stringify({ prepared: { callId: "call-pre" } }),
+    });
+    assert.equal(completed.status, 200);
+    const result = await completed.json() as {
+      version: string;
+      commitReceipt: Record<string, unknown>;
+    };
+    assert.equal(result.version, "hosted_browser_pre_dispatch_result_v1");
+    const committed = await fetch(`${base}/commit`, {
+      method: "POST", headers, body: JSON.stringify({ receipt: result.commitReceipt }),
+    });
+    assert.equal(committed.status, 200);
+    assert.deepEqual(workerPaths, ["/v1/operations/accept", "/v1/operations/commit"]);
+    assert.deepEqual(controlPaths.map((path) => path.split("/").at(-1)), ["accept", "complete"]);
+  } finally {
+    relay.close();
+    fixture.config.stop();
+  }
+});
+
+test("Browser relay preserves a definite pre-invoke policy refusal after acknowledgement", async () => {
+  const fixture = await createRelayFixture();
+  let workerInvokes = 0;
+  let unknownNotifications = 0;
+  const instruction = {
+    version: "hosted_browser_relay_instruction_v1",
+    operationId: "call-known",
+    operation: "browser.navigate",
+    sessionId: "browser-session-known",
+    generation: 1,
+    capability: "private-capability",
+    machine: { appName: "kestrel-env-test", machineId: "machine-browser-known" },
+  };
+  const relay = createServer((request, response) => void handleAppRelay({
+    request, response, config: fixture.config,
+    fetchImpl: (async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("/accept")) return Response.json({
+        ...instruction, phase: "accept", prepared: { callId: "call-known" },
+        authority: { effectiveAllowlistRevision: "revision-1" },
+      });
+      if (path.endsWith("/invoke")) return Response.json({
+        error: { code: "BROWSER_DESTINATION_BLOCKED", details: { browserOutcomeKnown: true } },
+      }, { status: 409 });
+      if (path.endsWith("/unknown")) unknownNotifications += 1;
+      return Response.json({ ok: true });
+    }) as typeof fetch,
+    browserWorkerFetchImpl: (async (url) => {
+      if (new URL(String(url)).pathname.endsWith("/invoke")) workerInvokes += 1;
+      return Response.json({
+        accepted: true, operationId: "call-known", sessionId: "browser-session-known", generation: 1,
+        identity: { sessionId: "browser-session-known", generation: 1, engineRevision: "v0.35.0", chromeRevision: "152.0.7977.54", imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}` },
+      });
+    }) as typeof fetch,
+  }));
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const address = relay.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/navigate/auto/control`;
+  const headers = { authorization: `Bearer ${fixture.workspaceToken}`, "content-type": "application/json" };
+  try {
+    const accepted = await fetch(`${base}/accept`, { method: "POST", headers, body: "{}" });
+    const receipt = await accepted.json();
+    const refused = await fetch(`${base}/invoke`, {
+      method: "POST", headers, body: JSON.stringify({ receipt, prepared: { callId: "call-known" } }),
+    });
+    assert.equal(refused.status, 409);
+    assert.equal((await refused.json() as { error: { code: string } }).error.code, "BROWSER_DESTINATION_BLOCKED");
+    assert.equal(workerInvokes, 0);
+    assert.equal(unknownNotifications, 0);
+  } finally {
+    relay.close();
+    fixture.config.stop();
+  }
+});
+
+test("Browser close commit revokes its exact egress binding for success and every unknown terminal response", async () => {
+  const cases: Array<{
+    name: string;
+    timeoutMs?: number;
+    expectedStatus: number;
+    cleanupThrows?: boolean;
+    commit: (signal: AbortSignal | null | undefined, operationId: string) => Promise<Response>;
+  }> = [
+    {
+      name: "success",
+      expectedStatus: 200,
+      commit: async (_signal, operationId) =>
+        Response.json({ committed: true, operationId }),
+    },
+    {
+      name: "success with cleanup failure",
+      expectedStatus: 200,
+      cleanupThrows: true,
+      commit: async (_signal, operationId) =>
+        Response.json({ committed: true, operationId }),
+    },
+    {
+      name: "lost response",
+      expectedStatus: 409,
+      commit: async () => {
+        throw new Error("commit response lost");
+      },
+    },
+    {
+      name: "lost response with cleanup failure",
+      expectedStatus: 409,
+      cleanupThrows: true,
+      commit: async () => {
+        throw new Error("commit response lost");
+      },
+    },
+    {
+      name: "terminal worker failure",
+      expectedStatus: 409,
+      commit: async () => Response.json(
+        { error: { code: "BROWSER_ACTION_OUTCOME_UNKNOWN" } },
+        { status: 409 },
+      ),
+    },
+    {
+      name: "invalid success response",
+      expectedStatus: 409,
+      commit: async () => Response.json({ committed: true, operationId: "drifted" }),
+    },
+    {
+      name: "timeout",
+      timeoutMs: 5,
+      expectedStatus: 409,
+      commit: async (signal) => await new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }),
+    },
+  ];
+
+  for (const scenario of cases) {
+    const fixture = await createRelayFixture();
+    const operationId = `call-close-${scenario.name.replaceAll(" ", "-")}`;
+    const sessionId = `browser-session-${scenario.name.replaceAll(" ", "-")}`;
+    const generation = 7;
+    const egress = new RecordingBrowserEgressRegistry();
+    egress.throwOnClose = scenario.cleanupThrows === true;
+    let commitCalls = 0;
+    const instruction = {
+      version: "hosted_browser_relay_instruction_v1",
+      operationId,
+      operation: "browser.close",
+      sessionId,
+      generation,
+      capability: `private-${operationId}`,
+      machine: { appName: "kestrel-env-test", machineId: `machine-${operationId}` },
+    };
+    const relay = createServer((request, response) => void handleAppRelay({
+      request,
+      response,
+      config: fixture.config,
+      requestTimeoutMs: scenario.timeoutMs,
+      browserEgress: egress,
+      fetchImpl: (async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/accept")) return Response.json({
+          ...instruction,
+          phase: "accept",
+          prepared: { callId: operationId },
+          authority: { effectiveAllowlistRevision: "revision-1" },
+        });
+        if (path.endsWith("/invoke")) {
+          return Response.json({ ...instruction, phase: "invoke" });
+        }
+        return Response.json({
+          version: "browser_tool_result_v1",
+          operation: "browser.close",
+          outcome: "closed",
+        });
+      }) as typeof fetch,
+      browserWorkerFetchImpl: (async (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/accept")) return Response.json({
+          accepted: true,
+          operationId,
+          sessionId,
+          generation,
+          identity: {
+            sessionId,
+            generation,
+            engineRevision: "v0.35.0",
+            chromeRevision: "152.0.7977.54",
+            imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+          },
+        });
+        if (path.endsWith("/invoke")) return Response.json({
+          version: "browser_tool_result_v1",
+          operation: "browser.close",
+          outcome: "closed",
+        });
+        commitCalls += 1;
+        return await scenario.commit(init?.signal, operationId);
+      }) as typeof fetch,
+    }));
+    relay.listen(0, "127.0.0.1");
+    await once(relay, "listening");
+    const address = relay.address();
+    assert.ok(address && typeof address !== "string");
+    const base = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/close/auto/control`;
+    const headers = {
+      authorization: `Bearer ${fixture.workspaceToken}`,
+      "content-type": "application/json",
+    };
+    try {
+      const accepted = await fetch(`${base}/accept`, {
+        method: "POST", headers, body: JSON.stringify({ prepared: { callId: operationId } }),
+      });
+      assert.equal(accepted.status, 200, scenario.name);
+      const dispatchReceipt = await accepted.json();
+      const invoked = await fetch(`${base}/invoke`, {
+        method: "POST", headers,
+        body: JSON.stringify({ prepared: { callId: operationId }, receipt: dispatchReceipt }),
+      });
+      assert.equal(invoked.status, 200, scenario.name);
+      const invocation = await invoked.json() as { commitReceipt: unknown };
+      const committed = await fetch(`${base}/commit`, {
+        method: "POST", headers,
+        body: JSON.stringify({ receipt: invocation.commitReceipt }),
+      });
+      assert.equal(committed.status, scenario.expectedStatus, scenario.name);
+      assert.deepEqual(egress.closed, [{ sessionId, generation }], scenario.name);
+      assert.equal(commitCalls, 1, scenario.name);
+
+      const duplicate = await fetch(`${base}/commit`, {
+        method: "POST", headers,
+        body: JSON.stringify({ receipt: invocation.commitReceipt }),
+      });
+      assert.equal(duplicate.status, 409, scenario.name);
+      assert.deepEqual(egress.closed, [{ sessionId, generation }], scenario.name);
+      assert.equal(commitCalls, 1, scenario.name);
+    } finally {
+      relay.close();
+      await egress.closeAll();
+      fixture.config.stop();
+    }
+  }
+});
+
+test("stale Browser close invoke and completion cleanup cannot revoke a replacement generation", async () => {
+  for (const failurePoint of ["invoke", "complete"] as const) {
+    const fixture = await createRelayFixture();
+    const operationId = `call-close-stale-${failurePoint}`;
+    const sessionId = `browser-session-stale-${failurePoint}`;
+    const staleGeneration = 1;
+    const replacementGeneration = 2;
+    const egress = new ReplacementAwareBrowserEgressRegistry(
+      sessionId,
+      staleGeneration,
+    );
+    let workerInvokes = 0;
+    let unknownNotifications = 0;
+    const instruction = {
+      version: "hosted_browser_relay_instruction_v1",
+      operationId,
+      operation: "browser.close",
+      sessionId,
+      generation: staleGeneration,
+      capability: `private-${operationId}`,
+      machine: { appName: "kestrel-env-test", machineId: `machine-${operationId}` },
+    };
+    const relay = createServer((request, response) => void handleAppRelay({
+      request,
+      response,
+      config: fixture.config,
+      browserEgress: egress,
+      fetchImpl: (async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/accept")) return Response.json({
+          ...instruction,
+          phase: "accept",
+          prepared: { callId: operationId },
+          authority: { effectiveAllowlistRevision: "revision-1" },
+        });
+        if (path.endsWith("/invoke")) {
+          return Response.json({ ...instruction, phase: "invoke" });
+        }
+        if (path.endsWith("/complete") && failurePoint === "complete") {
+          throw new Error("completion response lost");
+        }
+        if (path.endsWith("/unknown")) unknownNotifications += 1;
+        return Response.json({
+          version: "browser_tool_result_v1",
+          operation: "browser.close",
+          outcome: "closed",
+        });
+      }) as typeof fetch,
+      browserWorkerFetchImpl: (async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/accept")) return Response.json({
+          accepted: true,
+          operationId,
+          sessionId,
+          generation: staleGeneration,
+          identity: {
+            sessionId,
+            generation: staleGeneration,
+            engineRevision: "v0.35.0",
+            chromeRevision: "152.0.7977.54",
+            imageDigest: `registry.fly.io/browser@sha256:${"a".repeat(64)}`,
+          },
+        });
+        workerInvokes += 1;
+        if (failurePoint === "invoke") throw new Error("invoke response lost");
+        return Response.json({
+          version: "browser_tool_result_v1",
+          operation: "browser.close",
+          outcome: "closed",
+        });
+      }) as typeof fetch,
+    }));
+    relay.listen(0, "127.0.0.1");
+    await once(relay, "listening");
+    const address = relay.address();
+    assert.ok(address && typeof address !== "string");
+    const base = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/close/auto/control`;
+    const headers = {
+      authorization: `Bearer ${fixture.workspaceToken}`,
+      "content-type": "application/json",
+    };
+    try {
+      const accepted = await fetch(`${base}/accept`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ prepared: { callId: operationId } }),
+      });
+      assert.equal(accepted.status, 200, failurePoint);
+      const receipt = await accepted.json();
+      egress.replace(replacementGeneration);
+
+      const invoked = await fetch(`${base}/invoke`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          prepared: { callId: operationId },
+          receipt,
+        }),
+      });
+      assert.equal(invoked.status, 409, failurePoint);
+      assert.equal(
+        (await invoked.json() as { error: { code: string } }).error.code,
+        "BROWSER_ACTION_OUTCOME_UNKNOWN",
+        failurePoint,
+      );
+      assert.deepEqual(egress.closed, [{
+        sessionId,
+        generation: staleGeneration,
+      }], failurePoint);
+      assert.equal(egress.activeGeneration, replacementGeneration, failurePoint);
+      assert.equal(workerInvokes, 1, failurePoint);
+      assert.equal(unknownNotifications, 1, failurePoint);
+    } finally {
+      relay.close();
+      await egress.closeAll();
+      fixture.config.stop();
+    }
+  }
+});
+
+test("Browser close failure before worker acknowledgement does not revoke egress", async () => {
+  const fixture = await createRelayFixture();
+  const egress = new RecordingBrowserEgressRegistry();
+  const relay = createServer((request, response) => void handleAppRelay({
+    request,
+    response,
+    config: fixture.config,
+    browserEgress: egress,
+    fetchImpl: (async () => Response.json({
+      version: "hosted_browser_relay_instruction_v1",
+      phase: "accept",
+      operationId: "call-close-not-started",
+      operation: "browser.close",
+      sessionId: "browser-session-not-started",
+      generation: 3,
+      capability: "private-close-not-started",
+      machine: { appName: "kestrel-env-test", machineId: "machine-close-not-started" },
+      prepared: { callId: "call-close-not-started" },
+      authority: { effectiveAllowlistRevision: "revision-1" },
+    })) as typeof fetch,
+    browserWorkerFetchImpl: (async () => {
+      throw new Error("worker never acknowledged");
+    }) as typeof fetch,
+  }));
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const address = relay.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/close/auto/control/accept`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${fixture.workspaceToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ prepared: { callId: "call-close-not-started" } }),
+      },
+    );
+    assert.equal(response.status, 503);
+    assert.deepEqual(egress.closed, []);
+  } finally {
+    relay.close();
+    await egress.closeAll();
+    fixture.config.stop();
+  }
 });
 
 test("GitHub bundle relay authenticates the Workspace and forwards only the scoped credential", async () => {
@@ -328,6 +1376,73 @@ test("app relay aborts its upstream request when the downstream closes", async (
     fixture.config.stop();
   }
 });
+
+class RecordingBrowserEgressRegistry extends HostedBrowserEgressRegistry {
+  readonly closed: Array<{ sessionId: string; generation: number }> = [];
+  throwOnClose = false;
+
+  constructor() {
+    super({
+      gatewayMachineId: "gateway-machine-test",
+      appName: "kestrel-env-test",
+    });
+  }
+
+  override require(input: {
+    sessionId: string;
+    generation: number;
+    authority: HostedBrowserGatewayAuthorityV1;
+  }): HostedBrowserGatewayProxyBindingV1 {
+    return {
+      version: "hosted_browser_gateway_proxy_binding_v1",
+      proxyServer: "http://gateway-machine-test.vm.kestrel-env-test.internal:43109",
+      username: "test-user",
+      password: "test-password",
+      threadId: "thread-test",
+      sessionId: input.sessionId,
+      generation: input.generation,
+      effectiveAllowlistRevision: input.authority.effectiveAllowlistRevision,
+      chromiumFlags: [],
+    };
+  }
+
+  override async closeExact(input: {
+    sessionId: string;
+    generation: number;
+  }): Promise<boolean> {
+    this.closed.push(structuredClone(input));
+    if (this.throwOnClose) throw new Error("injected exact cleanup failure");
+    return true;
+  }
+}
+
+class ReplacementAwareBrowserEgressRegistry extends RecordingBrowserEgressRegistry {
+  activeGeneration: number;
+  readonly #sessionId: string;
+
+  constructor(sessionId: string, generation: number) {
+    super();
+    this.#sessionId = sessionId;
+    this.activeGeneration = generation;
+  }
+
+  replace(generation: number): void {
+    this.activeGeneration = generation;
+  }
+
+  override async closeExact(input: {
+    sessionId: string;
+    generation: number;
+  }): Promise<boolean> {
+    this.closed.push(structuredClone(input));
+    if (
+      input.sessionId !== this.#sessionId ||
+      input.generation !== this.activeGeneration
+    ) return false;
+    this.activeGeneration = 0;
+    return true;
+  }
+}
 
 async function createRelayFixture(
   controlPlaneUrl = "http://127.0.0.1:18081",

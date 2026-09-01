@@ -10,6 +10,15 @@ import type {
   ModelRequest,
 } from "../../src/kestrel/contracts/model-io.js";
 import type { TuiProfile } from "../contracts.js";
+import type { ModelCredentialRouteBindingV2 } from "../../src/kestrel/contracts/model-route.js";
+import type { OpenRouterQualifiedRouteEvidence } from "../../models/openrouter/OpenRouterV2Codec.js";
+import {
+  legacyEffectiveModelContractResolverV1,
+  parseEffectiveModelContractV1,
+  resolveExactModelEndpointV1,
+  type EffectiveModelContractV1,
+} from "../../src/kestrel/effective-model-contract.js";
+import { parseModelRequestV2 } from "../../src/kestrel/contracts/model-registration.js";
 
 /** Versioned runner-to-Kestrel-One credential lease contract. */
 export const GATEWAY_CREDENTIAL_LEASE_VERSION =
@@ -26,6 +35,8 @@ export interface GatewayCredentialReference {
   environmentId: string;
   rawModelId: string;
   provider: "openai" | "openrouter" | "anthropic" | "ollama";
+  routeBinding?: ModelCredentialRouteBindingV2 | undefined;
+  openRouterRouteEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
 }
 
 export interface GatewayCredentialLease {
@@ -35,6 +46,7 @@ export interface GatewayCredentialLease {
   organizationId: string;
   environmentId: string;
   rawModelId: string;
+  routeBinding?: ModelCredentialRouteBindingV2 | undefined;
   provider:
     | "openai"
     | "openrouter"
@@ -223,7 +235,14 @@ export class BrokeredModelGateway implements ModelGateway {
   }) {
     this.reference = input.reference;
     this.cache = input.cache;
-    this.createProvider = input.createProvider ?? createProviderGatewayForLease;
+    this.createProvider =
+      input.createProvider ??
+      ((lease) =>
+        createProviderGatewayForLease(lease, {
+          ...(input.reference.openRouterRouteEvidence === undefined
+            ? {}
+            : { routeEvidence: input.reference.openRouterRouteEvidence }),
+        }));
     this.onEvent = input.onEvent ?? (() => {});
     this.onLease = input.onLease ?? (() => {});
   }
@@ -232,7 +251,23 @@ export class BrokeredModelGateway implements ModelGateway {
     request: ModelRequest,
     options: ModelGatewayCallOptions = {},
   ): Promise<T> {
+    await assertEffectiveContractRouteBinding(
+      this.reference,
+      request,
+      options.effectiveModelContract,
+    );
     const lease = await this.cache.get(this.reference);
+    assertLeaseRouteBinding(this.reference, lease);
+    if (
+      this.reference.routeBinding?.status === "qualified" &&
+      request.model !== undefined &&
+      request.model.trim() !== lease.rawModelId
+    ) {
+      throw new GatewayCredentialBrokerError(
+        "GATEWAY_CREDENTIAL_ROUTE_MISMATCH",
+        "Gateway-managed execution cannot replace its bound model route.",
+      );
+    }
     const governedRequest = { ...request, model: lease.rawModelId };
     try {
       return await this.getProvider(lease).call<T>(governedRequest, options);
@@ -344,6 +379,9 @@ function getDefaultCredentialCache() {
         organizationId: reference.organizationId,
         environmentId: reference.environmentId,
         rawModelId: reference.rawModelId,
+        ...(reference.routeBinding !== undefined
+          ? { routeBinding: reference.routeBinding }
+          : {}),
         provider: reference.provider,
         protocol: reference.provider === "anthropic" ? "anthropic" : "openai",
         baseUrl: `${gatewayUrl}/internal/models/${encodeURIComponent(reference.runId)}`,
@@ -381,6 +419,7 @@ function validateEmbeddedGatewayCredentialLease(
       "The embedded Desktop model credential lease is invalid.",
     );
   }
+  assertLeaseRouteBinding(reference, lease);
   return lease;
 }
 
@@ -408,7 +447,10 @@ function requireSecureGatewayUrl(value: string) {
 
 export function createProviderGatewayForLease(
   lease: GatewayCredentialLease,
-  options: { fetchImpl?: typeof fetch | undefined } = {},
+  options: {
+    fetchImpl?: typeof fetch | undefined;
+    routeEvidence?: OpenRouterQualifiedRouteEvidence | undefined;
+  } = {},
 ): ModelGateway {
   if (lease.protocol === "anthropic") {
     if (!lease.apiKey) {
@@ -429,6 +471,9 @@ export function createProviderGatewayForLease(
     }
     return createOpenRouterModelGatewayFromEnv({
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.routeEvidence === undefined
+        ? {}
+        : { routeEvidence: options.routeEvidence }),
       envConfig: {
         apiKey: lease.apiKey,
         model: lease.rawModelId,
@@ -476,7 +521,131 @@ function isLoopbackHostname(hostname: string) {
 }
 
 function credentialCacheKey(reference: GatewayCredentialReference) {
-  return `${reference.organizationId}\u0000${reference.environmentId}\u0000${reference.runId}\u0000${reference.gatewayId}\u0000${reference.rawModelId}`;
+  return `${reference.organizationId}\u0000${reference.environmentId}\u0000${reference.runId}\u0000${reference.gatewayId}\u0000${reference.rawModelId}\u0000${routeBindingCacheKey(reference.routeBinding)}`;
+}
+
+function assertLeaseRouteBinding(
+  reference: GatewayCredentialReference,
+  lease: GatewayCredentialLease,
+) {
+  if (reference.routeBinding === undefined) return;
+  if (!routeBindingsEqual(reference.routeBinding, lease.routeBinding)) {
+    throw new GatewayCredentialBrokerError(
+      "GATEWAY_CREDENTIAL_ROUTE_MISMATCH",
+      "Gateway credential lease does not match the runtime's bound model route.",
+    );
+  }
+}
+
+async function assertEffectiveContractRouteBinding(
+  reference: GatewayCredentialReference,
+  request: ModelRequest,
+  contract: EffectiveModelContractV1 | undefined,
+) {
+  if (reference.routeBinding === undefined) return;
+  if (contract === undefined) {
+    if (reference.routeBinding.status === "qualified") {
+      throw new GatewayCredentialBrokerError(
+        "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
+        "Gateway-managed execution requires an effective model contract before credential dispatch.",
+      );
+    }
+    await assertLegacyRouteRequest(request);
+    return;
+  }
+  let parsed: EffectiveModelContractV1;
+  try {
+    parsed = parseEffectiveModelContractV1(contract);
+  } catch {
+    throw new GatewayCredentialBrokerError(
+      "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
+      "Gateway-managed execution received an invalid effective model contract.",
+    );
+  }
+  if (reference.routeBinding.status === "legacy_unqualified") {
+    const expected = await assertLegacyRouteRequest(request);
+    if (
+      parsed.status !== "legacy_compatibility" ||
+      parsed.fingerprint !== expected.fingerprint
+    ) {
+      throw new GatewayCredentialBrokerError(
+        "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
+        "Gateway-managed execution cannot apply a qualified contract to a legacy route.",
+      );
+    }
+    return;
+  }
+  if (parsed.status !== "qualified" || request.version !== "model_request_v2") {
+    throw new GatewayCredentialBrokerError(
+      "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
+      "Gateway-managed execution requires a qualified effective model contract.",
+    );
+  }
+  let requestV2;
+  try {
+    requestV2 = parseModelRequestV2(request);
+  } catch {
+    throw new GatewayCredentialBrokerError(
+      "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
+      "Gateway-managed execution received an invalid contract-carrying model request.",
+    );
+  }
+  const binding = reference.routeBinding;
+  if (
+    parsed.providerId !== binding.provider ||
+    parsed.modelId !== binding.rawModelId ||
+    parsed.registrationId !== binding.registrationId ||
+    parsed.registrationRevision !== binding.registrationRevision ||
+    parsed.registrationFingerprint !== binding.registrationFingerprint ||
+    parsed.qualificationRevision !== binding.qualificationRevision ||
+    parsed.apiEndpoint !== binding.apiEndpoint ||
+    parsed.endpointCodec !== binding.endpointCodec ||
+    parsed.endpoint !== resolveExactModelEndpointV1(binding.endpointCodec) ||
+    parsed.routingPolicyFingerprint !== binding.routingPolicyFingerprint ||
+    parsed.runtimeRole !== binding.requiredRole ||
+    parsed.credentialRevision !== binding.credentialRevision ||
+    requestV2.model !== parsed.modelId ||
+    requestV2.requirements.endpoint !== parsed.endpoint ||
+    requestV2.fingerprints.request !== parsed.requestFingerprint ||
+    requestV2.fingerprints.schema !== parsed.schemaHash ||
+    requestV2.fingerprints.toolSurface !== parsed.toolSurfaceHash
+  ) {
+    throw new GatewayCredentialBrokerError(
+      "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
+      "Gateway-managed execution cannot dispatch a request outside its effective model contract.",
+    );
+  }
+}
+
+async function assertLegacyRouteRequest(
+  request: ModelRequest,
+): Promise<EffectiveModelContractV1> {
+  try {
+    const admission = await legacyEffectiveModelContractResolverV1.admit({
+      request,
+    });
+    return admission.contract;
+  } catch {
+    throw new GatewayCredentialBrokerError(
+      "GATEWAY_CREDENTIAL_CONTRACT_MISMATCH",
+      "Gateway-managed legacy routes may dispatch plain-text requests only until exact capabilities are qualified.",
+    );
+  }
+}
+
+function routeBindingsEqual(
+  expected: ModelCredentialRouteBindingV2,
+  actual: ModelCredentialRouteBindingV2 | undefined,
+) {
+  return (
+    actual !== undefined && JSON.stringify(actual) === JSON.stringify(expected)
+  );
+}
+
+function routeBindingCacheKey(
+  binding: ModelCredentialRouteBindingV2 | undefined,
+) {
+  return binding === undefined ? "legacy" : JSON.stringify(binding);
 }
 
 function toSecretFreeProviderError(

@@ -38,6 +38,35 @@ export function resolveKestrelOneAppRequest(
   );
 }
 
+/** Browser private worker instructions may only terminate inside the Fly relay. */
+export function resolveKestrelOneBrowserRequest(
+  context: SharedToolContext,
+  pathname: string,
+): { url: URL; authorization: string; viaRelay: true } {
+  const relayUrl = context.kestrelOne?.appRelayUrl?.trim();
+  const relayToken = context.kestrelOne?.appRelayToken?.trim();
+  const executionRunId = context.kestrelOne?.executionRunId?.trim();
+  if (relayUrl && relayToken && executionRunId) {
+    return {
+      url: new URL(
+        `/internal/apps/${encodeURIComponent(executionRunId)}${normalizePath(pathname)}`,
+        relayUrl,
+      ),
+      authorization: relayToken,
+      viaRelay: true,
+    };
+  }
+  throw createRuntimeFailure(
+    "BROWSER_SERVICE_UNAVAILABLE",
+    "Hosted Browser requires the execution-scoped private App relay.",
+    {
+      subsystem: "browser",
+      classification: "configuration",
+      recoverable: true,
+    },
+  );
+}
+
 export function resolveKestrelOneAppProviderTransport(
   context: SharedToolContext,
 ): { appUrl: string; executionTicket: string } | undefined {

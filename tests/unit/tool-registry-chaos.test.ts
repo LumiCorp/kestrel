@@ -272,6 +272,9 @@ function capability(executionClass: "read_only" | "external_side_effect") {
     costClass: "free" as const,
     executionClass,
     capabilityClasses: ["chaos"],
+    ...(executionClass === "external_side_effect"
+      ? { approvalCapabilities: ["external.confirm" as const] }
+      : {}),
   };
 }
 

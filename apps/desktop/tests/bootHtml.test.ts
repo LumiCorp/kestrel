@@ -74,6 +74,30 @@ test("Desktop creates a visible boot window before runtime startup", async () =>
   assert.doesNotMatch(source, /window\.on\("ready-to-show"/u);
 });
 
+test("Desktop retains the renderer identity before main-window destruction", async () => {
+  const source = await readFile(mainPath, "utf8");
+  const windowStart = source.indexOf("const window = new BrowserWindow");
+  const windowEnd = source.indexOf("mainWindow = window", windowStart);
+  const windowLifecycle = source.slice(windowStart, windowEnd);
+
+  assert.match(
+    windowLifecycle,
+    /const rendererWebContentsId = window\.webContents\.id;/u,
+  );
+  assert.match(
+    windowLifecycle,
+    /window\.on\("closed", \(\) => \{[\s\S]*"window_closed",\s*rendererWebContentsId,/u,
+  );
+  assert.doesNotMatch(
+    windowLifecycle,
+    /window\.on\("closed", \(\) => \{[\s\S]*"window_closed",\s*window\.webContents\.id,/u,
+  );
+  assert.match(
+    windowLifecycle,
+    /"render-process-gone"[\s\S]*"renderer_crashed",\s*rendererWebContentsId,/u,
+  );
+});
+
 test("Desktop main-window navigation and external-open IPC are defense-in-depth guarded", async () => {
   const source = await readFile(mainPath, "utf8");
   const windowStart = source.indexOf("const window = new BrowserWindow");

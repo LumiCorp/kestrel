@@ -11,6 +11,7 @@ import {
   rankOperatorJourneys,
 } from "../../src/operatorShell.js";
 import { describeResolvedWorkspace } from "../workspace/WorkspaceResolver.js";
+import type { TuiEnvironmentPresetId } from "../session/TuiExecutionEnvironment.js";
 
 const SESSION_PALETTE_ACTION_LIMIT = 12;
 
@@ -24,6 +25,8 @@ export interface PaletteCommand {
 
 export interface PaletteStartTaskJourney {
   availableWorkspaces: ResolvedWorkspace[];
+  workspace?: ResolvedWorkspace | undefined;
+  environmentPresetId?: TuiEnvironmentPresetId | undefined;
 }
 
 export interface PaletteControllerContext {
@@ -61,6 +64,11 @@ export class PaletteController {
   }
 
   getActions(state = this.context.getState()): PaletteCommand[] {
+    if (state.paletteContext === "environment") {
+      return buildEnvironmentPaletteActions(
+        this.context.getActiveWorkspace() !== undefined,
+      );
+    }
     if (state.paletteContext !== undefined) {
       return this.buildStartTaskPaletteActions(state.paletteContext);
     }
@@ -163,6 +171,23 @@ export class PaletteController {
         ...presetActions,
         { id: "start.cancel", label: "Cancel start task", detail: "Exit the launcher" },
       ];
+    }
+    if (context === "start-environment") {
+      const actions: PaletteCommand[] = [];
+      if (journey.workspace !== undefined) {
+        actions.push({
+          id: "start.environment.developer",
+          label: `${journey.environmentPresetId === "cli_dev_local" ? "Environment (default)" : "Environment"}: Developer workspace`,
+          detail: `Use tools installed in ${journey.workspace.rootPath}, subject to execution policy`,
+        });
+      }
+      actions.push({
+        id: "start.environment.safe",
+        label: `${journey.environmentPresetId === "cli_safe_local" ? "Environment (default)" : "Environment"}: Safe sandbox`,
+        detail: "Run isolated snippets outside the project workspace; project install, build, and validation are unavailable",
+      });
+      actions.push({ id: "start.cancel", label: "Cancel start task", detail: "Exit the launcher" });
+      return actions;
     }
     const workspaceActions = journey.availableWorkspaces.map((workspace, index) => ({
       id: `start.workspace.idx-${index}`,
@@ -300,6 +325,11 @@ export function buildPaletteActions(
       detail: "Show shared runner, wait, and MCP state",
       command: "/status",
     },
+    ...buildEnvironmentPaletteActions(
+      state.activeSession.workspaceBinding === "active"
+        || state.activeSession.workspaceRoot !== undefined
+        || state.activeSession.workspaceId !== undefined,
+    ),
   ];
   const recentJourneyActions: PaletteCommand[] = sessionJourneys
     .filter((session) => session.isActive === false)
@@ -338,5 +368,24 @@ export function buildPaletteActions(
         ]
       : []),
     ...staticCommands,
+  ];
+}
+
+function buildEnvironmentPaletteActions(hasWorkspace: boolean): PaletteCommand[] {
+  return [
+    ...(hasWorkspace
+      ? [{
+          id: "environment.developer",
+          label: "Environment: Developer workspace",
+          detail: "Use tools installed in the selected workspace, subject to execution policy",
+          command: "/environment developer",
+        }]
+      : []),
+    {
+      id: "environment.safe",
+      label: "Environment: Safe sandbox",
+      detail: "Run isolated snippets outside the project workspace",
+      command: "/environment safe",
+    },
   ];
 }

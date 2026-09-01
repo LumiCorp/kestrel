@@ -92,13 +92,19 @@ export type ModelProviderId =
   | "ollama"
   | "lmstudio";
 export type StoreDriverId = "auto" | "postgres" | "sqlite";
-export type ApprovalPolicyPackId = "dev" | "isolated_code" | "ci_bot" | "production";
+export type ApprovalPolicyPackId =
+  | "dev"
+  | "isolated_code"
+  | "ci_bot"
+  | "hosted_workspace"
+  | "production";
 export interface AgentStageConfig {
   modelByStage?: Record<string, string> | undefined;
 }
 
 export type DelegationTaskStatus =
   | "PENDING"
+  | "RECOVERING"
   | "RUNNING"
   | "WAITING"
   | "COMPLETED"
@@ -140,6 +146,8 @@ export interface WorkspacesFile {
 export interface WorkspaceRuntimeContext {
   workspaceId: string;
   workspaceRoot: string;
+  /** Trusted product Project identity when the workspace is Project-bound. */
+  projectId?: string | undefined;
   launchCwd?: string | undefined;
   appRoot: string;
   packageManager?: string | undefined;
@@ -150,7 +158,8 @@ export interface WorkspaceRuntimeContext {
   sourceWorkspaceRoot?: string | undefined;
   managedWorktreeBaseRef?: string | undefined;
   managedWorktreeParentThreadId?: string | undefined;
-  managedWorktreeScope?: "thread" | undefined;
+  managedWorktreeScope?: "thread" | "workflow_run" | undefined;
+  managedWorktreeScopeId?: string | undefined;
   managedWorktreeSetup?: ManagedTaskWorktreeSetupSpec | undefined;
 }
 
@@ -164,6 +173,7 @@ export interface ResolvedWorkspace {
 export interface DelegationPolicyConfig {
   /** Gates model-visible collaborator dialogs; legacy spawn/delegate tools remain internal. */
   allowAgentSpawn?: boolean | undefined;
+  /** @deprecated Retained for ProfilesFileV10 compatibility; child-session breadth is unlimited. */
   maxConcurrentChildSessions?: number | undefined;
   maxDepth?: number | undefined;
 }
@@ -259,6 +269,9 @@ export interface TuiProfile {
         string,
         import("../src/mode/contracts.js").ToolApprovalPolicyEvidenceV1
       >
+    | undefined;
+  rememberedToolApprovalEvidence?:
+    | import("@kestrel-agents/protocol").RememberedToolApprovalEvidenceV1[]
     | undefined;
   mcpServers?: McpServerConfig[] | undefined;
   ociMcpEgressBindings?: ResolvedOciMcpEgressBindingV1[] | undefined;
@@ -402,6 +415,18 @@ export interface TuiSessionMeta {
   actSubmode?: ActSubmode | undefined;
   executionPolicy?: ExecutionPolicyOverride | undefined;
   started: boolean;
+  pendingRunId?: string | undefined;
+  pendingRunRequestId?: string | undefined;
+  pendingRunMessageId?: string | undefined;
+  pendingRunThreadId?: string | undefined;
+  pendingQueueSubmissions?: TuiPendingQueueSubmission[] | undefined;
+  queuedRunReservations?: TuiQueuedRunReservation[] | undefined;
+  terminalQueuedRuns?: TuiTerminalQueuedRun[] | undefined;
+  acceptedRunId?: string | undefined;
+  acceptedRunMessageId?: string | undefined;
+  acceptedRunThreadId?: string | undefined;
+  /** Exact queued predecessor: null is the durable root; undefined is legacy or non-queued. */
+  acceptedRunPredecessorId?: string | null | undefined;
   lastRunStatus?: NormalizedOutput["status"] | undefined;
   pendingWaitFor?: Exclude<NormalizedOutput["waitFor"], undefined> | undefined;
   lastMessagePreview?: string | undefined;
@@ -417,8 +442,27 @@ export interface TuiSessionMeta {
   terminalMessageCursor?: string | undefined;
 }
 
+export interface TuiQueuedRunReservation {
+  runId: string;
+  messageId: string;
+  threadId: string;
+  predecessorRunId?: string | undefined;
+}
+
+export interface TuiTerminalQueuedRun extends TuiQueuedRunReservation {
+  status: "COMPLETED" | "FAILED";
+}
+
+export interface TuiPendingQueueSubmission {
+  runId: string;
+  messageId: string;
+  threadId: string;
+  predecessorRunId?: string | undefined;
+  indeterminate?: boolean | undefined;
+}
+
 export interface SessionsFile {
-  version?: 2 | 3 | 4 | 5;
+  version?: 2 | 3 | 4 | 5 | 6;
   activeSessionName?: string | undefined;
   sessions: TuiSessionMeta[];
 }
@@ -581,6 +625,7 @@ export type ParsedInput =
         | "new"
         | "sessions"
         | "workspace"
+        | "environment"
         | "tasks"
         | "switch"
         | "resume"

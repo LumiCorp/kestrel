@@ -24,7 +24,7 @@ export const codeExecuteTool: SharedToolModule = {
   definition: {
     name: "code.execute",
     description:
-      "Execute JavaScript, Python, or Bash code in an isolated Docker sandbox and return stdout/stderr, status, and artifacts.",
+      "Execute JavaScript, Python, or Bash code with declared inputs in a fresh isolated scratch container, not inside the project workspace. Return stdout/stderr, status, and artifacts. This tool cannot establish which tools or dependencies are installed in the host or hosted developer workspace; use the workspace execution tool when project inspection, installation, build, test, or validation is required.",
     inputSchema: {
       type: "object",
       additionalProperties: false,

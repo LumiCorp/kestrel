@@ -9,11 +9,12 @@ test("desktop project threads use the registered project as their workspace and 
   const projectPath = path.join(path.sep, "workspace", "project-a");
   const workspace = resolveDesktopThreadWorkspace({
     projectPath,
-    projects: [{ path: projectPath, label: "Project A" }],
+    projects: [{ id: "project-a", path: projectPath, label: "Project A" }],
     defaultKestrelRoot: path.join(path.sep, "kestrel"),
   });
 
   assert.equal(workspace.workspaceRoot, projectPath);
+  assert.equal(workspace.projectId, "project-a");
   assert.equal(workspace.launchCwd, projectPath);
   assert.equal(workspace.appRoot, ".");
   assert.equal(workspace.label, "Project A");

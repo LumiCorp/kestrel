@@ -9,9 +9,20 @@ import type { LocalCoreRuntimeEnvironmentResolver } from "./runtimeEnvironment.j
 import { DesktopAttachmentStore } from "./desktopAttachments.js";
 import type { LocalCoreCredentialStore } from "./credentialStore.js";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { createLocalCoreMcpOAuthProviderFactory } from "./mcpOAuthProvider.js";
 import { LocalCoreMicrosoft365Service } from "./microsoft365Service.js";
 import { LocalCoreGoogleWorkspaceService } from "./googleWorkspaceService.js";
+import {
+  assertLocalCoreGmailRestrictedDataAdmissions,
+  createLocalCoreModelReadiness,
+} from "./modelReadiness.js";
+import type { LocalCoreStoreHandle } from "./store.js";
+import {
+  createDevShellStoreBindingRevision,
+  type DevShellStoreBinding,
+} from "../devshell/storeBinding.js";
+import type { BrowserServicePort } from "../browser/contracts.js";
 
 const sandboxCredentialRevisions = new WeakMap<LocalCoreCredentialStore, { secret: string; revision: string }>();
 
@@ -24,6 +35,8 @@ export interface LocalCoreRunnerRuntimeFactoryOptions {
   homePath?: string | undefined;
   credentialStore?: LocalCoreCredentialStore | undefined;
   sandboxCapabilityFetchImpl?: typeof fetch | undefined;
+  devShellStoreBinding?: DevShellStoreBinding | undefined;
+  browserService?: BrowserServicePort | undefined;
 }
 
 /**
@@ -40,6 +53,12 @@ export function createLocalCoreRunnerRuntimeFactory(
     enableUserTerminals: true,
     enableWorkspaceChanges: true,
     enableManagedWorktrees: true,
+    ...(options.devShellStoreBinding !== undefined
+      ? { devShellStoreBinding: options.devShellStoreBinding }
+      : {}),
+    ...(options.browserService === undefined
+      ? {}
+      : { browserService: options.browserService }),
     ...(options.homePath !== undefined
       ? {
           managedWorktreeHomeDir: options.homePath,
@@ -60,6 +79,8 @@ export function createLocalCoreRunnerRuntimeFactory(
               }),
               options.credentialStore,
               options.sandboxCapabilityFetchImpl,
+              profile.agentStageConfig?.modelByStage,
+              options.homePath,
             ),
         }
       : {}),
@@ -83,10 +104,28 @@ export function createLocalCoreRunnerRuntimeFactory(
     });
 }
 
+export function createLocalCoreDevShellStoreBinding(
+  storeHandle: LocalCoreStoreHandle,
+  revision = createDevShellStoreBindingRevision(),
+): DevShellStoreBinding {
+  if (storeHandle.mode === "pglite") {
+    return { driver: "sqlite", revision };
+  }
+  const databaseUrl = storeHandle.databaseUrl?.trim();
+  if (databaseUrl === undefined || databaseUrl.length === 0) {
+    throw new Error(
+      "External Local Core store handle is missing its configured database URL.",
+    );
+  }
+  return { driver: "postgres", revision, databaseUrl };
+}
+
 export function resolveLocalCoreSandboxCapabilityEnvironment(
   snapshot: ReturnType<LocalCoreRuntimeEnvironmentResolver["resolve"]>,
   credentialStore?: LocalCoreCredentialStore | undefined,
   sandboxCapabilityFetchImpl?: typeof fetch | undefined,
+  modelByStage?: Readonly<Record<string, string>> | undefined,
+  homePath?: string | undefined,
 ): KestrelRuntimeEnvironment {
   const tenantId = snapshot.runtimeEnv.KESTREL_TENANT_ID?.trim();
   const environmentId = snapshot.runtimeEnv.KESTREL_ENVIRONMENT_ID?.trim();
@@ -133,12 +172,71 @@ export function resolveLocalCoreSandboxCapabilityEnvironment(
                 }),
                 googleWorkspaceService: new LocalCoreGoogleWorkspaceService({
                   credentialStore,
+                  ...(homePath === undefined
+                    ? {}
+                    : {
+                        importGmailAttachment: async (input) => {
+                          const attachment = await new DesktopAttachmentStore(
+                            homePath,
+                          ).import(input);
+                          return {
+                            fileId: attachment.fileId,
+                            filename: attachment.filename,
+                            sizeBytes: attachment.sizeBytes,
+                            status: attachment.lifecycleState,
+                          };
+                        },
+                        resolveGmailAttachments: async (input) => {
+                          const attachments = await new DesktopAttachmentStore(
+                            homePath,
+                          ).resolve(input.threadId, input.fileIds);
+                          return await Promise.all(attachments.map(async (attachment) => ({
+                            fileId: attachment.fileId ?? attachment.attachmentId,
+                            filename: attachment.filename,
+                            mediaType: attachment.mimeType,
+                            sizeBytes: attachment.sizeBytes,
+                            sha256: attachment.sha256,
+                            ...(input.includeBytes
+                              ? { bytes: await readFile(requireAttachmentPath(attachment.path)) }
+                              : {}),
+                          })));
+                        },
+                      }),
+                  assertGmailRestrictedDataAdmission: async () => {
+                    if (snapshot.runtimeConfiguration === undefined) {
+                      throw new Error("Desktop Gmail restricted-data admission is unavailable.");
+                    }
+                    const modelRoutes = new Set([
+                      snapshot.model,
+                      ...Object.values(
+                        snapshot.runtimeConfiguration.modelPolicy.modelByStage,
+                      ),
+                      ...Object.values(modelByStage ?? {}),
+                    ]);
+                    assertLocalCoreGmailRestrictedDataAdmissions({
+                      readinesses: [...modelRoutes].map((model) =>
+                        createLocalCoreModelReadiness({
+                          runtimeConfiguration: snapshot.runtimeConfiguration!,
+                          profile: {
+                            modelProvider: snapshot.modelProvider,
+                            model,
+                          },
+                        }),
+                      ),
+                      runtimeConfiguration: snapshot.runtimeConfiguration,
+                    });
+                  },
                 }),
               }
             : {}),
         }
       : {}),
   };
+}
+
+function requireAttachmentPath(path: string | undefined) {
+  if (!path) throw new Error("Desktop Gmail attachment content is unavailable.");
+  return path;
 }
 
 async function resolveLocalCredentialRevision(

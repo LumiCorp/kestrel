@@ -309,12 +309,12 @@ test("atomic suspension projects every canonical wait kind without a running lea
         resumeStepAgent: "agent.loop",
         resumeToken: `token-${kind}`,
         metadata: { kind },
-        ...(kind === "approval" || kind === "user"
+        ...(kind === "user"
           ? {
               interaction: {
                 version: "v1",
                 requestId: `request-${kind}`,
-                kind: kind === "approval" ? "approval" : "user_input",
+                kind: "user_input",
                 eventType: `${kind}.ready`,
                 prompt: `Resolve ${kind}`,
               },

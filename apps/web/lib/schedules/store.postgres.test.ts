@@ -1,9 +1,107 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import postgres from "postgres";
+import { createModelRegistrationV2 } from "../../../../src/kestrel/contracts/model-registration";
 import { withGatewayModelEconomicsProfile } from "@/lib/ai/model-economics-profile";
+import {
+  createHostedModelQualificationProjection,
+  createHostedModelRegistration,
+  withHostedModelRegistration,
+} from "@/lib/ai/hosted-model-registration";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
+
+function qualifiedOpenRouterModelMetadata(input: {
+  modelId: string;
+  metadata: Record<string, unknown>;
+}) {
+  const pending = createHostedModelRegistration({
+    registrationId: `schedule-registration:${input.modelId}`,
+    revision: "schedule-registration-v1",
+    observedAt: "2026-08-13T16:30:00.000Z",
+    modelId: input.modelId,
+    credentialRevision: "1",
+    providerConfiguration: {
+      version: "provider_runtime_configuration_v1",
+      providerId: "openrouter",
+      protocol: "openrouter",
+      authentication: {
+        mode: "required",
+        credentialReference: { source: "gateway", id: "provider.openrouter.default" },
+      },
+      endpoint: "https://openrouter.ai/api/v1",
+      timeoutMs: 15_000,
+      allowedHeaders: [],
+      dataHandling: "provider_managed",
+    },
+    providerEvidence: {
+      provider: "openrouter",
+      details: {
+        id: input.modelId,
+        supported_parameters: [
+          "response_format",
+          "structured_outputs",
+          "tools",
+          "tool_choice",
+          "strict_tool_inputs",
+        ],
+        endpoints: [{
+          id: "openrouter",
+          supported_parameters: [
+            "response_format",
+            "structured_outputs",
+            "tools",
+            "tool_choice",
+            "strict_tool_inputs",
+          ],
+        }],
+      },
+    },
+  });
+  const { fingerprint: _fingerprint, ...authoring } = pending.registration;
+  const evidence = {
+    source: "qualification" as const,
+    observedRevision: authoring.revision,
+    observedAt: "2026-08-13T16:31:00.000Z",
+    adapterRevision: authoring.adapterRevision,
+    credentialRevision: "1",
+    qualificationRevision: "hosted-agent-loop-v1",
+    retainedPayloadHash: `sha256:${"a".repeat(64)}`,
+  };
+  const qualified = <T extends { evidence: readonly unknown[] }>(claim: T) => ({
+    ...claim,
+    state: "qualified" as const,
+    evidence: [...claim.evidence, evidence],
+  });
+  const registration = createModelRegistrationV2({
+    ...authoring,
+    qualification: {
+      state: "qualified",
+      revision: "hosted-agent-loop-v1",
+      checkedAt: "2026-08-13T16:31:00.000Z",
+      probeHash: `sha256:${"b".repeat(64)}`,
+    },
+    capabilities: {
+      ...authoring.capabilities,
+      providerStrictSchema: qualified(authoring.capabilities.providerStrictSchema),
+      nativeTools: qualified(authoring.capabilities.nativeTools),
+      requiredToolChoice: qualified(authoring.capabilities.requiredToolChoice),
+      strictToolInputs: qualified(authoring.capabilities.strictToolInputs),
+    },
+  });
+  return withHostedModelRegistration({
+    metadata: input.metadata,
+    registration,
+    evidence: pending.evidence,
+    qualification: createHostedModelQualificationProjection({
+      registration,
+      credentialRevision: "1",
+      state: "qualified",
+      checkedAt: "2026-08-13T16:31:00.000Z",
+      probeRevision: "hosted-agent-loop-v1",
+    }),
+  });
+}
 
 test("Project prompt schedules preserve authority, occurrence, and materialization contracts", async (context) => {
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
@@ -60,6 +158,14 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
   });
   assert.ok(modelMetadata);
   assert.ok(scopedModelMetadata);
+  const qualifiedModelMetadata = qualifiedOpenRouterModelMetadata({
+    modelId: "test-schedule-model",
+    metadata: modelMetadata,
+  });
+  const qualifiedScopedModelMetadata = qualifiedOpenRouterModelMetadata({
+    modelId: "environment-only-schedule-model",
+    metadata: scopedModelMetadata,
+  });
 
   context.after(async () => {
     await sql`DELETE FROM "organization" WHERE "id" = ${ids.organization}`;
@@ -152,15 +258,16 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     `;
     await transaction`
       INSERT INTO "ai_gateways" (
-        "id", "organization_id", "environment_id", "provider", "display_name"
+        "id", "organization_id", "environment_id", "provider", "display_name",
+        "api_key", "credential_status", "credential_revision", "credential_validated_at"
       ) VALUES
         (
           ${ids.gateway}, ${ids.organization}, NULL,
-          'openrouter', 'Schedule Gateway'
+          'openrouter', 'Schedule Gateway', 'encrypted-test-key', 'ready', 1, ${now}
         ),
         (
           ${ids.scopedGateway}, ${ids.organization}, ${ids.environment},
-          'openrouter', 'Environment-scoped Schedule Gateway'
+          'openrouter', 'Environment-scoped Schedule Gateway', 'encrypted-test-key', 'ready', 1, ${now}
         )
     `;
     await transaction`
@@ -171,12 +278,12 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
         (
           ${ids.model}, ${ids.organization}, ${ids.gateway},
           'test-schedule-model', 'language', true, true,
-          ${transaction.json(JSON.parse(JSON.stringify(modelMetadata)))}
+          ${transaction.json(JSON.parse(JSON.stringify(qualifiedModelMetadata)))}
         ),
         (
           ${ids.scopedModel}, ${ids.organization}, ${ids.scopedGateway},
           'environment-only-schedule-model', 'language', true, false,
-          ${transaction.json(JSON.parse(JSON.stringify(scopedModelMetadata)))}
+          ${transaction.json(JSON.parse(JSON.stringify(qualifiedScopedModelMetadata)))}
         )
     `;
   });

@@ -1,31 +1,23 @@
 import "server-only";
 
+import {
+  isRememberApprovalEligibleV1,
+  resolveToolApprovalDispositionV1,
+} from "@kestrel-agents/protocol";
+
 import { resolveKestrelOneToolCapability } from "@/lib/agent/kestrel-tool-profile";
-import { projectRoleAllows } from "@/lib/projects/access";
-import { getThreadAccessForUser } from "@/lib/threads/store";
-import { listThreadInteractionsForUser } from "@/lib/turns/store";
 import type { RuntimeApprovalPolicyView } from "@/lib/turns/client-contract";
+import { knowledgeDb } from "@/lib/knowledge/db";
 import { listProjectAppConfigurations } from "./project-service";
 
 type ApprovalInteraction = {
+  id: string;
   requestId: string;
   turnId?: string | null | undefined;
   source: string;
   kind: string;
   status: string;
   requestEnvelope: Record<string, unknown>;
-};
-
-export type RuntimeApprovalReturnContext = {
-  capability: string;
-  threadId: string;
-  turnId: string;
-  requestId: string;
-  projectId: string;
-  app: string;
-  reasonCode: RuntimeApprovalPolicyView["reasonCode"];
-  projectApprovalMode: "auto" | "ask" | "deny";
-  canEditProject: boolean;
 };
 
 export async function resolveRuntimeApprovalPolicies(input: {
@@ -53,7 +45,14 @@ export async function resolveRuntimeApprovalPolicies(input: {
     const reasonCode = readApprovalReasonCode(policy?.reasonCode);
     return binding === null || reasonCode === undefined
       ? []
-      : [{ requestId: interaction.requestId, reasonCode, ...binding }];
+      : [{
+          interactionId: interaction.id,
+          requestId: interaction.requestId,
+          reasonCode,
+          presentedRememberApprovalEligible:
+            policy?.rememberApprovalEligible === true,
+          ...binding,
+        }];
   });
   if (bindings.length === 0) {
     return new Map<string, RuntimeApprovalPolicyView>();
@@ -71,32 +70,81 @@ export async function resolveRuntimeApprovalPolicies(input: {
     ]),
   );
   const policies = new Map<string, RuntimeApprovalPolicyView>();
+  const hostedAgentId =
+    process.env.KESTREL_ONE_AGENT_ID?.trim() || "kestrel-one";
   for (const binding of bindings) {
     const configuration = configurationsByApp.get(binding.appKey);
     const capability = configuration?.capabilities.find(
       (candidate) => candidate.key === binding.capabilityKey,
     );
     if (!(configuration && capability)) continue;
+    const [providerApproval, subjectRestrictions] = await Promise.all([
+      knowledgeDb.query.appOperationApprovals.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.organizationId, input.organizationId),
+            eq(table.threadId, input.threadId),
+            eq(table.interactionId, binding.interactionId),
+          ),
+        columns: {
+          connectionId: true,
+          resourceId: true,
+          resourceType: true,
+        },
+      }),
+      knowledgeDb.query.environmentCapabilitySubjectRestrictions.findMany({
+          where: (table, { and, eq, isNull, or }) =>
+            and(
+              eq(table.organizationId, input.organizationId),
+              eq(table.environmentId, configuration.environmentId),
+              eq(table.providerKey, binding.appKey),
+              eq(table.capabilityKey, binding.capabilityKey),
+              isNull(table.resourceId),
+              or(
+                and(
+                  eq(table.subjectType, "actor"),
+                  eq(table.subjectId, input.userId),
+                ),
+                and(
+                  eq(table.subjectType, "agent"),
+                  eq(table.subjectId, hostedAgentId),
+                ),
+              ),
+            ),
+        }),
+    ]);
+    const approvalResource = providerApproval
+      ? await knowledgeDb.query.appConnectionResources.findFirst({
+            where: (table, { and, eq }) =>
+              and(
+                eq(table.id, providerApproval.resourceId),
+                eq(table.connectionId, providerApproval.connectionId),
+                eq(table.resourceType, providerApproval.resourceType),
+                eq(table.enabled, true),
+              ),
+            columns: { id: true },
+          })
+      : undefined;
+    const subjectApprovalMode = subjectRestrictions.some(
+      (restriction) => !restriction.enabled || restriction.approvalMode === "deny",
+    )
+      ? "deny"
+      : subjectRestrictions.some(
+            (restriction) => restriction.approvalMode === "ask",
+          )
+        ? "ask"
+        : null;
+    const currentDisposition = resolveToolApprovalDispositionV1({
+      environment: capability.environmentApprovalMode,
+      project: capability.approvalMode,
+      ...(subjectApprovalMode === null ? {} : { subject: subjectApprovalMode }),
+      minimum: capability.minimumApprovalMode,
+      authority: {
+        kind: "hosted_app_policy",
+        revision: "web-current-app-policy:v1",
+      },
+    });
 
-    const alwaysApprovalAction = resolveAlwaysApprovalAction({
-      environmentEnabled: capability.environmentEnabled,
-      environmentApprovalMode: capability.environmentApprovalMode,
-      projectEnabled: configuration.enabled,
-      minimumApprovalMode: capability.minimumApprovalMode,
-      reasonCode: binding.reasonCode,
-    });
-    const interaction = input.interactions.find(
-      (candidate) => candidate.requestId === binding.requestId,
-    );
-    const turnId = interaction?.turnId ?? undefined;
-    const query = new URLSearchParams({
-      capability: binding.capabilityKey,
-      threadId: input.threadId,
-      requestId: binding.requestId,
-      projectId: input.projectId,
-      app: binding.appKey,
-      ...(turnId === undefined ? {} : { turnId }),
-    });
     policies.set(binding.requestId, {
       projectId: input.projectId,
       environmentId: configuration.environmentId,
@@ -106,95 +154,33 @@ export async function resolveRuntimeApprovalPolicies(input: {
       environmentApprovalMode: capability.environmentApprovalMode,
       projectApprovalMode: capability.approvalMode,
       minimumApprovalMode: capability.minimumApprovalMode,
+      subjectApprovalMode,
+      ...(providerApproval
+        ? { approvalResourceAvailable: Boolean(approvalResource) }
+        : {}),
+      rememberApprovalEligible:
+        binding.presentedRememberApprovalEligible &&
+        isRememberApprovalEligibleV1({
+          disposition: currentDisposition,
+          currentPolicy: {
+            environment: capability.environmentApprovalMode,
+            project: capability.approvalMode,
+            ...(subjectApprovalMode === null
+              ? {}
+              : { subject: subjectApprovalMode }),
+            minimum: capability.minimumApprovalMode,
+          },
+        }) &&
+        (!providerApproval || approvalResource !== undefined),
       reasonCode: binding.reasonCode,
       canEditProject: input.canEditProject,
       approvalRequirementExplanation: approvalRequirementExplanation(
         capability,
         binding.reasonCode,
       ),
-      alwaysApprovalAction,
-      environmentAppsHref: `/organization/environments/${encodeURIComponent(configuration.environmentId)}/apps/${encodeURIComponent(binding.appKey)}?${query.toString()}#capability-${encodeURIComponent(binding.capabilityKey)}`,
     });
   }
   return policies;
-}
-
-export async function validateRuntimeApprovalReturnContext(input: {
-  organizationId: string;
-  environmentId: string;
-  userId: string;
-  capability: string;
-  threadId: string;
-  turnId: string;
-  requestId: string;
-  projectId: string;
-  app: string;
-}): Promise<RuntimeApprovalReturnContext | undefined> {
-  const access = await getThreadAccessForUser(
-    input.threadId,
-    input.userId,
-    input.organizationId,
-  );
-  if (access?.thread.projectId !== input.projectId) return;
-
-  const interactions = await listThreadInteractionsForUser({
-    threadId: input.threadId,
-    organizationId: input.organizationId,
-    userId: input.userId,
-  });
-  const interaction = interactions.find(
-    (candidate) =>
-      candidate.requestId === input.requestId &&
-      candidate.turnId === input.turnId &&
-      candidate.source === "runtime" &&
-      candidate.kind === "approval" &&
-      candidate.status === "pending",
-  );
-  const approval = readRecord(interaction?.requestEnvelope.approval);
-  const toolName = approval?.toolName;
-  const binding =
-    typeof toolName === "string"
-      ? resolveKestrelOneToolCapability(toolName)
-      : null;
-  if (
-    binding?.appKey !== input.app ||
-    binding.capabilityKey !== input.capability
-  ) {
-    return;
-  }
-  const presentation = readRecord(approval?.presentation);
-  const presentationPolicy = readRecord(presentation?.policy);
-  const reasonCode = readApprovalReasonCode(presentationPolicy?.reasonCode);
-  if (reasonCode === undefined) return;
-
-  const configurations = await listProjectAppConfigurations({
-    organizationId: input.organizationId,
-    projectId: input.projectId,
-    userId: input.userId,
-  });
-  const configuration = configurations.find(
-    (candidate) =>
-      candidate.environmentId === input.environmentId &&
-      candidate.app.key === input.app,
-  );
-  const capability = configuration?.capabilities.find(
-    (candidate) => candidate.key === input.capability,
-  );
-  if (!(configuration && capability)) return;
-
-  return {
-    capability: input.capability,
-    threadId: input.threadId,
-    turnId: input.turnId,
-    requestId: input.requestId,
-    projectId: input.projectId,
-    app: input.app,
-    reasonCode,
-    projectApprovalMode: capability.approvalMode,
-    canEditProject:
-      access.projectRole !== null &&
-      projectRoleAllows(access.projectRole, "editor"),
-  };
 }
 
 function approvalRequirementExplanation(
@@ -224,28 +210,6 @@ function approvalRequirementExplanation(
     return "This Project narrows the Environment policy to Ask first.";
   }
   return;
-}
-
-export function resolveAlwaysApprovalAction(input: {
-  environmentEnabled: boolean;
-  environmentApprovalMode: "auto" | "ask" | "deny";
-  projectEnabled: boolean;
-  minimumApprovalMode: "auto" | "ask";
-  reasonCode: RuntimeApprovalPolicyView["reasonCode"];
-}): RuntimeApprovalPolicyView["alwaysApprovalAction"] {
-  if (
-    input.reasonCode === "tool_minimum" ||
-    input.minimumApprovalMode === "ask"
-  ) {
-    return "minimum_ask";
-  }
-  if (
-    input.reasonCode === "runtime_strict" ||
-    input.reasonCode === "subject_restriction"
-  ) {
-    return "unavailable";
-  }
-  return "open_environment_apps";
 }
 
 function readApprovalReasonCode(

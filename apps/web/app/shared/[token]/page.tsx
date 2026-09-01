@@ -9,6 +9,7 @@ import { createMetadata } from "@/lib/metadata";
 import { publicAppUrl } from "@/lib/public-config";
 import { getPublicThreadByShareToken } from "@/lib/threads/store";
 import { projectThreadConversation } from "@/lib/turns/conversation-projector";
+import { withoutWebCollaboratorMessages } from "@/lib/turns/collaborators";
 import type { ChatMessage } from "@/lib/types";
 import { PageContainer } from "@/components/app-page";
 import { convertToUIMessages } from "@/lib/utils";
@@ -45,21 +46,6 @@ function SharedTranscriptMessage({ message }: { message: ChatMessage }) {
                 >
                   {part.filename || "file"}
                 </a>
-              </div>
-            );
-          }
-
-          if (part.type === "data-kestrel-dialog-message") {
-            return (
-              <div className="text-sm" key={`${message.id}-${index}`}>
-                <div className="mb-1 font-medium">
-                  {part.data.sender === "collaborator"
-                    ? part.data.name
-                    : part.data.sender === "kestrel"
-                      ? "Kestrel"
-                      : "System"}
-                </div>
-                <div className="whitespace-pre-wrap">{part.data.text}</div>
               </div>
             );
           }
@@ -103,7 +89,7 @@ export default async function SharedThreadPage(props: SharedThreadPageProps) {
     notFound();
   }
 
-  const messages = convertToUIMessages(thread.messages);
+  const messages = withoutWebCollaboratorMessages(convertToUIMessages(thread.messages));
   const projection = projectThreadConversation({
     messages,
     conversationState: {

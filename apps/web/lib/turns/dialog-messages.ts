@@ -62,6 +62,8 @@ export async function persistRuntimeDialogMessage(input: {
       target: schema.threadMessages.id,
       set: { parts: [part], searchText: input.message.text },
     });
-    await tx.update(schema.threads).set({ updatedAt: sql`GREATEST(${schema.threads.updatedAt}, ${safeCreatedAt})` }).where(eq(schema.threads.id, input.threadId));
+    await tx.update(schema.threads).set({
+      updatedAt: sql`GREATEST(${schema.threads.updatedAt}, ${safeCreatedAt.toISOString()}::timestamptz)`,
+    }).where(eq(schema.threads.id, input.threadId));
   });
 }

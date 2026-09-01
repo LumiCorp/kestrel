@@ -17,7 +17,11 @@ import type {
   RunnerTelemetry,
   RunnerStream,
 } from "@kestrel-agents/sdk";
-import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
+import type {
+  RunnerActorMetadata,
+  RunnerPreparedApprovalCleanupV1,
+  RunnerTurnAttachment,
+} from "@kestrel-agents/protocol";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -58,6 +62,8 @@ export type KestrelOneAgentTurnInput = KestrelAgentTurnInput & {
   signal?: AbortSignal;
   abortBehavior?: "cancel" | "detach" | undefined;
   resumeRequestId?: string | undefined;
+  decision?: "decline" | "approve_once" | "remember_approval" | undefined;
+  decidingActor?: RunnerActorMetadata | undefined;
 };
 
 export type KestrelOneRunnerStreamEvent = RunnerRunStreamEvent;
@@ -141,6 +147,7 @@ export type KestrelOneAgentResponseInput = {
   threadId: string;
   durableTurnId?: string | undefined;
   noninteractive?: boolean | undefined;
+  workflowRunAuthority?: Record<string, unknown> | undefined;
   messages: UIMessage[];
   /** Resolved by the durable worker's web-owned attachment boundary. `null`
    * intentionally skips legacy in-process storage resolution during reattach. */
@@ -163,7 +170,9 @@ export type KestrelOneAgentResponseInput = {
         requestId: string;
         eventType: string;
         message: string;
-        approved?: boolean | undefined;
+        decision?: "decline" | "approve_once" | "remember_approval" | undefined;
+        decidingActor?: RunnerActorMetadata | undefined;
+        preparedApprovalCleanup?: RunnerPreparedApprovalCleanupV1 | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;
       }
@@ -171,6 +180,7 @@ export type KestrelOneAgentResponseInput = {
   modelId?: string;
   interactionMode: KestrelOneInteractionMode;
   runtimeModel?: EnvironmentRuntimeModelSelection;
+  emailAttachmentReadAvailable?: boolean | undefined;
   projectContext?: {
     projectId: string;
     contextRevisionId: string;
@@ -226,7 +236,9 @@ export function createKestrelOneAgentResponseFromAgent(
           requestId: input.approvalDecision.approvalId,
           eventType: "user.approval" as const,
           message: input.approvalDecision.approved ? "approve" : "deny",
-          approved: input.approvalDecision.approved,
+          decision: input.approvalDecision.approved
+            ? ("approve_once" as const)
+            : ("decline" as const),
           ...(input.approvalDecision.reason !== undefined
             ? { reason: input.approvalDecision.reason }
             : {}),
@@ -283,14 +295,29 @@ export function createKestrelOneAgentResponseFromAgent(
               message: latestUserMessage,
               eventType: interactionResponse?.eventType ?? "user.message",
               ...(input.noninteractive === true ? { noninteractive: true } : {}),
+              ...(input.workflowRunAuthority
+                ? { workflowRunAuthority: input.workflowRunAuthority as never }
+                : {}),
               interactionMode: input.interactionMode,
               ...(attachments.length > 0 ? { attachments } : {}),
               ...(fileInventory.length > 0
                 ? { systemInstructions: [formatThreadFileInventory(fileInventory)] }
                 : {}),
               ...(interactionResponse !== undefined
-                ? {
+                  ? {
                     resumeRequestId: interactionResponse.requestId,
+                    ...(interactionResponse.decision !== undefined
+                      ? { decision: interactionResponse.decision }
+                      : {}),
+                    ...(interactionResponse.decidingActor !== undefined
+                      ? { decidingActor: interactionResponse.decidingActor }
+                      : {}),
+                    ...(interactionResponse.preparedApprovalCleanup !== undefined
+                      ? {
+                          preparedApprovalCleanup:
+                            interactionResponse.preparedApprovalCleanup,
+                        }
+                      : {}),
                     ...(interactionResponse.recoveryOptionId !== undefined
                       ? { recoveryOptionId: interactionResponse.recoveryOptionId }
                       : {}),
@@ -324,6 +351,8 @@ export function createKestrelOneAgentResponseFromAgent(
                   capabilities: buildKestrelOneCapabilityDescriptors({
                     request: input.request,
                     threadId: input.threadId,
+                    emailAttachmentReadAvailable:
+                      input.emailAttachmentReadAvailable,
                   }),
                 },
               },
@@ -376,7 +405,7 @@ export function createKestrelOneAgentResponseFromAgent(
 
       const requestedInteractionMode = readRequestedInteractionMode(
         streamResult.finalizedPayload
-      );
+      ) ?? readInteractionModeSwitch(streamResult.interaction?.metadata);
       if (requestedInteractionMode) {
         mirroredWriter.write({
           type: "data-interaction-mode",
@@ -402,7 +431,7 @@ export function createKestrelOneAgentResponseFromAgent(
         assistantMessageId: streamResult.message.id,
         runId: streamResult.message.metadata?.kestrelRunId ?? null,
         selectedInteractionMode: requestedInteractionMode,
-        telemetry: null,
+        telemetry: streamResult.telemetry ?? null,
       });
     },
     onError: (error) => {
@@ -436,7 +465,23 @@ export function readRequestedInteractionMode(
     data?.modeSwitch && typeof data.modeSwitch === "object"
       ? (data.modeSwitch as Record<string, unknown>)
       : null;
-  const mode = modeSwitch?.mode;
+  return readInteractionModeSwitch(modeSwitch);
+}
+
+export function readInteractionModeSwitch(
+  value: unknown
+): KestrelOneInteractionMode | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const nested =
+    record.modeSwitch &&
+    typeof record.modeSwitch === "object" &&
+    !Array.isArray(record.modeSwitch)
+      ? (record.modeSwitch as Record<string, unknown>)
+      : record;
+  const mode = nested.mode;
   return mode === "chat" || mode === "plan" || mode === "build" ? mode : null;
 }
 

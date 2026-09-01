@@ -17,7 +17,11 @@ import {
   type RuntimeEvaluationPolicyV1,
 } from "./evaluation.js";
 import {
+  createLegacyModelCredentialRouteBindingV2,
+  parseModelCredentialReferenceV1,
+  parseModelCredentialRouteBindingV2,
   type ModelCredentialReferenceV1,
+  type ModelCredentialRouteBindingV2,
   type ModelRouteCapabilitiesV1,
 } from "./model-route.js";
 
@@ -65,7 +69,8 @@ export interface KestrelProfileDefinitionV1 {
   delegation: {
     allowAgentSpawn: true;
     allowNestedCollaborators: false;
-    maxConcurrentChildSessions: number;
+    /** @deprecated Compatibility-only; child-session breadth is unlimited. */
+    maxConcurrentChildSessions?: number | undefined;
     maxDepth: number;
   };
 }
@@ -77,6 +82,7 @@ export interface KestrelPinnedModelRouteV1 {
   modelRegistrationRevision: string;
   capabilities: ModelRouteCapabilitiesV1;
   credentialReference?: ModelCredentialReferenceV1 | undefined;
+  routeBinding?: ModelCredentialRouteBindingV2 | undefined;
   pricingRecord?:
     | {
         recordId: string;
@@ -127,7 +133,12 @@ export interface KestrelEnvironmentBindingV1 {
     ociMcpEgressBindings: Array<Record<string, unknown>>;
   };
   approvals: {
-    policyPackId: "dev" | "isolated_code" | "ci_bot" | "production";
+    policyPackId:
+      | "dev"
+      | "isolated_code"
+      | "ci_bot"
+      | "hosted_workspace"
+      | "production";
   };
   storage: {
     driver: "auto" | "postgres" | "sqlite";
@@ -204,7 +215,7 @@ const delegationSchema = z
   .object({
     allowAgentSpawn: z.literal(true),
     allowNestedCollaborators: z.literal(false),
-    maxConcurrentChildSessions: positiveSafeInteger,
+    maxConcurrentChildSessions: positiveSafeInteger.optional(),
     maxDepth: positiveSafeInteger,
   })
   .strict();
@@ -232,6 +243,7 @@ const credentialReferenceSchema = z
     environmentId: nonEmptyString,
     rawModelId: nonEmptyString,
     provider: z.enum(["openrouter", "openai", "anthropic", "ollama"]),
+    routeBinding: z.unknown().optional(),
   })
   .strict();
 
@@ -272,6 +284,7 @@ const modelRouteSchema = z.discriminatedUnion("kind", [
       modelRegistrationRevision: nonEmptyString,
       capabilities: modelCapabilitiesSchema,
       credentialReference: credentialReferenceSchema.optional(),
+      routeBinding: z.unknown().optional(),
       pricingRecord: recordReferenceSchema.optional(),
       calibrationRecord: recordReferenceSchema.optional(),
     })
@@ -304,20 +317,33 @@ const codeModeSchema = z
       .object({ persistSummary: z.boolean(), persistArtifacts: z.boolean() })
       .strict(),
     approvalMode: z.literal("auto"),
-    capabilities: z.array(z.object({
-      version: z.literal(1),
-      capabilityId: z.literal("tavily.search.read"),
-      operations: z.tuple([z.literal("search")]),
-      resource: z.literal("https://api.tavily.com/search"),
-      audience: z.object({ tenantId: nonEmptyString, environmentId: nonEmptyString }).strict(),
-      maxRequests: z.literal(1),
-      maxQueryChars: z.number().int().min(1).max(400),
-      maxResults: z.number().int().min(1).max(20),
-      maxResponseBytes: z.number().int().min(256).max(64_000),
-      timeoutMs: z.number().int().min(100).max(30_000),
-      maxExpiryMs: z.number().int().min(100).max(60_000),
-      brokerAuthority: z.object({ authorityId: nonEmptyString, revision: nonEmptyString }).strict(),
-    }).strict()).optional(),
+    capabilities: z
+      .array(
+        z
+          .object({
+            version: z.literal(1),
+            capabilityId: z.literal("tavily.search.read"),
+            operations: z.tuple([z.literal("search")]),
+            resource: z.literal("https://api.tavily.com/search"),
+            audience: z
+              .object({
+                tenantId: nonEmptyString,
+                environmentId: nonEmptyString,
+              })
+              .strict(),
+            maxRequests: z.literal(1),
+            maxQueryChars: z.number().int().min(1).max(400),
+            maxResults: z.number().int().min(1).max(20),
+            maxResponseBytes: z.number().int().min(256).max(64_000),
+            timeoutMs: z.number().int().min(100).max(30_000),
+            maxExpiryMs: z.number().int().min(100).max(60_000),
+            brokerAuthority: z
+              .object({ authorityId: nonEmptyString, revision: nonEmptyString })
+              .strict(),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict();
 
@@ -515,7 +541,15 @@ const environmentBindingSchema = z
       })
       .strict(),
     approvals: z
-      .object({ policyPackId: z.enum(["dev", "isolated_code", "ci_bot", "production"]) })
+      .object({
+        policyPackId: z.enum([
+          "dev",
+          "isolated_code",
+          "ci_bot",
+          "hosted_workspace",
+          "production",
+        ]),
+      })
       .strict(),
     storage: z
       .object({ driver: z.enum(["auto", "postgres", "sqlite"]) })
@@ -616,6 +650,28 @@ export function parseKestrelEnvironmentBindingV1(
 ): KestrelEnvironmentBindingV1 {
   const raw = environmentBindingSchema.parse(value);
   const parsed = raw as KestrelEnvironmentBindingV1;
+  if (
+    parsed.modelRoute.kind === "pinned" &&
+    parsed.modelRoute.routeBinding !== undefined
+  ) {
+    parsed.modelRoute = {
+      ...parsed.modelRoute,
+      routeBinding: parseModelCredentialRouteBindingV2(
+        parsed.modelRoute.routeBinding,
+      ),
+    };
+  }
+  if (
+    parsed.modelRoute.kind === "pinned" &&
+    parsed.modelRoute.credentialReference !== undefined
+  ) {
+    parsed.modelRoute = {
+      ...parsed.modelRoute,
+      credentialReference: parseModelCredentialReferenceV1(
+        parsed.modelRoute.credentialReference,
+      ),
+    };
+  }
   requireUnique(parsed.capabilityPacks, "Kestrel environment capability packs");
   requireUnique(
     parsed.tools.additionalToolNames,
@@ -766,6 +822,16 @@ function assertPinnedRouteOwnership(
       ) {
         throw new Error(
           "Kestrel environment credential reference does not match its tenant binding.",
+        );
+      }
+      if (
+        credential.routeBinding !== undefined &&
+        binding.modelRoute.routeBinding !== undefined &&
+        JSON.stringify(credential.routeBinding) !==
+          JSON.stringify(binding.modelRoute.routeBinding)
+      ) {
+        throw new Error(
+          "Kestrel environment credential reference does not match its bound route.",
         );
       }
     }

@@ -15,6 +15,7 @@ import {
   resolveConversationComposerKeyboardAction,
   resolveConversationComposerPolicy,
   resolveConversationComposerPresentation,
+  groupCollaboratorMessages,
   type ConversationInteraction,
   type ConversationMessageLike,
   type ConversationTurn,
@@ -75,6 +76,40 @@ test("canonical file references carry stable identity instead of bytes or URLs",
   });
   assert.equal("url" in reference, false);
   assert.equal("data" in reference, false);
+});
+
+test("groups private collaborator messages without making them conversation messages", () => {
+  const groups = groupCollaboratorMessages([
+    {
+      messageId: "research-1", dialogId: "research", name: "Research", childSessionId: "child-research",
+      sender: "kestrel", text: "Inspect the failures.", createdAt: "2026-08-26T10:00:00.000Z",
+      dialogStatus: "open", dialogActivity: "working",
+    },
+    {
+      messageId: "review-1", dialogId: "review", name: "Review", childSessionId: "child-review",
+      sender: "collaborator", text: "The API contract is sound.", createdAt: "2026-08-26T10:02:00.000Z",
+      dialogStatus: "closed", dialogActivity: "idle",
+    },
+    {
+      messageId: "research-2", dialogId: "research", name: "Research", childSessionId: "child-research",
+      sender: "collaborator", text: "The request validator is missing.", createdAt: "2026-08-26T10:03:00.000Z",
+      dialogStatus: "open", dialogActivity: "idle",
+    },
+  ]);
+
+  assert.deepEqual(groups.map((group) => [group.dialogId, group.visibleState, group.latestEvent]), [
+    ["research", "ready", "replied"],
+    ["review", "archived", "replied"],
+  ]);
+  assert.deepEqual(groups[0]?.messages.map((message) => message.messageId), ["research-1", "research-2"]);
+});
+
+test("uses a failed latest collaborator record as the visible problem state", () => {
+  const [group] = groupCollaboratorMessages([{
+    messageId: "review-failed", dialogId: "review", name: "Review", childSessionId: "child-review",
+    sender: "system", text: "The reviewer stopped.", createdAt, dialogStatus: "open", dialogActivity: "idle", status: "failed",
+  }]);
+  assert.equal(group?.visibleState, "problem");
 });
 
 test("projects durable turns by identity instead of message position", () => {

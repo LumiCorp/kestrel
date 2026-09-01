@@ -1,5 +1,9 @@
 # Hosted Environment runtime rollout
 
+When the image changes hosted approval protocol production, also follow the
+[hosted approval V4 guided rollout](../../../docs/operations/hosted-approval-v3-rollout-runbook.md).
+Its compatibility and activation images are separate qualified releases.
+
 Workspace Runtime and Environment Router are separate GHCR images operated as
 one manual pair. Kestrel One deploys that pair into tenant Fly Apps through one
 durable Environment operation at a time. Publishing images does not update an

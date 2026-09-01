@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeGoogleCalendarEvent } from "../../../../src/apps/googleWorkspace.js";
 
 const eventTimeResponseSchema = z.object({
   date: z.string().optional(),
@@ -53,17 +54,20 @@ export class GoogleCalendarProviderError extends Error {
   readonly code: string;
   readonly status: number;
   readonly reconnectRequired: boolean;
+  readonly outcomeUnknown: boolean;
 
   constructor(input: {
     code: string;
     status: number;
     reconnectRequired?: boolean;
+    outcomeUnknown?: boolean;
   }) {
     super(input.code);
     this.name = "GoogleCalendarProviderError";
     this.code = input.code;
     this.status = input.status;
     this.reconnectRequired = input.reconnectRequired ?? false;
+    this.outcomeUnknown = input.outcomeUnknown ?? false;
   }
 }
 
@@ -90,6 +94,7 @@ export async function listGoogleCalendarEvents(input: {
   timeMin: string;
   timeMax: string;
   maxResults: number;
+  pageToken?: string;
   fetchImpl?: FetchLike;
 }) {
   const url = new URL(
@@ -100,11 +105,14 @@ export async function listGoogleCalendarEvents(input: {
   url.searchParams.set("maxResults", String(input.maxResults));
   url.searchParams.set("singleEvents", "true");
   url.searchParams.set("orderBy", "startTime");
+  if (input.pageToken !== undefined) {
+    url.searchParams.set("pageToken", input.pageToken);
+  }
   const response = eventListResponseSchema.parse(
     await googleJsonRequest({ ...input, url: url.toString() })
   );
   return {
-    events: response.items.map(normalizeGoogleEvent),
+    events: response.items.map(normalizeGoogleCalendarEvent),
     nextPageToken: response.nextPageToken ?? null,
   };
 }
@@ -117,13 +125,14 @@ export async function createGoogleCalendarEvent(input: {
 }) {
   const url = calendarEventUrl();
   url.searchParams.set("sendUpdates", input.notifyAttendees ? "all" : "none");
-  return normalizeGoogleEvent(
+  return normalizeGoogleCalendarEvent(
     eventResponseSchema.parse(
       await googleJsonRequest({
         ...input,
         method: "POST",
         url: url.toString(),
         body: input.event,
+        externalEffect: true,
       })
     )
   );
@@ -138,13 +147,14 @@ export async function updateGoogleCalendarEvent(input: {
 }) {
   const url = calendarEventUrl(input.eventId);
   url.searchParams.set("sendUpdates", input.notifyAttendees ? "all" : "none");
-  return normalizeGoogleEvent(
+  return normalizeGoogleCalendarEvent(
     eventResponseSchema.parse(
       await googleJsonRequest({
         ...input,
         method: "PATCH",
         url: url.toString(),
         body: input.patch,
+        externalEffect: true,
       })
     )
   );
@@ -162,6 +172,7 @@ export async function deleteGoogleCalendarEvent(input: {
     ...input,
     method: "DELETE",
     url: url.toString(),
+    externalEffect: true,
   });
   return { deleted: true };
 }
@@ -199,18 +210,33 @@ async function googleJsonRequest(input: {
   url: string;
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
+  /** A transport failure here may have occurred after Google received it. */
+  externalEffect?: boolean;
   fetchImpl?: FetchLike;
 }) {
-  const response = await (input.fetchImpl ?? fetch)(input.url, {
-    method: input.method ?? "GET",
-    headers: {
-      authorization: `Bearer ${input.accessToken}`,
+  let response: Response;
+  try {
+    response = await (input.fetchImpl ?? fetch)(input.url, {
+      method: input.method ?? "GET",
+      headers: {
+        authorization: `Bearer ${input.accessToken}`,
+        ...(input.body === undefined
+          ? {}
+          : { "content-type": "application/json" }),
+      },
       ...(input.body === undefined
         ? {}
-        : { "content-type": "application/json" }),
-    },
-    ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
-  });
+        : { body: JSON.stringify(input.body) }),
+    });
+  } catch {
+    throw new GoogleCalendarProviderError({
+      code: input.externalEffect
+        ? "GOOGLE_CALENDAR_OUTCOME_UNKNOWN"
+        : "GOOGLE_CALENDAR_UNAVAILABLE",
+      status: 502,
+      outcomeUnknown: input.externalEffect,
+    });
+  }
   if (!response.ok) {
     throw new GoogleCalendarProviderError({
       code:
@@ -231,8 +257,11 @@ async function googleJsonRequest(input: {
   if (response.status === 204) return {};
   return response.json().catch(() => {
     throw new GoogleCalendarProviderError({
-      code: "GOOGLE_CALENDAR_INVALID_RESPONSE",
+      code: input.externalEffect
+        ? "GOOGLE_CALENDAR_OUTCOME_UNKNOWN"
+        : "GOOGLE_CALENDAR_INVALID_RESPONSE",
       status: 502,
+      outcomeUnknown: input.externalEffect,
     });
   });
 }
@@ -242,23 +271,4 @@ function calendarEventUrl(eventId?: string) {
   return new URL(
     `https://www.googleapis.com/calendar/v3/calendars/primary/events${suffix}`
   );
-}
-
-function normalizeGoogleEvent(event: z.infer<typeof eventResponseSchema>) {
-  return {
-    id: event.id,
-    status: event.status ?? null,
-    url: event.htmlLink ?? null,
-    summary: event.summary ?? "",
-    description: event.description ?? null,
-    location: event.location ?? null,
-    start: event.start,
-    end: event.end,
-    attendees: (event.attendees ?? []).map((attendee) => ({
-      email: attendee.email ?? null,
-      displayName: attendee.displayName ?? null,
-      responseStatus: attendee.responseStatus ?? null,
-    })),
-    updatedAt: event.updated ?? null,
-  };
 }

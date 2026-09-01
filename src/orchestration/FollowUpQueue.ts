@@ -56,6 +56,20 @@ export function editFollowUp(thread: ThreadRecord, followUpId: string, message: 
   });
 }
 
+export function refreshDialogFollowUp(
+  thread: ThreadRecord,
+  followUpId: string,
+  dialog: { status: "open" | "closed"; activity: "idle" | "working" | "waiting" | "interrupted" },
+): ThreadRecord {
+  const queue = readFollowUpQueue(thread);
+  return writeFollowUpQueue(thread, {
+    ...queue,
+    items: queue.items.map((entry) => entry.followUpId === followUpId
+      ? { ...entry, dialogStatus: dialog.status, dialogActivity: dialog.activity }
+      : entry),
+  });
+}
+
 export function pauseFollowUpQueue(thread: ThreadRecord, pauseReason: FollowUpQueuePauseReason): ThreadRecord {
   const queue = readFollowUpQueue(thread);
   return writeFollowUpQueue(thread, {
@@ -109,6 +123,8 @@ function normalizeEntry(value: unknown): FollowUpQueueEntry[] {
     ? entry.actSubmode : undefined;
   const runtimeContext = normalizeRuntimeContext(entry?.runtimeContext);
   const runtimeActor = normalizeRuntimeActor(entry?.runtimeActor);
+  const dialogStatus = entry?.dialogStatus === "open" || entry?.dialogStatus === "closed" ? entry.dialogStatus : undefined;
+  const dialogActivity = entry?.dialogActivity === "idle" || entry?.dialogActivity === "working" || entry?.dialogActivity === "waiting" || entry?.dialogActivity === "interrupted" ? entry.dialogActivity : undefined;
   return [{ followUpId, message, attachmentIds,
     ...(attachments !== undefined ? { attachments } : {}),
     ...(interactionMode !== undefined ? { interactionMode } : {}),
@@ -117,6 +133,8 @@ function normalizeEntry(value: unknown): FollowUpQueueEntry[] {
     ...(nonEmptyString(entry?.dialogId) !== undefined ? { dialogId: nonEmptyString(entry?.dialogId) } : {}),
     ...(nonEmptyString(entry?.dialogName) !== undefined ? { dialogName: nonEmptyString(entry?.dialogName) } : {}),
     ...(nonEmptyString(entry?.sourceMessageId) !== undefined ? { sourceMessageId: nonEmptyString(entry?.sourceMessageId) } : {}),
+    ...(dialogStatus !== undefined ? { dialogStatus } : {}),
+    ...(dialogActivity !== undefined ? { dialogActivity } : {}),
     ...(runtimeContext !== undefined ? { runtimeContext } : {}),
     ...(runtimeActor !== undefined ? { runtimeActor } : {}),
     createdAt, state: entry?.state === "starting" ? "starting" : "queued" }];
@@ -126,6 +144,9 @@ function normalizeRuntimeContext(value: unknown): FollowUpRuntimeContext | undef
   const context = asRecord(value);
   if (context === undefined) return undefined;
   const normalized: FollowUpRuntimeContext = {};
+  if (typeof context.runId === "string" && context.runId.trim().length > 0) {
+    normalized.runId = context.runId;
+  }
   if (typeof context.stepAgent === "string") normalized.stepAgent = context.stepAgent;
   if (context.modeSystemV2Enabled === true || context.modeSystemV2Enabled === false) {
     normalized.modeSystemV2Enabled = context.modeSystemV2Enabled;

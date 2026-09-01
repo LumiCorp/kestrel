@@ -10,6 +10,9 @@ export const runtimeApprovalPolicyViewSchema = z.object({
   environmentApprovalMode: z.enum(["auto", "ask", "deny"]),
   projectApprovalMode: z.enum(["auto", "ask", "deny"]),
   minimumApprovalMode: z.enum(["auto", "ask"]),
+  subjectApprovalMode: z.enum(["ask", "deny"]).nullable().optional(),
+  approvalResourceAvailable: z.boolean().optional(),
+  rememberApprovalEligible: z.boolean().optional(),
   reasonCode: z.enum([
     "tool_minimum",
     "environment_policy",
@@ -19,12 +22,6 @@ export const runtimeApprovalPolicyViewSchema = z.object({
   ]),
   canEditProject: z.boolean(),
   approvalRequirementExplanation: z.string().optional(),
-  alwaysApprovalAction: z.enum([
-    "open_environment_apps",
-    "minimum_ask",
-    "unavailable",
-  ]),
-  environmentAppsHref: z.string(),
 });
 
 export const threadInteractionViewSchema = z.object({
@@ -37,9 +34,9 @@ export const threadInteractionViewSchema = z.object({
   prompt: z.string(),
   status: z.enum(["pending", "processing", "resolved", "cancelled", "failed"]),
   approvalOutcome: z.object({
-    decision: z.enum(["approved", "denied"]),
-    authorizationState: z.enum(["pending", "accepted", "failed"]),
-    effectState: z.enum(["not_started", "started", "unknown"]),
+    decision: z.enum(["approved", "denied", "expired"]),
+    authorizationState: z.enum(["pending", "accepted", "denied", "expired", "failed"]),
+    effectState: z.enum(["not_started", "started", "committed", "unknown"]),
     failureCode: z.string().optional(),
     publicMessage: z.string().optional(),
     retryEligible: z.boolean(),

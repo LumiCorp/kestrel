@@ -23,6 +23,7 @@ import type {
   ToolCatalog,
 } from "./contracts.js";
 import { createRuntimeFailure } from "../src/runtime/RuntimeFailure.js";
+import { parseDurableExternalEffectDispatchV1 } from "../src/io/ToolInvocationSupport.js";
 import { resolveToolPresentationMetadata } from "./toolMetadata.js";
 import { runAgentTool } from "./toolResult.js";
 import { exchangeRateTool } from "./free/exchangeRate.js";
@@ -62,6 +63,8 @@ import { agentSpawnTool } from "./runtime/agentSpawn.js";
 import { dialogOpenTool } from "./runtime/dialogOpen.js";
 import { dialogSendTool } from "./runtime/dialogSend.js";
 import { dialogCloseTool } from "./runtime/dialogClose.js";
+import { dialogReadTool } from "./runtime/dialogRead.js";
+import { dialogListTool } from "./runtime/dialogList.js";
 import { delegateSpawnChildTool } from "./runtime/delegateSpawnChild.js";
 import { delegateListChildrenTool } from "./runtime/delegateListChildren.js";
 import { delegateGetChildResultTool } from "./runtime/delegateGetChildResult.js";
@@ -77,6 +80,7 @@ import { internetSearchTool } from "./internet/search.js";
 import { internetSearchAdvancedTool } from "./internet/searchAdvanced.js";
 import { internetUsageTool } from "./internet/usage.js";
 import { kestrelOneSearchKnowledgeDocumentsTool } from "./kestrelOne/searchKnowledgeDocuments.js";
+import { kestrelOneEmailGetAttachmentTool } from "./kestrelOne/emailGetAttachment.js";
 import {
   kestrelOneGitHubIssueCreateTool,
   kestrelOneGitHubPullRequestCreateTool,
@@ -97,9 +101,18 @@ import {
   kestrelOneGoogleCalendarListEventsTool,
   kestrelOneGoogleCalendarUpdateEventTool,
 } from "./kestrelOne/google-calendar.js";
+import {
+  kestrelOneGmailGetMessageTool,
+  kestrelOneGmailGetThreadTool,
+  kestrelOneGmailImportAttachmentTool,
+  kestrelOneGmailReplyMessageTool,
+  kestrelOneGmailSearchMessagesTool,
+  kestrelOneGmailSendMessageTool,
+} from "./kestrelOne/gmail.js";
 import { kestrelOneEmailSendTool } from "./kestrelOne/email.js";
 import {
   kestrelOneMicrosoft365ListChatsTool,
+  kestrelOneMicrosoft365ListChatMessagesTool,
   kestrelOneMicrosoft365ListEventsTool,
   kestrelOneMicrosoft365ListMailTool,
   kestrelOneMicrosoft365SearchSitesTool,
@@ -113,6 +126,7 @@ import {
 } from "./kestrelOne/vercel.js";
 import {
   microsoft365ListChatsTool,
+  microsoft365ListChatMessagesTool,
   microsoft365ListEventsTool,
   microsoft365ListMailTool,
   microsoft365SearchSitesTool,
@@ -123,8 +137,15 @@ import {
   googleWorkspaceCreateEventTool,
   googleWorkspaceDeleteEventTool,
   googleWorkspaceListEventsTool,
+  googleWorkspaceSearchGmailTool,
+  googleWorkspaceGetGmailMessageTool,
+  googleWorkspaceGetGmailThreadTool,
+  googleWorkspaceImportGmailAttachmentTool,
+  googleWorkspaceSendGmailTool,
+  googleWorkspaceReplyGmailTool,
   googleWorkspaceUpdateEventTool,
 } from "./googleWorkspace/desktop.js";
+import { browserTools } from "./browser/modules.js";
 
 const DEFAULT_MODULES: SharedToolModule[] = [
   weatherCurrentTool,
@@ -174,12 +195,15 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   agentSpawnTool,
   dialogOpenTool,
   dialogSendTool,
+  dialogReadTool,
+  dialogListTool,
   dialogCloseTool,
   delegateSpawnChildTool,
   delegateListChildrenTool,
   delegateGetChildResultTool,
   projectTaskProposeTool,
   kestrelOneSearchKnowledgeDocumentsTool,
+  kestrelOneEmailGetAttachmentTool,
   kestrelOneGitHubRepositoryReadTool,
   kestrelOneGitHubPushAgentBranchTool,
   workspaceFilesShareTool,
@@ -196,26 +220,41 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   kestrelOneGoogleCalendarDeleteEventTool,
   kestrelOneGoogleCalendarListAvailabilitySubjectsTool,
   kestrelOneGoogleCalendarCheckAvailabilityTool,
+  kestrelOneGmailSearchMessagesTool,
+  kestrelOneGmailGetMessageTool,
+  kestrelOneGmailGetThreadTool,
+  kestrelOneGmailImportAttachmentTool,
+  kestrelOneGmailSendMessageTool,
+  kestrelOneGmailReplyMessageTool,
   kestrelOneEmailSendTool,
   kestrelOneMicrosoft365ListMailTool,
   kestrelOneMicrosoft365SendMailTool,
   kestrelOneMicrosoft365ListEventsTool,
   kestrelOneMicrosoft365ListChatsTool,
+  kestrelOneMicrosoft365ListChatMessagesTool,
   kestrelOneMicrosoft365SendChatMessageTool,
   kestrelOneMicrosoft365SearchSitesTool,
   microsoft365ListMailTool,
   microsoft365SendMailTool,
   microsoft365ListEventsTool,
   microsoft365ListChatsTool,
+  microsoft365ListChatMessagesTool,
   microsoft365SendChatMessageTool,
   microsoft365SearchSitesTool,
   googleWorkspaceListEventsTool,
   googleWorkspaceCreateEventTool,
   googleWorkspaceUpdateEventTool,
   googleWorkspaceDeleteEventTool,
+  googleWorkspaceSearchGmailTool,
+  googleWorkspaceGetGmailMessageTool,
+  googleWorkspaceGetGmailThreadTool,
+  googleWorkspaceImportGmailAttachmentTool,
+  googleWorkspaceSendGmailTool,
+  googleWorkspaceReplyGmailTool,
   kestrelOneVercelListProjectsTool,
   kestrelOneVercelListDeploymentsTool,
   kestrelOneVercelDeploymentEventsTool,
+  ...browserTools,
 ];
 
 const BUILT_IN_RESULT_NORMALIZER_ID =
@@ -260,6 +299,11 @@ export function createToolCatalog(
     }
 
     validateToolDefinition(module.definition);
+    if (module.durableExternalEffectDispatch !== undefined) {
+      parseDurableExternalEffectDispatchV1(
+        module.durableExternalEffectDispatch,
+      );
+    }
     const descriptor = createBuiltInToolDescriptor(module.definition);
 
     map.set(module.definition.name, module);
@@ -352,6 +396,9 @@ export function createToolCatalog(
         latencyClass: capability.latencyClass,
         costClass: capability.costClass,
         executionClass: capability.executionClass,
+        ...(capability.inputDependentPreparation === true
+          ? { inputDependentPreparation: true }
+          : {}),
         ...(capability.allowedInteractionModes !== undefined
           ? { allowedInteractionModes: [...capability.allowedInteractionModes] }
           : {}),
@@ -412,6 +459,7 @@ export function createToolCatalog(
   const createRawHandlers = (
     names: string[],
     context: SharedToolContext,
+    prepared?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1 | undefined,
   ): Record<string, import("./contracts.js").SharedToolRawHandler> => {
     const handlers: Record<
       string,
@@ -422,7 +470,7 @@ export function createToolCatalog(
       if (module === undefined) {
         throw createUnknownToolError(name, "handlers");
       }
-      handlers[name] = module.createHandler(context);
+      handlers[name] = module.createHandler(context, prepared);
     }
     return handlers;
   };
@@ -447,6 +495,30 @@ export function createToolCatalog(
     return normalizers;
   };
 
+  const resolveExecutionClass = (name: string, input: Record<string, unknown>) =>
+    map.get(name)?.resolveExecutionClass?.(input);
+  const getDurableExternalEffectDispatch = (name: string) => {
+    const registered = map.get(name)?.durableExternalEffectDispatch;
+    return registered === undefined
+      ? undefined
+      : parseDurableExternalEffectDispatchV1(registered);
+  };
+  const prepareInputAdapter = (
+    name: string,
+    input: Record<string, unknown>,
+    context?: SharedToolContext | undefined,
+  ) => map.get(name)?.prepareInputAdapter?.(input, context);
+  const releasePrepared = (
+    name: string,
+    prepared: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolCallV1,
+    context: SharedToolContext,
+  ) => map.get(name)?.releasePrepared?.(prepared, context);
+  const resolvePolicy = async (
+    name: string,
+    context: SharedToolContext,
+    input: Record<string, unknown>,
+  ) => await map.get(name)?.resolvePolicy?.(context, input);
+
   return {
     list,
     listDescriptors,
@@ -457,6 +529,11 @@ export function createToolCatalog(
     createHandlers,
     createRawHandlers,
     createResultNormalizers,
+    resolveExecutionClass,
+    getDurableExternalEffectDispatch,
+    prepareInputAdapter,
+    releasePrepared,
+    resolvePolicy,
   };
 }
 
@@ -490,7 +567,9 @@ export function createBuiltInToolDescriptor(
     inputSchema: definition.inputSchema,
     runtimeOutput: {
       schema:
-        definition.outputContract === undefined
+        definition.runtimeOutputSchema !== undefined
+          ? definition.runtimeOutputSchema
+          : definition.outputContract === undefined
           ? { ...JSON_VALUE_OUTPUT_SCHEMA_V1 }
           : modelOutputContractToJsonSchema(definition.outputContract),
     },
