@@ -28,6 +28,7 @@ import {
   resolveLocalCoreRuntimeConfigurationPath,
 } from "../src/localCore/runtimeConfiguration.js";
 import { startFakeOpenRouterServer } from "../tests/ops/helpers/fake-open-router.js";
+import { waitForAsyncValue } from "./desktop-smoke-poll.js";
 
 const repoRoot = resolveRepoRoot(process.cwd());
 const expectedDesktopVersion = readDesktopVersion(repoRoot);
@@ -126,20 +127,6 @@ try {
   });
   const window = await electronApp.firstWindow({ timeout: 60_000 });
   await window.waitForLoadState("domcontentloaded");
-  await window.waitForFunction(
-    async () => {
-      if (document.querySelector("#root") !== null) {
-        return true;
-      }
-      const bridge = (globalThis as typeof globalThis & {
-        kestrelDesktop?: { getBootState(): Promise<{ phase?: string | undefined }> };
-      }).kestrelDesktop;
-      const state = await bridge?.getBootState();
-      return state?.phase === "failed";
-    },
-    undefined,
-    { timeout: 60_000 },
-  );
   await window.waitForURL(/\/renderer\/index\.html(?:\?.*)?$/u, { timeout: 60_000 });
   await window.waitForLoadState("domcontentloaded");
   await window.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
@@ -277,14 +264,17 @@ try {
   await window
     .getByRole("textbox", { name: "Message", exact: true })
     .fill(persistenceMarker);
-  await window.waitForFunction(
-    async (marker) => JSON.stringify(
+  await waitForAsyncValue(
+    async () => await window.evaluate(async (marker) => JSON.stringify(
       await (globalThis as typeof globalThis & {
         kestrelDesktop: { getUiState(): Promise<unknown> };
       }).kestrelDesktop.getUiState(),
-    ).includes(String(marker)),
-    persistenceMarker,
-    { timeout: 30_000 },
+    ).includes(String(marker)), persistenceMarker),
+    (persisted) => persisted,
+    {
+      description: "packaged Desktop conversation persistence",
+      timeoutMs: 30_000,
+    },
   );
   const firstMainProcess = electronApp.process();
   const firstMainProcessExited = firstMainProcess.exitCode === null
@@ -585,15 +575,31 @@ async function waitForReadyWindow(app: ElectronApplication): Promise<Page> {
   });
   await window.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
   await window.locator(".composer").waitFor({ state: "visible", timeout: 60_000 });
-  await window.waitForFunction(
-    async () =>
-      (await (globalThis as typeof globalThis & {
+  await waitForAsyncValue(
+    async () => await window.evaluate(async () => {
+      const bridge = (globalThis as typeof globalThis & {
         kestrelDesktop?: {
           getBootState(): Promise<{ phase?: string | undefined }>;
+          getLaunchState(): Promise<{ phase?: string | undefined }>;
         };
-      }).kestrelDesktop?.getBootState())?.phase === "ready",
-    undefined,
-    { timeout: 60_000 },
+      }).kestrelDesktop;
+      if (bridge === undefined) {
+        return { bootPhase: undefined, launchPhase: undefined };
+      }
+      const [bootState, launchState] = await Promise.all([
+        bridge.getBootState(),
+        bridge.getLaunchState(),
+      ]);
+      return {
+        bootPhase: bootState.phase,
+        launchPhase: launchState.phase,
+      };
+    }),
+    (state) => state.bootPhase === "ready" && state.launchPhase === "ready",
+    {
+      description: "packaged Desktop boot and launch readiness",
+      timeoutMs: 60_000,
+    },
   );
   return window;
 }

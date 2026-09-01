@@ -29,6 +29,7 @@ import {
   resolveLaunchServicesInstalledAppPath,
   runLaunchServicesCleanupActions,
 } from "./desktop-launch-services-gate.js";
+import { waitForAsyncValue } from "./desktop-smoke-poll.js";
 import {
   createDefaultDesktopSettings,
   writeDesktopSettings,
@@ -210,24 +211,28 @@ try {
     "complete",
     "LaunchServices first run must persist onboarding after execution startup.",
   );
+  const firstLaunchPage = activeLaunch.page;
   const offlineModel = await verifyOfflineModel(
-    activeLaunch.page,
+    firstLaunchPage,
     fakeOpenRouter.url,
   );
-  await activeLaunch.page
+  await firstLaunchPage
     .getByRole("textbox", { name: "Message", exact: true })
     .fill(persistenceMarker);
-  await activeLaunch.page.waitForFunction(
-    async (marker) =>
+  await waitForAsyncValue(
+    async () => await firstLaunchPage.evaluate(async (marker) =>
       JSON.stringify(
         await (globalThis as typeof globalThis & {
           kestrelDesktop: { getUiState(): Promise<unknown> };
         }).kestrelDesktop.getUiState(),
-      ).includes(String(marker)),
-    persistenceMarker,
-    { timeout: 30_000 },
+      ).includes(String(marker)), persistenceMarker),
+    (persisted) => persisted,
+    {
+      description: "LaunchServices conversation persistence",
+      timeoutMs: 30_000,
+    },
   );
-  await activeLaunch.page.screenshot({
+  await firstLaunchPage.screenshot({
     path: firstLaunchScreenshotPath,
     fullPage: true,
   });
@@ -522,54 +527,58 @@ async function verifyReadyDesktop(page: Page): Promise<{
   appInfo: { isPackaged: boolean; name: string; version: string };
   bootState: { phase: string; code?: string | undefined; message: string };
   bridgeInfo: { connected: boolean; version: string; capabilities: string[] };
+  launchState: { phase: string; message: string };
 }> {
   await page.waitForLoadState("domcontentloaded");
   await page.waitForURL(/\/renderer\/index\.html(?:\?.*)?$/u, {
     timeout: 60_000,
   });
   await page.locator("#root").waitFor({ state: "visible", timeout: 60_000 });
-  await page.waitForFunction(
-    async () =>
-      (await (globalThis as typeof globalThis & {
+  const state = await waitForAsyncValue(
+    async () => await page.evaluate(async () => {
+      const bridge = (globalThis as typeof globalThis & {
         kestrelDesktop?: {
-          getBootState(): Promise<{ phase?: string | undefined }>;
+          getAppInfo(): Promise<{
+            isPackaged: boolean;
+            name: string;
+            version: string;
+          }>;
+          getBootState(): Promise<{
+            phase: string;
+            code?: string | undefined;
+            message: string;
+          }>;
+          getBridgeInfo(): Promise<{
+            connected: boolean;
+            version: string;
+            capabilities: string[];
+          }>;
+          getLaunchState(): Promise<{ phase: string; message: string }>;
         };
-      }).kestrelDesktop?.getBootState())?.phase === "ready",
-    undefined,
-    { timeout: 60_000 },
+      }).kestrelDesktop;
+      if (bridge === undefined) {
+        throw new Error("Desktop preload bridge is unavailable.");
+      }
+      const [appInfo, bootState, bridgeInfo, launchState] = await Promise.all([
+        bridge.getAppInfo(),
+        bridge.getBootState(),
+        bridge.getBridgeInfo(),
+        bridge.getLaunchState(),
+      ]);
+      return { appInfo, bootState, bridgeInfo, launchState };
+    }),
+    (candidate) =>
+      candidate.bootState.phase === "ready" &&
+      candidate.launchState.phase === "ready",
+    {
+      description: "LaunchServices Desktop boot and launch readiness",
+      timeoutMs: 60_000,
+    },
   );
-  const state = await page.evaluate(async () => {
-    const bridge = (globalThis as typeof globalThis & {
-      kestrelDesktop?: {
-        getAppInfo(): Promise<{
-          isPackaged: boolean;
-          name: string;
-          version: string;
-        }>;
-        getBootState(): Promise<{
-          phase: string;
-          code?: string | undefined;
-          message: string;
-        }>;
-        getBridgeInfo(): Promise<{
-          connected: boolean;
-          version: string;
-          capabilities: string[];
-        }>;
-      };
-    }).kestrelDesktop;
-    if (bridge === undefined) {
-      throw new Error("Desktop preload bridge is unavailable.");
-    }
-    return {
-      appInfo: await bridge.getAppInfo(),
-      bootState: await bridge.getBootState(),
-      bridgeInfo: await bridge.getBridgeInfo(),
-    };
-  });
   assert.equal(state.appInfo.isPackaged, true);
   assert.equal(state.appInfo.version, version);
   assert.equal(state.bootState.phase, "ready");
+  assert.equal(state.launchState.phase, "ready");
   assert.equal(state.bridgeInfo.connected, true);
   assert.equal(state.bridgeInfo.version, DESKTOP_BRIDGE_VERSION);
   return state;

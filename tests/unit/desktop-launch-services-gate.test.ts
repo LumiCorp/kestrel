@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -8,6 +9,61 @@ import {
   resolveLaunchServicesInstalledAppPath,
   runLaunchServicesCleanupActions,
 } from "../../scripts/desktop-launch-services-gate.js";
+import { waitForAsyncValue } from "../../scripts/desktop-smoke-poll.js";
+
+test("Desktop smoke gates poll asynchronous renderer state outside waitForFunction", () => {
+  for (const scriptName of [
+    "desktop-launch-services-smoke.ts",
+    "desktop-ota-smoke.ts",
+    "desktop-package-smoke.ts",
+  ]) {
+    const source = readFileSync(
+      new URL(`../../scripts/${scriptName}`, import.meta.url),
+      "utf8",
+    );
+    assert.doesNotMatch(
+      source,
+      /waitForFunction\(\s*async/gu,
+      `${scriptName} must not pass an async predicate to Playwright waitForFunction`,
+    );
+  }
+});
+
+test("Desktop smoke polling awaits non-ready asynchronous samples", async () => {
+  const samples = ["starting_runtime", "starting_web", "ready"];
+  const observed: string[] = [];
+  const result = await waitForAsyncValue(
+    async () => {
+      const value = samples.shift() ?? "ready";
+      observed.push(value);
+      return await Promise.resolve(value);
+    },
+    (value) => value === "ready",
+    {
+      description: "Desktop readiness",
+      timeoutMs: 1_000,
+      intervalMs: 0,
+    },
+  );
+
+  assert.equal(result, "ready");
+  assert.deepEqual(observed, ["starting_runtime", "starting_web", "ready"]);
+});
+
+test("Desktop smoke polling bounds an unresolved renderer sample", async () => {
+  await assert.rejects(
+    waitForAsyncValue(
+      async () => await new Promise<string>(() => {}),
+      (value) => value === "ready",
+      {
+        description: "unresolved Desktop state",
+        timeoutMs: 25,
+        intervalMs: 0,
+      },
+    ),
+    /Timed out waiting for unresolved Desktop state/u,
+  );
+});
 
 test("LaunchServices gate installs under a unique Applications path", () => {
   assert.equal(
