@@ -24,8 +24,9 @@ test("Desktop builder emits signed arm64 DMG and ZIP update targets", () => {
   ]);
   assert.equal(config.mac.hardenedRuntime, true);
   assert.equal(
-    config.electronDist,
-    path.join("/repo", "apps", "desktop", "node_modules", "electron", "dist"),
+    "electronDist" in config,
+    false,
+    "release packaging must let electron-builder preserve Electron framework symlinks",
   );
   assert.equal(
     config.mac.icon,
