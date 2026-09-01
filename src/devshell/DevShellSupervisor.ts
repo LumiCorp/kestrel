@@ -272,7 +272,17 @@ export class DevShellSupervisor {
       strictMultiline: input.strictMultiline === true,
     });
 
-    const requestedWorkspaceRoot = input.workspaceRoot ?? ".";
+    if (input.workspaceRoot === undefined) {
+      throw createRuntimeFailure(
+        "DEV_SHELL_WORKSPACE_REQUIRED",
+        "Developer shell execution requires an explicit workspace root.",
+        {
+          subsystem: "dev_shell",
+          classification: "authorization",
+        },
+      );
+    }
+    const requestedWorkspaceRoot = input.workspaceRoot;
     const workspaceRoot = resolve(requestedWorkspaceRoot);
     const requestedCwd = resolve(workspaceRoot, input.cwd ?? ".");
     const cwd = await requirePathWithinWorkspace(workspaceRoot, requestedCwd, input.cwd ?? ".");

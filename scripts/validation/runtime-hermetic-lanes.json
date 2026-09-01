@@ -252,6 +252,7 @@
         "tests/unit/runtime-cli-store-flag.test.ts",
         "tests/unit/tui-environment-presentation.test.ts",
         "tests/unit/tui-queue-graph.test.ts",
+        "tests/unit/tui-workspace-resume-hotfix.test.ts",
         "tests/unit/web-command.test.ts"
       ]
     },
