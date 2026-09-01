@@ -75,6 +75,7 @@ test("hosted Browser image build is pinned, nonroot, compiled, and runtime-fetch
     },
   );
   assert.match(dockerfile, /^FROM node:22-bookworm-slim@sha256:[a-f0-9]{64}/mu);
+  assert.match(dockerfile, /ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1/u);
   assert.match(dockerfile, /pnpm run build/u);
   assert.match(
     dockerfile,
