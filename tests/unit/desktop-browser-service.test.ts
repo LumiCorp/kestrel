@@ -4091,6 +4091,10 @@ test(
       assert.fail("download bounds fixture did not bind TCP");
     let barriers = 0;
     let cancellations = 0;
+    let cancellationsObserved!: () => void;
+    const cancellationsObservedPromise = new Promise<void>((resolve) => {
+      cancellationsObserved = resolve;
+    });
     server.on("connection", (socket) => {
       socket.on("message", (raw) => {
         const command = JSON.parse(raw.toString("utf8")) as {
@@ -4099,6 +4103,7 @@ test(
         };
         if (command.method === "Browser.cancelDownload") {
           cancellations += 1;
+          if (cancellations === 16) cancellationsObserved();
           socket.send(JSON.stringify({ id: command.id, result: {} }));
           return;
         }
@@ -4147,6 +4152,7 @@ test(
     );
     t.after(() => interception.stop());
     await assert.rejects(interception.synchronize(), /quarantine/u);
+    await cancellationsObservedPromise;
     assert.equal(cancellations, 16);
   },
 );

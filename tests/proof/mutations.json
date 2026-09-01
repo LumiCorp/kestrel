@@ -551,8 +551,8 @@
     {
       "id": "tool-approval-descriptor-revision-omission",
       "target": "src/io/ToolInvocationSupport.ts",
-      "find": "            version: \"prepared-tool-approval-authority-v1\",\n            activation: input.activation,\n            effectiveInput: input.effectiveInput,",
-      "replace": "            version: \"prepared-tool-approval-authority-v1\",\n            activation: { ...input.activation, descriptor: { ...input.activation.descriptor, contractRevision: `sha256:${\"0\".repeat(64)}` } },\n            effectiveInput: input.effectiveInput,",
+      "find": "    version: \"prepared-tool-approval-authority-v1\",\n    activation: input.activation,\n    effectiveInput: input.effectiveInput,",
+      "replace": "    version: \"prepared-tool-approval-authority-v1\",\n    activation: { ...input.activation, descriptor: { ...input.activation.descriptor, contractRevision: `sha256:${\"0\".repeat(64)}` } },\n    effectiveInput: input.effectiveInput,",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=approval authority includes the exact descriptor revision", "tests/unit/tool-invocation-integrity.test.ts"],
       "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
@@ -650,8 +650,8 @@
     {
       "id": "process-retention-wall-timeout-not-cleared",
       "target": "src/devshell/DevShellSupervisor.ts",
-      "find": "    if (running.wallTimeout !== undefined) {",
-      "replace": "    if (false && running.wallTimeout !== undefined) {",
+      "find": "            .sort((left, right) => left.leaseId.localeCompare(right.leaseId));\n      if (running.wallTimeout !== undefined) {",
+      "replace": "            .sort((left, right) => left.leaseId.localeCompare(right.leaseId));\n      if (false && running.wallTimeout !== undefined) {",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=clears the original wall timeout", "tests/unit/dev-shell-supervisor.test.ts"],
       "testFiles": ["tests/unit/dev-shell-supervisor.test.ts"]
