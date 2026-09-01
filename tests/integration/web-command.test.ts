@@ -1316,18 +1316,21 @@ async function handleFakeOpenRouterRequest(
   const serializedMessages = JSON.stringify(parsed.messages);
   const qualificationUsed = serializedMessages.includes("qualification provider-used");
   const qualificationUnused = serializedMessages.includes("qualification selected-unused");
+  const qualificationCapabilityFree = serializedMessages.includes("qualification capability-free");
   const qualificationTimeout = serializedMessages.includes("qualification timeout");
   const qualificationCancel = serializedMessages.includes("qualification cancel");
   const qualificationExpiry = serializedMessages.includes("qualification expiry");
   const codeName = parsed.tools?.map((tool) => tool.function?.name ?? tool.name).find((name) => name === "code_execute") ?? "code.execute";
-  const qualificationCallId = qualificationUnused ? "call_qualification_unused" : qualificationTimeout ? "call_qualification_timeout" : qualificationCancel ? "call_qualification_cancel" : qualificationExpiry ? "call_qualification_expiry" : "call_qualification_code";
+  const qualificationCallId = qualificationUnused ? "call_qualification_unused" : qualificationCapabilityFree ? "call_qualification_capability_free" : qualificationTimeout ? "call_qualification_timeout" : qualificationCancel ? "call_qualification_cancel" : qualificationExpiry ? "call_qualification_expiry" : "call_qualification_code";
   const qualificationQuery = qualificationTimeout ? "qualification-timeout" : qualificationCancel ? "qualification-cancel" : qualificationExpiry ? "qualification-expiry" : "qualification";
-  const toolCall = (qualificationUsed || qualificationUnused || qualificationTimeout || qualificationCancel || qualificationExpiry) && serializedMessages.includes(qualificationCallId) === false ? {
+  const toolCall = (qualificationUsed || qualificationUnused || qualificationCapabilityFree || qualificationTimeout || qualificationCancel || qualificationExpiry) && serializedMessages.includes(qualificationCallId) === false ? {
     id: qualificationCallId,
     type: "function",
     function: {
       name: codeName,
-      arguments: JSON.stringify({ language: "javascript", code: qualificationUnused ? "console.log('selected capability intentionally unused')" : `fetch('http://127.0.0.1:43127/v1/capability', { method: 'POST', body: JSON.stringify({ operation: 'search', destination: 'api.tavily.com', input: { query: '${qualificationQuery}', maxResults: 1 } }) }).then(async response => console.log(JSON.stringify(await response.json())))`, capability: { version: 2, capabilityId: "tavily.search.read", operation: "search", input: { query: qualificationUnused ? "unused" : qualificationQuery, maxResults: 1 } } }),
+      arguments: JSON.stringify(qualificationCapabilityFree
+        ? { language: "javascript", code: "console.log('capability-free')" }
+        : { language: "javascript", code: qualificationUnused ? "console.log('selected capability intentionally unused')" : `fetch('http://127.0.0.1:43127/v1/capability', { method: 'POST', body: JSON.stringify({ operation: 'search', destination: 'api.tavily.com', input: { query: '${qualificationQuery}', maxResults: 1 } }) }).then(async response => console.log(JSON.stringify(await response.json())))`, capability: { version: 2, capabilityId: "tavily.search.read", operation: "search", input: { query: qualificationUnused ? "unused" : qualificationQuery, maxResults: 1 } } }),
     },
   } : {
     id: "call_fake_finalize",
