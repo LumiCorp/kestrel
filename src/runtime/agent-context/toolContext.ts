@@ -547,6 +547,8 @@ function renderToolFacts(
     facts = renderInternetFacts(toolName, record, status, error);
   } else if (toolName === "free.weather.current" || toolName === "free.weather.forecast") {
     facts = renderWeatherFacts(toolName, record, status, error);
+  } else if (toolName.startsWith("browser.")) {
+    facts = renderBrowserFacts(record, status, error);
   } else if (isMicrosoft365TeamsReadToolName(toolName)) {
     facts = renderMicrosoft365TeamsReadFacts(toolName, input, record, status, error);
   } else if (isGoogleCalendarEventReadToolName(toolName)) {
@@ -557,6 +559,35 @@ function renderToolFacts(
     facts = renderGenericObjectFacts(record, status, error);
   }
   return [...facts, ...renderWorkspaceMutationGuidance(toolName, record)];
+}
+
+function renderBrowserFacts(
+  output: Record<string, unknown>,
+  status: "OK" | "FAILED",
+  error: unknown,
+): string[] {
+  const session = asRecord(output.session);
+  const artifact = asRecord(output.artifact);
+  return [
+    ...field("status", asString(output.status) ?? status),
+    ...field("version", output.version),
+    ...field("operation", output.operation),
+    ...field("outcome", output.outcome),
+    ...field("sessionId", output.sessionId ?? session?.sessionId),
+    ...field("generation", output.generation ?? session?.generation),
+    ...field("state", output.state ?? session?.state),
+    ...field("mode", session?.mode),
+    ...field("expiresAt", session?.expiresAt),
+    ...field("artifactId", artifact?.id),
+    ...field("artifactKind", artifact?.kind),
+    ...field("artifactMediaType", artifact?.mediaType),
+    ...field("artifactBytes", artifact?.bytes),
+    ...field("artifactSha256", artifact?.sha256),
+    ...field("normalizedOrigin", output.normalizedOrigin),
+    ...field("capturedAt", output.capturedAt),
+    ...field("boundary", output.boundary),
+    ...renderErrorFacts(error),
+  ];
 }
 
 function isMicrosoft365TeamsReadToolName(toolName: string): boolean {

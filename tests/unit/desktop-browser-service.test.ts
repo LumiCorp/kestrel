@@ -33,6 +33,8 @@ import {
   installAgentBrowserDownloadInterception,
   minimizeAgentBrowserNativeWindow,
   presentAgentBrowserNativeWindow,
+  prepareAgentBrowserNativeCaptureWindow,
+  requirePinnedViewerActiveTarget,
   revokeAgentBrowserNativeWindow,
   spawnAndCollect,
   type DesktopBrowserAuthorityResolver,
@@ -369,7 +371,10 @@ test("Desktop takeover stays pending until viewer acceptance and blocks the agen
     new RegExp(sentinel, "u"),
   );
   assert.doesNotMatch(
-    await readFile(path.join(fixture.homePath, "browser", "sessions.json"), "utf8"),
+    await readFile(
+      path.join(fixture.homePath, "browser", "sessions.json"),
+      "utf8",
+    ),
     new RegExp(sentinel, "u"),
   );
 
@@ -390,6 +395,51 @@ test("Desktop takeover stays pending until viewer acceptance and blocks the agen
   assert.deepEqual(
     viewerEvents.map((event) => event.name),
     ["request", "acceptance", "lease_issue", "return"],
+  );
+  await fixture.service.close();
+});
+
+test("viewer frame capture serializes with agent Browser operations", async () => {
+  const fixture = await createFixture();
+  const sessionId = await openSession(fixture.service);
+  const viewer = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "desktop-main-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+  );
+  let notifyFrameStarted!: () => void;
+  const frameStarted = new Promise<void>((resolve) => {
+    notifyFrameStarted = resolve;
+  });
+  let resumeFrame!: () => void;
+  fixture.engine.viewerFramePaused = notifyFrameStarted;
+  fixture.engine.resumeViewerFrame = new Promise<void>((resolve) => {
+    resumeFrame = resolve;
+  });
+
+  const frame = fixture.service.readViewerFrame({
+    ...viewer,
+    principalId: "desktop-main-1",
+  });
+  await frameStarted;
+  const commandCount = fixture.engine.commands.length;
+  const snapshot = fixture.service.execute(
+    prepared("browser.snapshot", { sessionId }),
+    createLifecycle(),
+  );
+  await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  assert.equal(fixture.engine.commands.length, commandCount);
+
+  resumeFrame();
+  await frame;
+  await snapshot;
+  assert.equal(
+    fixture.engine.commands
+      .slice(commandCount)
+      .some((command) => command[0] === "snapshot"),
+    true,
   );
   await fixture.service.close();
 });
@@ -623,14 +673,16 @@ test("exact control-plane viewer cleanup preserves human control and cannot revo
     }),
     createLifecycle(),
   );
-  const retired = requireAvailableViewer(await fixture.service.connectViewer({
-    principalId: "hosted-actor-1",
-    threadId: "thread-1",
-    projectId: "project-1",
-    sessionId,
-    generation: 1,
-    connectionId: "hosted-cleanup-1",
-  }));
+  const retired = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "hosted-actor-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+      sessionId,
+      generation: 1,
+      connectionId: "hosted-cleanup-1",
+    }),
+  );
   await fixture.service.acceptViewerTakeover({
     ...retired,
     principalId: "hosted-actor-1",
@@ -646,22 +698,26 @@ test("exact control-plane viewer cleanup preserves human control and cannot revo
     ),
     hasCode("BROWSER_HUMAN_CONTROL_ACTIVE"),
   );
-  const replacement = requireAvailableViewer(await fixture.service.connectViewer({
-    principalId: "hosted-actor-1",
-    threadId: "thread-1",
-    projectId: "project-1",
-    sessionId,
-    generation: 1,
-    connectionId: "hosted-cleanup-2",
-  }));
+  const replacement = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      principalId: "hosted-actor-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+      sessionId,
+      generation: 1,
+      connectionId: "hosted-cleanup-2",
+    }),
+  );
   await fixture.service.cleanupViewerConnection({
     ...retired,
     principalId: "hosted-actor-1",
   });
-  const stillCurrent = requireAvailableViewer(await fixture.service.connectViewer({
-    ...replacement,
-    principalId: "hosted-actor-1",
-  }));
+  const stillCurrent = requireAvailableViewer(
+    await fixture.service.connectViewer({
+      ...replacement,
+      principalId: "hosted-actor-1",
+    }),
+  );
   assert.equal(stillCurrent.connectionId, replacement.connectionId);
   await fixture.service.close();
 });
@@ -814,11 +870,13 @@ test("Desktop viewer authority loss and engine loss terminate human control inst
   fixture.engine.triggerLoss();
   await waitFor(async () => fixture.engine.closed.length === 1);
   assert.equal(
-    (await fixture.service.connectViewer({
-      principalId: "desktop-main-1",
-      threadId: "thread-1",
-      projectId: "project-1",
-    })).available,
+    (
+      await fixture.service.connectViewer({
+        principalId: "desktop-main-1",
+        threadId: "thread-1",
+        projectId: "project-1",
+      })
+    ).available,
     false,
   );
   assert.ok(viewerEvents.some((event) => event.name === "cleanup"));
@@ -1107,10 +1165,15 @@ test("authority loss terminalizes the exact Session even after disconnect and re
     hasCode("BROWSER_SESSION_LOST"),
   );
   assert.equal(fixture.engine.closed.length, 0);
-  assert.equal(requireAvailableViewer(await fixture.service.connectViewer({
-    ...replacement,
-    principalId: "desktop-main-1",
-  })).connectionId, replacement.connectionId);
+  assert.equal(
+    requireAvailableViewer(
+      await fixture.service.connectViewer({
+        ...replacement,
+        principalId: "desktop-main-1",
+      }),
+    ).connectionId,
+    replacement.connectionId,
+  );
 
   await assert.rejects(
     fixture.service.loseViewerAuthority({
@@ -1127,10 +1190,15 @@ test("authority loss terminalizes the exact Session even after disconnect and re
   });
 
   assert.equal(fixture.engine.closed.length, 1);
-  assert.equal((await fixture.service.connectViewer({
-    ...replacement,
-    principalId: "desktop-main-1",
-  })).available, false);
+  assert.equal(
+    (
+      await fixture.service.connectViewer({
+        ...replacement,
+        principalId: "desktop-main-1",
+      })
+    ).available,
+    false,
+  );
   await fixture.service.close();
 });
 
@@ -1446,11 +1514,7 @@ test("restart fails closed when a ready session has no remaining termination pro
 test("persisted and generated Browser session IDs cannot escape owned cleanup paths", async () => {
   const fixture = await createFixture();
   const sessionId = await openSession(fixture.service);
-  const ledgerPath = path.join(
-    fixture.homePath,
-    "browser",
-    "sessions.json",
-  );
+  const ledgerPath = path.join(fixture.homePath, "browser", "sessions.json");
   const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as {
     sessions: BrowserSessionV1[];
     artifacts: unknown[];
@@ -1458,7 +1522,11 @@ test("persisted and generated Browser session IDs cannot escape owned cleanup pa
   };
   ledger.sessions[0]!.sessionId = "../outside-runtime";
   await writeFile(ledgerPath, JSON.stringify(ledger));
-  const outsideRuntime = path.join(fixture.homePath, "browser", "outside-runtime");
+  const outsideRuntime = path.join(
+    fixture.homePath,
+    "browser",
+    "outside-runtime",
+  );
   await mkdir(outsideRuntime, { recursive: true });
   await writeFile(path.join(outsideRuntime, "sentinel"), "retained");
 
@@ -1492,11 +1560,7 @@ test("terminal orphan cleanup converges after either ordered path-removal bounda
     const fixture = await createFixture();
     const sessionId = await openSession(fixture.service);
     const invocation = fixture.engine.opened[0]!;
-    const ledgerPath = path.join(
-      fixture.homePath,
-      "browser",
-      "sessions.json",
-    );
+    const ledgerPath = path.join(fixture.homePath, "browser", "sessions.json");
     const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as {
       sessions: BrowserSessionV1[];
     };
@@ -2331,7 +2395,10 @@ test("tabs output is deterministically bounded while retaining active and effect
   const listedTabs = listed.tabs as Array<{ tabId: string; active: boolean }>;
   assert.equal(listedTabs.length, 100);
   assert.equal(listed.activeTabId, "t104");
-  assert.equal(listedTabs.some((tab) => tab.tabId === "t104"), true);
+  assert.equal(
+    listedTabs.some((tab) => tab.tabId === "t104"),
+    true,
+  );
 
   const switched = asRecord(
     await fixture.service.execute(
@@ -2367,8 +2434,14 @@ test("tabs output is deterministically bounded while retaining active and effect
   const closedTabs = closed.tabs as Array<{ tabId: string; active: boolean }>;
   assert.equal(closedTabs.length, 100);
   assert.equal(closed.activeTabId, "t1");
-  assert.equal(closedTabs.some((tab) => tab.tabId === "t1" && tab.active), true);
-  assert.equal(closedTabs.some((tab) => tab.tabId === "t105"), false);
+  assert.equal(
+    closedTabs.some((tab) => tab.tabId === "t1" && tab.active),
+    true,
+  );
+  assert.equal(
+    closedTabs.some((tab) => tab.tabId === "t105"),
+    false,
+  );
   await fixture.service.close();
 });
 
@@ -2961,21 +3034,27 @@ test("approved active-turn upload revalidates exact metadata and target before o
   let uploadStreamsOpened = 0;
   const fixture = await createFixture({
     attachmentStore: {
-      async importPath() { throw new Error("not used"); },
-      async list() { return []; },
+      async importPath() {
+        throw new Error("not used");
+      },
+      async list() {
+        return [];
+      },
       async resolve(threadId, attachmentIds) {
         assert.equal(threadId, "thread-1");
         assert.deepEqual(attachmentIds, ["file-1"]);
-        return [{
-          attachmentId: "file-1",
-          threadId,
-          filename: "evidence.txt",
-          declaredMediaType: "text/plain",
-          detectedMediaType: "text/plain",
-          mimeType: "text/plain",
-          sizeBytes: bytes.byteLength,
-          sha256,
-        }];
+        return [
+          {
+            attachmentId: "file-1",
+            threadId,
+            filename: "evidence.txt",
+            declaredMediaType: "text/plain",
+            detectedMediaType: "text/plain",
+            mimeType: "text/plain",
+            sizeBytes: bytes.byteLength,
+            sha256,
+          },
+        ];
       },
     },
     uploadStream: {
@@ -2990,11 +3069,16 @@ test("approved active-turn upload revalidates exact metadata and target before o
   });
   const sessionId = await openSession(fixture.service);
   const invocation = fixture.engine.opened[0]!;
-  assert.equal((await stat(invocation.blockedDownloadPath)).mode & 0o777, 0o700);
-  const snapshot = asRecord(await fixture.service.execute(
-    prepared("browser.snapshot", { sessionId }),
-    createLifecycle(),
-  ));
+  assert.equal(
+    (await stat(invocation.blockedDownloadPath)).mode & 0o777,
+    0o700,
+  );
+  const snapshot = asRecord(
+    await fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      createLifecycle(),
+    ),
+  );
   const effect = await fixture.service.prepareUpload({
     version: "browser_upload_preparation_v1",
     runId: "run-upload",
@@ -3024,10 +3108,12 @@ test("approved active-turn upload revalidates exact metadata and target before o
     targetRef: "@e1",
     attachmentId: "file-1",
   });
-  upload.inputAdapters = [{
-    adapterId: "kestrel.browser-upload-effect:v1",
-    metadata: { ...effect },
-  }];
+  upload.inputAdapters = [
+    {
+      adapterId: "kestrel.browser-upload-effect:v1",
+      metadata: { ...effect },
+    },
+  ];
   const lifecycle = createLifecycle();
   assert.deepEqual(await fixture.service.execute(upload, lifecycle), {
     version: "browser_tool_result_v1",
@@ -3043,12 +3129,16 @@ test("approved active-turn upload revalidates exact metadata and target before o
   });
   assert.deepEqual(lifecycle.events, ["ack", "persist"]);
   assert.equal(uploadStreamsOpened, 1);
-  assert.deepEqual(fixture.engine.uploadedFiles, [{
-    targetRef: "@e1",
-    bytes,
-  }]);
+  assert.deepEqual(fixture.engine.uploadedFiles, [
+    {
+      targetRef: "@e1",
+      bytes,
+    },
+  ]);
   assert.equal(
-    (await readdir(invocation.runtimePath)).some((name) => name.startsWith("upload-")),
+    (await readdir(invocation.runtimePath)).some((name) =>
+      name.startsWith("upload-"),
+    ),
     false,
   );
   await fixture.service.close();
@@ -3061,20 +3151,26 @@ test("changed attachment metadata rejects before upload bytes are opened", async
   let streamsOpened = 0;
   const fixture = await createFixture({
     attachmentStore: {
-      async importPath() { throw new Error("not used"); },
-      async list() { return []; },
+      async importPath() {
+        throw new Error("not used");
+      },
+      async list() {
+        return [];
+      },
       async resolve(threadId) {
         resolutions += 1;
-        return [{
-          attachmentId: "file-1",
-          threadId,
-          filename: "evidence.txt",
-          declaredMediaType: "text/plain",
-          detectedMediaType: "text/plain",
-          mimeType: "text/plain",
-          sizeBytes: bytes.byteLength,
-          sha256: resolutions === 1 ? sha256 : "b".repeat(64),
-        }];
+        return [
+          {
+            attachmentId: "file-1",
+            threadId,
+            filename: "evidence.txt",
+            declaredMediaType: "text/plain",
+            detectedMediaType: "text/plain",
+            mimeType: "text/plain",
+            sizeBytes: bytes.byteLength,
+            sha256: resolutions === 1 ? sha256 : "b".repeat(64),
+          },
+        ];
       },
     },
     uploadStream: {
@@ -3085,10 +3181,12 @@ test("changed attachment metadata rejects before upload bytes are opened", async
     },
   });
   const sessionId = await openSession(fixture.service);
-  const snapshot = asRecord(await fixture.service.execute(
-    prepared("browser.snapshot", { sessionId }),
-    createLifecycle(),
-  ));
+  const snapshot = asRecord(
+    await fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      createLifecycle(),
+    ),
+  );
   const effect = await fixture.service.prepareUpload({
     version: "browser_upload_preparation_v1",
     runId: "run-upload-stale",
@@ -3118,10 +3216,12 @@ test("changed attachment metadata rejects before upload bytes are opened", async
     targetRef: "@e1",
     attachmentId: "file-1",
   });
-  upload.inputAdapters = [{
-    adapterId: "kestrel.browser-upload-effect:v1",
-    metadata: { ...effect },
-  }];
+  upload.inputAdapters = [
+    {
+      adapterId: "kestrel.browser-upload-effect:v1",
+      metadata: { ...effect },
+    },
+  ];
   const lifecycle = createLifecycle();
   await assert.rejects(
     fixture.service.execute(upload, lifecycle),
@@ -3140,31 +3240,41 @@ test("upload stream integrity failure preserves the failure and removes owned st
   const sha256 = createHash("sha256").update(expected).digest("hex");
   const fixture = await createFixture({
     attachmentStore: {
-      async importPath() { throw new Error("not used"); },
-      async list() { return []; },
+      async importPath() {
+        throw new Error("not used");
+      },
+      async list() {
+        return [];
+      },
       async resolve(threadId) {
-        return [{
-          attachmentId: "file-1",
-          threadId,
-          filename: "evidence.txt",
-          declaredMediaType: "text/plain",
-          detectedMediaType: "text/plain",
-          mimeType: "text/plain",
-          sizeBytes: expected.byteLength,
-          sha256,
-        }];
+        return [
+          {
+            attachmentId: "file-1",
+            threadId,
+            filename: "evidence.txt",
+            declaredMediaType: "text/plain",
+            detectedMediaType: "text/plain",
+            mimeType: "text/plain",
+            sizeBytes: expected.byteLength,
+            sha256,
+          },
+        ];
       },
     },
     uploadStream: {
-      async open() { return Readable.from(corrupted); },
+      async open() {
+        return Readable.from(corrupted);
+      },
     },
   });
   const sessionId = await openSession(fixture.service);
   const invocation = fixture.engine.opened[0]!;
-  const snapshot = asRecord(await fixture.service.execute(
-    prepared("browser.snapshot", { sessionId }),
-    createLifecycle(),
-  ));
+  const snapshot = asRecord(
+    await fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      createLifecycle(),
+    ),
+  );
   const effect = await fixture.service.prepareUpload({
     version: "browser_upload_preparation_v1",
     runId: "run-upload-integrity",
@@ -3194,10 +3304,12 @@ test("upload stream integrity failure preserves the failure and removes owned st
     targetRef: "@e1",
     attachmentId: "file-1",
   });
-  upload.inputAdapters = [{
-    adapterId: "kestrel.browser-upload-effect:v1",
-    metadata: { ...effect },
-  }];
+  upload.inputAdapters = [
+    {
+      adapterId: "kestrel.browser-upload-effect:v1",
+      metadata: { ...effect },
+    },
+  ];
   const lifecycle = createLifecycle();
   await assert.rejects(
     fixture.service.execute(upload, lifecycle),
@@ -3206,7 +3318,9 @@ test("upload stream integrity failure preserves the failure and removes owned st
   assert.deepEqual(lifecycle.events, []);
   assert.deepEqual(fixture.engine.uploadedFiles, []);
   assert.equal(
-    (await readdir(invocation.runtimePath)).some((name) => name.startsWith("upload-")),
+    (await readdir(invocation.runtimePath)).some((name) =>
+      name.startsWith("upload-"),
+    ),
     false,
   );
   await fixture.service.close();
@@ -3218,19 +3332,25 @@ test("upload cancellation during staging stops before acknowledgement and remove
   const controller = new AbortController();
   const fixture = await createFixture({
     attachmentStore: {
-      async importPath() { throw new Error("not used"); },
-      async list() { return []; },
+      async importPath() {
+        throw new Error("not used");
+      },
+      async list() {
+        return [];
+      },
       async resolve(threadId) {
-        return [{
-          attachmentId: "file-1",
-          threadId,
-          filename: "evidence.txt",
-          declaredMediaType: "text/plain",
-          detectedMediaType: "text/plain",
-          mimeType: "text/plain",
-          sizeBytes: bytes.byteLength,
-          sha256,
-        }];
+        return [
+          {
+            attachmentId: "file-1",
+            threadId,
+            filename: "evidence.txt",
+            declaredMediaType: "text/plain",
+            detectedMediaType: "text/plain",
+            mimeType: "text/plain",
+            sizeBytes: bytes.byteLength,
+            sha256,
+          },
+        ];
       },
     },
     uploadStream: {
@@ -3245,10 +3365,12 @@ test("upload cancellation during staging stops before acknowledgement and remove
   });
   const sessionId = await openSession(fixture.service);
   const invocation = fixture.engine.opened[0]!;
-  const snapshot = asRecord(await fixture.service.execute(
-    prepared("browser.snapshot", { sessionId }),
-    createLifecycle(),
-  ));
+  const snapshot = asRecord(
+    await fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      createLifecycle(),
+    ),
+  );
   const effect = await fixture.service.prepareUpload({
     version: "browser_upload_preparation_v1",
     runId: "run-upload-cancelled",
@@ -3278,16 +3400,23 @@ test("upload cancellation during staging stops before acknowledgement and remove
     targetRef: "@e1",
     attachmentId: "file-1",
   });
-  upload.inputAdapters = [{
-    adapterId: "kestrel.browser-upload-effect:v1",
-    metadata: { ...effect },
-  }];
+  upload.inputAdapters = [
+    {
+      adapterId: "kestrel.browser-upload-effect:v1",
+      metadata: { ...effect },
+    },
+  ];
   const lifecycle = createLifecycle({ signal: controller.signal });
-  await assert.rejects(fixture.service.execute(upload, lifecycle), /cancelled/u);
+  await assert.rejects(
+    fixture.service.execute(upload, lifecycle),
+    /cancelled/u,
+  );
   assert.deepEqual(lifecycle.events, []);
   assert.deepEqual(fixture.engine.uploadedFiles, []);
   assert.equal(
-    (await readdir(invocation.runtimePath)).some((name) => name.startsWith("upload-")),
+    (await readdir(invocation.runtimePath)).some((name) =>
+      name.startsWith("upload-"),
+    ),
     false,
   );
   await fixture.service.close();
@@ -3388,7 +3517,10 @@ test("download events queued behind a command are returned after the protocol ba
     ),
   );
   assert.deepEqual(lifecycle.events, ["ack", "persist"]);
-  assert.equal(asRecord(output.pendingDownload).downloadId, "download-intercepted");
+  assert.equal(
+    asRecord(output.pendingDownload).downloadId,
+    "download-intercepted",
+  );
   await fixture.service.close();
 });
 
@@ -3416,7 +3548,10 @@ test("a completed intercepted download wins over an engine response error from t
       createLifecycle(),
     ),
   );
-  assert.equal(asRecord(output.pendingDownload).downloadId, "download-intercepted");
+  assert.equal(
+    asRecord(output.pendingDownload).downloadId,
+    "download-intercepted",
+  );
   await fixture.service.close();
 });
 
@@ -3472,15 +3607,17 @@ test("releasing a denied prepared download removes only its exact quarantine aut
     generation: 1,
     pendingDownloadId: "late-download",
   });
-  call.inputAdapters = [{
-    adapterId: "kestrel.browser-download-effect:v1",
-    metadata: { ...effect },
-  }];
+  call.inputAdapters = [
+    {
+      adapterId: "kestrel.browser-download-effect:v1",
+      metadata: { ...effect },
+    },
+  ];
   await fixture.service.releasePreparedDownload(call);
-  await fixture.service.releasePreparedDownload(
-    call,
-    { threadId: "thread-1", projectId: "project-1" },
-  );
+  await fixture.service.releasePreparedDownload(call, {
+    threadId: "thread-1",
+    projectId: "project-1",
+  });
   await assert.rejects(
     fixture.service.prepareDownload({
       version: BROWSER_DOWNLOAD_PREPARATION_VERSION,
@@ -3519,10 +3656,12 @@ test("approved Desktop download promotion publishes one deterministic file befor
     generation: 1,
     pendingDownloadId: "late-download",
   });
-  call.inputAdapters = [{
-    adapterId: "kestrel.browser-download-effect:v1",
-    metadata: { ...effect },
-  }];
+  call.inputAdapters = [
+    {
+      adapterId: "kestrel.browser-download-effect:v1",
+      metadata: { ...effect },
+    },
+  ];
   let durableOutput: unknown;
   const lifecycle = createLifecycle();
   lifecycle.persistCompletedResult = async (output) => {
@@ -3541,6 +3680,7 @@ test("approved Desktop download promotion publishes one deterministic file befor
   const artifact = asRecord(output.artifact);
   assert.match(String(artifact.id), /^file-browser-[0-9a-f]{64}$/u);
   assert.equal(artifact.kind, "browser-download");
+  assert.equal("version" in artifact, false);
   const attachments = await new (
     await import("../../src/localCore/desktopAttachments.js")
   ).DesktopAttachmentStore(fixture.homePath).list("thread-1");
@@ -3557,7 +3697,10 @@ test("approved Desktop download promotion publishes one deterministic file befor
       artifactId: String(artifact.id),
       artifactKind: "browser-download",
     }),
-    artifact,
+    {
+      version: "browser_authorized_artifact_v1",
+      ...artifact,
+    },
   );
   await fixture.service.close();
 });
@@ -3568,7 +3711,12 @@ test("Session teardown removes unpromoted quarantine bytes", async () => {
   const sessionId = await openSession(fixture.service);
   const invocation = engine.opened[0]!;
   await engine.emitDownload();
-  await stat(path.join(invocation.blockedDownloadPath, "123e4567-e89b-42d3-a456-426614174000"));
+  await stat(
+    path.join(
+      invocation.blockedDownloadPath,
+      "123e4567-e89b-42d3-a456-426614174000",
+    ),
+  );
   await fixture.service.close();
   await assert.rejects(stat(invocation.runtimePath), { code: "ENOENT" });
   await assert.rejects(stat(invocation.socketPath), { code: "ENOENT" });
@@ -3651,6 +3799,7 @@ test("screenshot returns and reloads the durable Desktop attachment identity", a
   );
   const artifact = asRecord(output.artifact);
   assert.match(String(artifact.id), /^file-/u);
+  assert.equal("version" in artifact, false);
   assert.equal(artifact.mediaType, "image/png");
   assert.equal(Number(artifact.bytes) > 0, true);
   assert.match(String(artifact.sha256), /^[0-9a-f]{64}$/u);
@@ -3673,7 +3822,10 @@ test("screenshot returns and reloads the durable Desktop attachment identity", a
     }),
     undefined,
   );
-  assert.deepEqual(await fixture.service.authorizeArtifact(request), artifact);
+  assert.deepEqual(await fixture.service.authorizeArtifact(request), {
+    version: "browser_authorized_artifact_v1",
+    ...artifact,
+  });
   await fixture.service.close();
 
   const restarted = await createFixture({ homePath: fixture.homePath });
@@ -3684,11 +3836,45 @@ test("screenshot returns and reloads the durable Desktop attachment identity", a
     }),
     undefined,
   );
-  assert.deepEqual(
-    await restarted.service.authorizeArtifact(request),
-    artifact,
-  );
+  assert.deepEqual(await restarted.service.authorizeArtifact(request), {
+    version: "browser_authorized_artifact_v1",
+    ...artifact,
+  });
   await restarted.service.close();
+});
+
+test("Browser capture uses the adapter CDP frame path when the engine provides it", async () => {
+  let requestedFullPage: boolean | undefined;
+  const engine = Object.assign(new FakeEngine(), {
+    async captureScreenshot(
+      input: Parameters<
+        NonNullable<DesktopBrowserEngineAdapter["captureScreenshot"]>
+      >[0],
+    ) {
+      requestedFullPage = input.fullPage;
+      return {
+        mediaType: "image/png" as const,
+        dataBase64: engine.viewerFrameBase64,
+      };
+    },
+  });
+  const fixture = await createFixture({ engine });
+  const sessionId = await openSession(fixture.service);
+
+  const output = asRecord(
+    await fixture.service.execute(
+      prepared("browser.capture", { sessionId, fullPage: true }),
+      createLifecycle(),
+    ),
+  );
+
+  assert.equal(requestedFullPage, true);
+  assert.equal(
+    engine.commands.some((command) => command[0] === "screenshot"),
+    false,
+  );
+  assert.equal(asRecord(output.artifact).mediaType, "image/png");
+  await fixture.service.close();
 });
 
 test("pinned agent-browser download control denies downloads through Browser CDP before dispatch", async () => {
@@ -3793,296 +3979,425 @@ test(
   },
 );
 
-test("download admission and measured-size rejection remove only the exact quarantine file", { timeout: 5_000 }, async (t) => {
-  const quarantinePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-download-rejection-"));
-  t.after(() => rm(quarantinePath, { recursive: true, force: true }));
-  const admissionGuid = "123e4567-e89b-42d3-a456-426614174011";
-  const oversizedGuid = "123e4567-e89b-42d3-a456-426614174012";
-  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
-  await new Promise<void>((resolve) => server.once("listening", resolve));
-  t.after(() => new Promise<void>((resolve) => {
-    for (const client of server.clients) client.terminate();
-    server.close(() => resolve());
-  }));
-  const address = server.address();
-  if (address === null || typeof address === "string") assert.fail("download rejection fixture did not bind TCP");
-  let barriers = 0;
-  let cancellationObserved = false;
-  server.on("connection", (socket) => {
-    socket.on("message", async (raw) => {
-      const command = JSON.parse(raw.toString("utf8")) as { id: number; method: string };
-      if (command.method === "Browser.cancelDownload") {
-        cancellationObserved = true;
+test(
+  "download admission and measured-size rejection remove only the exact quarantine file",
+  { timeout: 5_000 },
+  async (t) => {
+    const quarantinePath = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-download-rejection-"),
+    );
+    t.after(() => rm(quarantinePath, { recursive: true, force: true }));
+    const admissionGuid = "123e4567-e89b-42d3-a456-426614174011";
+    const oversizedGuid = "123e4567-e89b-42d3-a456-426614174012";
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    t.after(
+      () =>
+        new Promise<void>((resolve) => {
+          for (const client of server.clients) client.terminate();
+          server.close(() => resolve());
+        }),
+    );
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      assert.fail("download rejection fixture did not bind TCP");
+    let barriers = 0;
+    let cancellationObserved = false;
+    server.on("connection", (socket) => {
+      socket.on("message", async (raw) => {
+        const command = JSON.parse(raw.toString("utf8")) as {
+          id: number;
+          method: string;
+        };
+        if (command.method === "Browser.cancelDownload") {
+          cancellationObserved = true;
+          socket.send(JSON.stringify({ id: command.id, result: {} }));
+          return;
+        }
+        if (command.method !== "Browser.setDownloadBehavior") return;
+        barriers += 1;
+        if (barriers === 1) {
+          socket.send(JSON.stringify({ id: command.id, result: {} }));
+          return;
+        }
+        const guid = barriers === 2 ? admissionGuid : oversizedGuid;
+        await writeFile(path.join(quarantinePath, guid), "download");
+        socket.send(
+          JSON.stringify({
+            method: "Browser.downloadWillBegin",
+            params: {
+              guid,
+              suggestedFilename: "unsafe.bin",
+              url: "https://example.com/private?secret=1",
+            },
+          }),
+        );
+        socket.send(
+          JSON.stringify({
+            method: "Browser.downloadProgress",
+            params: {
+              guid,
+              state: "completed",
+              receivedBytes: barriers === 2 ? 8 : 100 * 1024 * 1024 + 1,
+            },
+          }),
+        );
         socket.send(JSON.stringify({ id: command.id, result: {} }));
-        return;
-      }
-      if (command.method !== "Browser.setDownloadBehavior") return;
-      barriers += 1;
-      if (barriers === 1) {
+      });
+    });
+
+    const interception = await installAgentBrowserDownloadInterception(
+      `ws://127.0.0.1:${address.port}/devtools/browser/test`,
+      quarantinePath,
+      async () => {
+        throw new Error("BROWSER_ARTIFACT_TOO_LARGE: admission rejected");
+      },
+    );
+    t.after(() => interception.stop());
+    await assert.rejects(interception.synchronize(), /admission rejected/u);
+    await assert.rejects(stat(path.join(quarantinePath, admissionGuid)), {
+      code: "ENOENT",
+    });
+    await assert.rejects(
+      interception.synchronize(),
+      /exceeded the quarantine file limit/u,
+    );
+    await assert.rejects(stat(path.join(quarantinePath, oversizedGuid)), {
+      code: "ENOENT",
+    });
+    assert.equal(cancellationObserved, true);
+  },
+);
+
+test(
+  "download quarantine bounds measured in-progress bytes and item reservations",
+  { timeout: 5_000 },
+  async (t) => {
+    const quarantinePath = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-download-progress-bounds-"),
+    );
+    t.after(() => rm(quarantinePath, { recursive: true, force: true }));
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    t.after(
+      () =>
+        new Promise<void>((resolve) => {
+          for (const client of server.clients) client.terminate();
+          server.close(() => resolve());
+        }),
+    );
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      assert.fail("download bounds fixture did not bind TCP");
+    let barriers = 0;
+    let cancellations = 0;
+    server.on("connection", (socket) => {
+      socket.on("message", (raw) => {
+        const command = JSON.parse(raw.toString("utf8")) as {
+          id: number;
+          method: string;
+        };
+        if (command.method === "Browser.cancelDownload") {
+          cancellations += 1;
+          socket.send(JSON.stringify({ id: command.id, result: {} }));
+          return;
+        }
+        if (command.method !== "Browser.setDownloadBehavior") return;
+        barriers += 1;
+        if (barriers === 1) {
+          socket.send(JSON.stringify({ id: command.id, result: {} }));
+          return;
+        }
+        const guids = Array.from(
+          { length: 21 },
+          (_, index) =>
+            `123e4567-e89b-42d3-a456-${String(index + 1).padStart(12, "0")}`,
+        );
+        for (const guid of guids) {
+          socket.send(
+            JSON.stringify({
+              method: "Browser.downloadWillBegin",
+              params: {
+                guid,
+                suggestedFilename: `${guid}.bin`,
+                url: "https://example.com/file",
+              },
+            }),
+          );
+        }
+        for (const guid of guids) {
+          socket.send(
+            JSON.stringify({
+              method: "Browser.downloadProgress",
+              params: {
+                guid,
+                state: "inProgress",
+                receivedBytes: 90 * 1024 * 1024,
+              },
+            }),
+          );
+        }
         socket.send(JSON.stringify({ id: command.id, result: {} }));
-        return;
-      }
-      const guid = barriers === 2 ? admissionGuid : oversizedGuid;
-      await writeFile(path.join(quarantinePath, guid), "download");
-      socket.send(JSON.stringify({
+      });
+    });
+    const interception = await installAgentBrowserDownloadInterception(
+      `ws://127.0.0.1:${address.port}/devtools/browser/test`,
+      quarantinePath,
+      () => undefined,
+    );
+    t.after(() => interception.stop());
+    await assert.rejects(interception.synchronize(), /quarantine/u);
+    assert.equal(cancellations, 16);
+  },
+);
+
+test(
+  "completed downloads remain reserved until measured admission settles",
+  { timeout: 5_000 },
+  async (t) => {
+    const quarantinePath = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-download-completion-reservation-"),
+    );
+    t.after(() => rm(quarantinePath, { recursive: true, force: true }));
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    t.after(
+      () =>
+        new Promise<void>((resolve) => {
+          for (const client of server.clients) client.terminate();
+          server.close(() => resolve());
+        }),
+    );
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      assert.fail("download completion fixture did not bind TCP");
+    const completingGuid = "123e4567-e89b-42d3-a456-426614174201";
+    const interleavedGuid = "123e4567-e89b-42d3-a456-426614174202";
+    let connectedSocket: import("ws").WebSocket | undefined;
+    let releaseAdmission!: () => void;
+    const admissionBarrier = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    let admissionStarted!: () => void;
+    const admissionStartedPromise = new Promise<void>((resolve) => {
+      admissionStarted = resolve;
+    });
+    let cancellations = 0;
+    let cancellationObserved!: () => void;
+    const cancellationObservedPromise = new Promise<void>((resolve) => {
+      cancellationObserved = resolve;
+    });
+    let barriers = 0;
+    server.on("connection", (socket) => {
+      connectedSocket = socket;
+      socket.on("message", async (raw) => {
+        const command = JSON.parse(raw.toString("utf8")) as {
+          id: number;
+          method: string;
+        };
+        if (command.method === "Browser.cancelDownload") {
+          cancellations += 1;
+          cancellationObserved();
+          socket.send(JSON.stringify({ id: command.id, result: {} }));
+          return;
+        }
+        if (command.method !== "Browser.setDownloadBehavior") return;
+        barriers += 1;
+        if (barriers === 1) {
+          socket.send(JSON.stringify({ id: command.id, result: {} }));
+          return;
+        }
+        if (barriers > 2) {
+          socket.send(JSON.stringify({ id: command.id, result: {} }));
+          return;
+        }
+        await writeFile(path.join(quarantinePath, completingGuid), "download");
+        socket.send(
+          JSON.stringify({
+            method: "Browser.downloadWillBegin",
+            params: {
+              guid: completingGuid,
+              suggestedFilename: "settling.bin",
+              url: "https://example.com/file",
+            },
+          }),
+        );
+        socket.send(
+          JSON.stringify({
+            method: "Browser.downloadProgress",
+            params: {
+              guid: completingGuid,
+              state: "completed",
+              receivedBytes: 8,
+            },
+          }),
+        );
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+      });
+    });
+    const interception = await installAgentBrowserDownloadInterception(
+      `ws://127.0.0.1:${address.port}/devtools/browser/test`,
+      quarantinePath,
+      async () => {
+        admissionStarted();
+        await admissionBarrier;
+      },
+      () => ({ count: 19, measuredBytes: 0 }),
+    );
+    t.after(() => interception.stop());
+    const synchronized = interception.synchronize();
+    await admissionStartedPromise;
+    connectedSocket?.send(
+      JSON.stringify({
         method: "Browser.downloadWillBegin",
-        params: { guid, suggestedFilename: "unsafe.bin", url: "https://example.com/private?secret=1" },
-      }));
-      socket.send(JSON.stringify({
+        params: {
+          guid: interleavedGuid,
+          suggestedFilename: "interleaved.bin",
+          url: "https://example.com/file",
+        },
+      }),
+    );
+    await cancellationObservedPromise;
+    const interleavedSynchronization = interception.synchronize();
+    releaseAdmission();
+    const itemResults = await Promise.allSettled([
+      synchronized,
+      interleavedSynchronization,
+    ]);
+    const itemFailure = itemResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    assert.match(String(itemFailure?.reason), /item limit was reached/u);
+    assert.equal(cancellations, 1);
+  },
+);
+
+test(
+  "interleaved progress observes completed-byte admission before accepting more bytes",
+  { timeout: 5_000 },
+  async (t) => {
+    const quarantinePath = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-download-completion-bytes-"),
+    );
+    t.after(() => rm(quarantinePath, { recursive: true, force: true }));
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    t.after(
+      () =>
+        new Promise<void>((resolve) => {
+          for (const client of server.clients) client.terminate();
+          server.close(() => resolve());
+        }),
+    );
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      assert.fail("download byte fixture did not bind TCP");
+    const completingGuid = "123e4567-e89b-42d3-a456-426614174211";
+    const interleavedGuid = "123e4567-e89b-42d3-a456-426614174212";
+    let completedBytes = 410 * 1024 * 1024;
+    let releaseAdmission!: () => void;
+    const admissionBarrier = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    let admissionStarted!: () => void;
+    const admissionStartedPromise = new Promise<void>((resolve) => {
+      admissionStarted = resolve;
+    });
+    let connectedSocket: import("ws").WebSocket | undefined;
+    let cancellations = 0;
+    let barriers = 0;
+    server.on("connection", (socket) => {
+      connectedSocket = socket;
+      socket.on("message", async (raw) => {
+        const command = JSON.parse(raw.toString("utf8")) as {
+          id: number;
+          method: string;
+        };
+        if (command.method === "Browser.cancelDownload") {
+          cancellations += 1;
+          socket.send(JSON.stringify({ id: command.id, result: {} }));
+          return;
+        }
+        if (command.method !== "Browser.setDownloadBehavior") return;
+        barriers += 1;
+        if (barriers === 1) {
+          socket.send(JSON.stringify({ id: command.id, result: {} }));
+          return;
+        }
+        if (barriers > 2) {
+          socket.send(JSON.stringify({ id: command.id, result: {} }));
+          return;
+        }
+        await writeFile(path.join(quarantinePath, completingGuid), "download");
+        socket.send(
+          JSON.stringify({
+            method: "Browser.downloadWillBegin",
+            params: {
+              guid: completingGuid,
+              suggestedFilename: "settling.bin",
+              url: "https://example.com/file",
+            },
+          }),
+        );
+        socket.send(
+          JSON.stringify({
+            method: "Browser.downloadProgress",
+            params: {
+              guid: completingGuid,
+              state: "completed",
+              receivedBytes: 90 * 1024 * 1024,
+            },
+          }),
+        );
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+      });
+    });
+    const interception = await installAgentBrowserDownloadInterception(
+      `ws://127.0.0.1:${address.port}/devtools/browser/test`,
+      quarantinePath,
+      async () => {
+        admissionStarted();
+        await admissionBarrier;
+        completedBytes = 500 * 1024 * 1024;
+      },
+      () => ({ count: 0, measuredBytes: completedBytes }),
+    );
+    t.after(() => interception.stop());
+    const synchronized = interception.synchronize();
+    await admissionStartedPromise;
+    connectedSocket?.send(
+      JSON.stringify({
+        method: "Browser.downloadWillBegin",
+        params: {
+          guid: interleavedGuid,
+          suggestedFilename: "interleaved.bin",
+          url: "https://example.com/file",
+        },
+      }),
+    );
+    connectedSocket?.send(
+      JSON.stringify({
         method: "Browser.downloadProgress",
         params: {
-          guid,
-          state: "completed",
-          receivedBytes: barriers === 2 ? 8 : 100 * 1024 * 1024 + 1,
+          guid: interleavedGuid,
+          state: "inProgress",
+          receivedBytes: 1,
         },
-      }));
-      socket.send(JSON.stringify({ id: command.id, result: {} }));
-    });
-  });
-
-  const interception = await installAgentBrowserDownloadInterception(
-    `ws://127.0.0.1:${address.port}/devtools/browser/test`,
-    quarantinePath,
-    async () => { throw new Error("BROWSER_ARTIFACT_TOO_LARGE: admission rejected"); },
-  );
-  t.after(() => interception.stop());
-  await assert.rejects(interception.synchronize(), /admission rejected/u);
-  await assert.rejects(stat(path.join(quarantinePath, admissionGuid)), { code: "ENOENT" });
-  await assert.rejects(interception.synchronize(), /exceeded the quarantine file limit/u);
-  await assert.rejects(stat(path.join(quarantinePath, oversizedGuid)), { code: "ENOENT" });
-  assert.equal(cancellationObserved, true);
-});
-
-test("download quarantine bounds measured in-progress bytes and item reservations", { timeout: 5_000 }, async (t) => {
-  const quarantinePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-download-progress-bounds-"));
-  t.after(() => rm(quarantinePath, { recursive: true, force: true }));
-  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
-  await new Promise<void>((resolve) => server.once("listening", resolve));
-  t.after(() => new Promise<void>((resolve) => {
-    for (const client of server.clients) client.terminate();
-    server.close(() => resolve());
-  }));
-  const address = server.address();
-  if (address === null || typeof address === "string") assert.fail("download bounds fixture did not bind TCP");
-  let barriers = 0;
-  let cancellations = 0;
-  server.on("connection", (socket) => {
-    socket.on("message", (raw) => {
-      const command = JSON.parse(raw.toString("utf8")) as { id: number; method: string };
-      if (command.method === "Browser.cancelDownload") {
-        cancellations += 1;
-        socket.send(JSON.stringify({ id: command.id, result: {} }));
-        return;
-      }
-      if (command.method !== "Browser.setDownloadBehavior") return;
-      barriers += 1;
-      if (barriers === 1) {
-        socket.send(JSON.stringify({ id: command.id, result: {} }));
-        return;
-      }
-      const guids = Array.from({ length: 21 }, (_, index) =>
-        `123e4567-e89b-42d3-a456-${String(index + 1).padStart(12, "0")}`,
-      );
-      for (const guid of guids) {
-        socket.send(JSON.stringify({
-          method: "Browser.downloadWillBegin",
-          params: { guid, suggestedFilename: `${guid}.bin`, url: "https://example.com/file" },
-        }));
-      }
-      for (const guid of guids) {
-        socket.send(JSON.stringify({
-          method: "Browser.downloadProgress",
-          params: { guid, state: "inProgress", receivedBytes: 90 * 1024 * 1024 },
-        }));
-      }
-      socket.send(JSON.stringify({ id: command.id, result: {} }));
-    });
-  });
-  const interception = await installAgentBrowserDownloadInterception(
-    `ws://127.0.0.1:${address.port}/devtools/browser/test`,
-    quarantinePath,
-    () => undefined,
-  );
-  t.after(() => interception.stop());
-  await assert.rejects(interception.synchronize(), /quarantine/u);
-  assert.equal(cancellations, 16);
-});
-
-test("completed downloads remain reserved until measured admission settles", { timeout: 5_000 }, async (t) => {
-  const quarantinePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-download-completion-reservation-"));
-  t.after(() => rm(quarantinePath, { recursive: true, force: true }));
-  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
-  await new Promise<void>((resolve) => server.once("listening", resolve));
-  t.after(() => new Promise<void>((resolve) => {
-    for (const client of server.clients) client.terminate();
-    server.close(() => resolve());
-  }));
-  const address = server.address();
-  if (address === null || typeof address === "string") assert.fail("download completion fixture did not bind TCP");
-  const completingGuid = "123e4567-e89b-42d3-a456-426614174201";
-  const interleavedGuid = "123e4567-e89b-42d3-a456-426614174202";
-  let connectedSocket: import("ws").WebSocket | undefined;
-  let releaseAdmission!: () => void;
-  const admissionBarrier = new Promise<void>((resolve) => {
-    releaseAdmission = resolve;
-  });
-  let admissionStarted!: () => void;
-  const admissionStartedPromise = new Promise<void>((resolve) => {
-    admissionStarted = resolve;
-  });
-  let cancellations = 0;
-  let cancellationObserved!: () => void;
-  const cancellationObservedPromise = new Promise<void>((resolve) => {
-    cancellationObserved = resolve;
-  });
-  let barriers = 0;
-  server.on("connection", (socket) => {
-    connectedSocket = socket;
-    socket.on("message", async (raw) => {
-      const command = JSON.parse(raw.toString("utf8")) as { id: number; method: string };
-      if (command.method === "Browser.cancelDownload") {
-        cancellations += 1;
-        cancellationObserved();
-        socket.send(JSON.stringify({ id: command.id, result: {} }));
-        return;
-      }
-      if (command.method !== "Browser.setDownloadBehavior") return;
-      barriers += 1;
-      if (barriers === 1) {
-        socket.send(JSON.stringify({ id: command.id, result: {} }));
-        return;
-      }
-      if (barriers > 2) {
-        socket.send(JSON.stringify({ id: command.id, result: {} }));
-        return;
-      }
-      await writeFile(path.join(quarantinePath, completingGuid), "download");
-      socket.send(JSON.stringify({
-        method: "Browser.downloadWillBegin",
-        params: { guid: completingGuid, suggestedFilename: "settling.bin", url: "https://example.com/file" },
-      }));
-      socket.send(JSON.stringify({
-        method: "Browser.downloadProgress",
-        params: { guid: completingGuid, state: "completed", receivedBytes: 8 },
-      }));
-      socket.send(JSON.stringify({ id: command.id, result: {} }));
-    });
-  });
-  const interception = await installAgentBrowserDownloadInterception(
-    `ws://127.0.0.1:${address.port}/devtools/browser/test`,
-    quarantinePath,
-    async () => {
-      admissionStarted();
-      await admissionBarrier;
-    },
-    () => ({ count: 19, measuredBytes: 0 }),
-  );
-  t.after(() => interception.stop());
-  const synchronized = interception.synchronize();
-  await admissionStartedPromise;
-  connectedSocket?.send(JSON.stringify({
-    method: "Browser.downloadWillBegin",
-    params: { guid: interleavedGuid, suggestedFilename: "interleaved.bin", url: "https://example.com/file" },
-  }));
-  await cancellationObservedPromise;
-  const interleavedSynchronization = interception.synchronize();
-  releaseAdmission();
-  const itemResults = await Promise.allSettled([
-    synchronized,
-    interleavedSynchronization,
-  ]);
-  const itemFailure = itemResults.find(
-    (result): result is PromiseRejectedResult => result.status === "rejected",
-  );
-  assert.match(String(itemFailure?.reason), /item limit was reached/u);
-  assert.equal(cancellations, 1);
-});
-
-test("interleaved progress observes completed-byte admission before accepting more bytes", { timeout: 5_000 }, async (t) => {
-  const quarantinePath = await mkdtemp(path.join(os.tmpdir(), "kestrel-download-completion-bytes-"));
-  t.after(() => rm(quarantinePath, { recursive: true, force: true }));
-  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
-  await new Promise<void>((resolve) => server.once("listening", resolve));
-  t.after(() => new Promise<void>((resolve) => {
-    for (const client of server.clients) client.terminate();
-    server.close(() => resolve());
-  }));
-  const address = server.address();
-  if (address === null || typeof address === "string") assert.fail("download byte fixture did not bind TCP");
-  const completingGuid = "123e4567-e89b-42d3-a456-426614174211";
-  const interleavedGuid = "123e4567-e89b-42d3-a456-426614174212";
-  let completedBytes = 410 * 1024 * 1024;
-  let releaseAdmission!: () => void;
-  const admissionBarrier = new Promise<void>((resolve) => {
-    releaseAdmission = resolve;
-  });
-  let admissionStarted!: () => void;
-  const admissionStartedPromise = new Promise<void>((resolve) => {
-    admissionStarted = resolve;
-  });
-  let connectedSocket: import("ws").WebSocket | undefined;
-  let cancellations = 0;
-  let barriers = 0;
-  server.on("connection", (socket) => {
-    connectedSocket = socket;
-    socket.on("message", async (raw) => {
-      const command = JSON.parse(raw.toString("utf8")) as { id: number; method: string };
-      if (command.method === "Browser.cancelDownload") {
-        cancellations += 1;
-        socket.send(JSON.stringify({ id: command.id, result: {} }));
-        return;
-      }
-      if (command.method !== "Browser.setDownloadBehavior") return;
-      barriers += 1;
-      if (barriers === 1) {
-        socket.send(JSON.stringify({ id: command.id, result: {} }));
-        return;
-      }
-      if (barriers > 2) {
-        socket.send(JSON.stringify({ id: command.id, result: {} }));
-        return;
-      }
-      await writeFile(path.join(quarantinePath, completingGuid), "download");
-      socket.send(JSON.stringify({ method: "Browser.downloadWillBegin", params: {
-        guid: completingGuid, suggestedFilename: "settling.bin", url: "https://example.com/file",
-      } }));
-      socket.send(JSON.stringify({ method: "Browser.downloadProgress", params: {
-        guid: completingGuid, state: "completed", receivedBytes: 90 * 1024 * 1024,
-      } }));
-      socket.send(JSON.stringify({ id: command.id, result: {} }));
-    });
-  });
-  const interception = await installAgentBrowserDownloadInterception(
-    `ws://127.0.0.1:${address.port}/devtools/browser/test`,
-    quarantinePath,
-    async () => {
-      admissionStarted();
-      await admissionBarrier;
-      completedBytes = 500 * 1024 * 1024;
-    },
-    () => ({ count: 0, measuredBytes: completedBytes }),
-  );
-  t.after(() => interception.stop());
-  const synchronized = interception.synchronize();
-  await admissionStartedPromise;
-  connectedSocket?.send(JSON.stringify({ method: "Browser.downloadWillBegin", params: {
-    guid: interleavedGuid, suggestedFilename: "interleaved.bin", url: "https://example.com/file",
-  } }));
-  connectedSocket?.send(JSON.stringify({ method: "Browser.downloadProgress", params: {
-    guid: interleavedGuid, state: "inProgress", receivedBytes: 1,
-  } }));
-  const interleavedSynchronization = interception.synchronize();
-  releaseAdmission();
-  const byteResults = await Promise.allSettled([
-    synchronized,
-    interleavedSynchronization,
-  ]);
-  const byteFailure = byteResults.find(
-    (result): result is PromiseRejectedResult => result.status === "rejected",
-  );
-  assert.match(String(byteFailure?.reason), /quarantine file limit/u);
-  assert.equal(cancellations, 1);
-});
+      }),
+    );
+    const interleavedSynchronization = interception.synchronize();
+    releaseAdmission();
+    const byteResults = await Promise.allSettled([
+      synchronized,
+      interleavedSynchronization,
+    ]);
+    const byteFailure = byteResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    assert.match(String(byteFailure?.reason), /quarantine file limit/u);
+    assert.equal(cancellations, 1);
+  },
+);
 
 test("daemon cleanup accepts only the exact exited agent-browser zombie identity", () => {
   assert.equal(
@@ -4442,7 +4757,11 @@ test("native handoff presents and revokes only the exact private CDP window with
     throw new Error(`unexpected ${method}`);
   };
   const cdp = "ws://127.0.0.1:9222/devtools/browser/exact";
-  const concealed = await minimizeAgentBrowserNativeWindow(cdp, "target-1", send);
+  const concealed = await minimizeAgentBrowserNativeWindow(
+    cdp,
+    "target-1",
+    send,
+  );
   assert.deepEqual(concealed, { windowId: 17, targetId: "target-1" });
   assert.equal(state, "minimized");
   const presented = await presentAgentBrowserNativeWindow(
@@ -4473,7 +4792,10 @@ test("native handoff presents and revokes only the exact private CDP window with
     ),
     true,
   );
-  assert.doesNotMatch(JSON.stringify(calls), /cdpUrl|proxy-secret|passkey|mfa/u);
+  assert.doesNotMatch(
+    JSON.stringify(calls),
+    /cdpUrl|proxy-secret|passkey|mfa/u,
+  );
 });
 
 test("native handoff revocation minimizes and verifies both stored and moved target windows", async () => {
@@ -4620,6 +4942,99 @@ test("native handoff focus failure conceals the exact target window before rejec
   assert.equal(state, "minimized");
 });
 
+test("native frame capture normalizes once without focusing and remains capturable", async () => {
+  let state: "normal" | "minimized" = "minimized";
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const send = async (
+    _cdpUrl: string,
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    calls.push({ method, params: structuredClone(params) });
+    if (method === "Browser.getWindowForTarget") {
+      return { windowId: 17, bounds: { windowState: state } };
+    }
+    if (method === "Browser.setWindowBounds") {
+      state = asRecord(params.bounds).windowState as "normal" | "minimized";
+      return {};
+    }
+    if (method === "Browser.getWindowBounds") {
+      return { bounds: { windowState: state } };
+    }
+    throw new Error(`unexpected ${method}`);
+  };
+
+  const presentation = await prepareAgentBrowserNativeCaptureWindow(
+    "ws://127.0.0.1:9222/devtools/browser/exact",
+    "target-1",
+    send,
+  );
+  assert.deepEqual(presentation, { windowId: 17, targetId: "target-1" });
+  assert.equal(state, "normal");
+  assert.equal(
+    calls.some((call) => call.method === "Page.bringToFront"),
+    false,
+  );
+  const setBoundsCalls = calls.filter(
+    (call) => call.method === "Browser.setWindowBounds",
+  ).length;
+  const repeated = await prepareAgentBrowserNativeCaptureWindow(
+    "ws://127.0.0.1:9222/devtools/browser/exact",
+    "target-1",
+    send,
+  );
+  assert.deepEqual(repeated, presentation);
+  assert.equal(
+    calls.filter((call) => call.method === "Browser.setWindowBounds").length,
+    setBoundsCalls,
+  );
+  await revokeAgentBrowserNativeWindow(
+    "ws://127.0.0.1:9222/devtools/browser/exact",
+    presentation,
+    send,
+  );
+  assert.equal(state, "minimized");
+});
+
+test("pinned agent-browser metadata resolves the active CDP target rather than the CLI tab alias", () => {
+  const stdout = JSON.stringify({
+    _boundary: {
+      nonce: "0123456789abcdef0123456789abcdef",
+      origin: "unknown",
+    },
+    data: {
+      lifecycle: {
+        effectiveLaunch: {
+          browserLaunched: true,
+          engine: "chrome",
+          launchHash: 123,
+        },
+        launched: false,
+        relaunchedBrowser: false,
+        restartedBackground: false,
+        restoreStatus: "not_configured",
+        reused: true,
+        saveStatus: "not_attempted",
+      },
+      tabs: [
+        {
+          tabId: "t1",
+          targetId: "CDP_TARGET_EXACT",
+          label: null,
+          title: "about:blank",
+          url: "about:blank",
+          type: "page",
+          active: true,
+        },
+      ],
+    },
+    error: null,
+    success: true,
+  });
+
+  assert.equal(requirePinnedViewerActiveTarget(stdout), "CDP_TARGET_EXACT");
+});
+
 test("agent-browser adapter requires the exact accepted operation token before invocation", async () => {
   const adapter = new AgentBrowserCliAdapter({
     engineExecutablePath: "/bin/echo",
@@ -4651,7 +5066,9 @@ test("agent-browser adapter requires the exact accepted operation token before i
 });
 
 test("agent-browser adapter uploads only an exact Browser-owned staged file through the pinned CLI", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-upload-cli-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-browser-upload-cli-"),
+  );
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
@@ -4694,7 +5111,9 @@ test("agent-browser adapter uploads only an exact Browser-owned staged file thro
 });
 
 test("agent-browser file-input label parsing never falls back to wrapper JSON or origin", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-upload-label-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-browser-upload-label-"),
+  );
   t.after(async () => await rm(root, { recursive: true, force: true }));
   const executable = path.join(root, "agent-browser-label-fixture");
   await writeFile(
@@ -4726,19 +5145,24 @@ esac
     operationId: "call-upload-label",
     grantGeneration: invocation.proxy.generation,
   });
-  assert.deepEqual(await adapter.describeFileInput({
-    ...invocation,
-    targetRef: "@e1",
-    acceptedOperation: accepted,
-  }), {
-    targetRef: "@e1",
-    targetLabel: "File input",
-  });
+  assert.deepEqual(
+    await adapter.describeFileInput({
+      ...invocation,
+      targetRef: "@e1",
+      acceptedOperation: accepted,
+    }),
+    {
+      targetRef: "@e1",
+      targetLabel: "File input",
+    },
+  );
   adapter.releaseOperation(accepted);
 });
 
 test("agent-browser file-input description rejects a non-input ref even when it reports type=file", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-upload-tag-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-browser-upload-tag-"),
+  );
   t.after(async () => await rm(root, { recursive: true, force: true }));
   const executable = path.join(root, "agent-browser-tag-fixture");
   await writeFile(
@@ -4781,7 +5205,9 @@ esac
 });
 
 test("agent-browser file-input description rejects failed and noncanonical local-name envelopes", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-browser-tag-envelope-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-browser-tag-envelope-"),
+  );
   t.after(async () => await rm(root, { recursive: true, force: true }));
   const responses = [
     '{"success":false,"data":{"localName":"input","type":"file"},"error":"forged"}',
@@ -4789,7 +5215,10 @@ test("agent-browser file-input description rejects failed and noncanonical local
     '{"success":true,"data":{"localName":"input"},"type":"file","error":null}',
   ];
   for (const [index, response] of responses.entries()) {
-    const executable = path.join(root, `agent-browser-envelope-fixture-${index}`);
+    const executable = path.join(
+      root,
+      `agent-browser-envelope-fixture-${index}`,
+    );
     await writeFile(
       executable,
       `#!/bin/sh
@@ -4806,7 +5235,11 @@ esac
       profilePath: path.join(root, `runtime-${index}`, "profile"),
       configPath: path.join(root, `runtime-${index}`, "config"),
       screenshotPath: path.join(root, `runtime-${index}`, "screenshot.png"),
-      blockedDownloadPath: path.join(root, `runtime-${index}`, "downloads-disabled"),
+      blockedDownloadPath: path.join(
+        root,
+        `runtime-${index}`,
+        "downloads-disabled",
+      ),
     };
     await mkdir(invocation.runtimePath, { recursive: true, mode: 0o700 });
     const adapter = new AgentBrowserCliAdapter({
@@ -5150,8 +5583,7 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
             params: {
               sessionId: eventSessionId,
               targetInfo: {
-                targetId:
-                  mode === "attach_target_mismatch" ? targetB : targetA,
+                targetId: mode === "attach_target_mismatch" ? targetB : targetA,
                 type: "page",
                 title: "Example",
                 url: "https://example.com/",
@@ -5174,7 +5606,19 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
           }
           return;
         }
-        if (request.id === 2) {
+        if (request.method === "Page.getLayoutMetrics") {
+          socket.send(
+            JSON.stringify({
+              id: request.id,
+              sessionId: "CDP_SESSION",
+              result: {
+                cssContentSize: { x: 0, y: 0, width: 1200, height: 2400 },
+              },
+            }),
+          );
+          return;
+        }
+        if (request.method === "Page.captureScreenshot") {
           if (mode === "oversized_message") {
             socket.send(
               "x".repeat(HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES + 1),
@@ -5187,7 +5631,7 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
           }
           socket.send(
             JSON.stringify({
-              id: 2,
+              id: request.id,
               sessionId:
                 mode === "wrong_session" ? "OTHER_SESSION" : "CDP_SESSION",
               result: { data: dataBase64 },
@@ -5195,7 +5639,7 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
           );
           return;
         }
-        if (request.id === 3) {
+        if (request.method === "Target.detachFromTarget") {
           const detachedEvent = {
             method: "Target.detachedFromTarget",
             params: {
@@ -5203,15 +5647,14 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
                 mode === "detach_session_mismatch"
                   ? "OTHER_SESSION"
                   : "CDP_SESSION",
-              targetId:
-                mode === "detach_target_mismatch" ? targetB : targetA,
+              targetId: mode === "detach_target_mismatch" ? targetB : targetA,
             },
           };
           socket.send(JSON.stringify(detachedEvent));
           if (mode === "duplicate_detach_event") {
             socket.send(JSON.stringify(detachedEvent));
           }
-          socket.send(JSON.stringify({ id: 3, result: {} }));
+          socket.send(JSON.stringify({ id: request.id, result: {} }));
         }
       });
     });
@@ -5248,7 +5691,7 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
         'if (args.includes("screenshot")) process.exit(9);',
         'if (args.includes("tab") && args.includes("list")) {',
         '  const count = fs.existsSync(statePath) ? Number(fs.readFileSync(statePath, "utf8")) : 0;',
-        '  fs.writeFileSync(statePath, String(count + 1));',
+        "  fs.writeFileSync(statePath, String(count + 1));",
         '  fs.appendFileSync(commandLog, "tab\\n");',
         `  const targetId = count === 0 ? ${JSON.stringify(targetA)} : ${JSON.stringify(afterTargetId)};`,
         '  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ tabId: "t1", targetId, label: null, title: "Example", url: "https://example.com/", type: "page", active: true }] }, error: null }));',
@@ -5266,6 +5709,7 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
     mode: ScenarioMode;
     dataBase64?: string | undefined;
     afterTargetId?: string | undefined;
+    fullPage?: boolean | undefined;
   }) => {
     const server = await startCdpServer(
       input.name,
@@ -5283,21 +5727,38 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
       engineExecutablePath: cli.executable,
       chromeExecutablePath: "/usr/bin/true",
     });
-    let frame:
-      | { mediaType: "image/png"; dataBase64: string }
-      | undefined;
+    let frame: { mediaType: "image/png"; dataBase64: string } | undefined;
     let failure: unknown;
+    const invocation = {
+      ...engineInvocation(),
+      runtimePath,
+      socketPath: runtimePath,
+      profilePath: runtimePath,
+      configPath: runtimePath,
+      screenshotPath: path.join(runtimePath, "screenshot.png"),
+    };
+    let accepted:
+      | Awaited<ReturnType<typeof adapter.acceptOperation>>
+      | undefined;
     try {
-      frame = await adapter.captureViewerFrame({
-        ...engineInvocation(),
-        runtimePath,
-        socketPath: runtimePath,
-        profilePath: runtimePath,
-        configPath: runtimePath,
-        screenshotPath: path.join(runtimePath, "screenshot.png"),
-      });
+      if (input.fullPage === true) {
+        accepted = await adapter.acceptOperation({
+          ...invocation,
+          operationId: `${input.name}-capture`,
+          grantGeneration: invocation.proxy.generation,
+        });
+        frame = await adapter.captureScreenshot({
+          ...invocation,
+          fullPage: true,
+          acceptedOperation: accepted,
+        });
+      } else {
+        frame = await adapter.captureViewerFrame(invocation);
+      }
     } catch (error) {
       failure = error;
+    } finally {
+      if (accepted !== undefined) adapter.releaseOperation(accepted);
     }
     await settleWithin(server.clientClosed, 1000);
     await server.close();
@@ -5345,6 +5806,46 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
       params: { format: "png", fromSurface: true },
     });
 
+    const fullPageBytes = Buffer.alloc(24);
+    pngHeader.copy(fullPageBytes);
+    fullPageBytes.writeUInt32BE(1200, 16);
+    fullPageBytes.writeUInt32BE(2400, 20);
+    const fullPage = await runScenario({
+      name: "full-page",
+      mode: "exact",
+      dataBase64: fullPageBytes.toString("base64"),
+      fullPage: true,
+    });
+    assert.equal(fullPage.failure, undefined);
+    assert.equal(
+      Buffer.from(fullPage.frame!.dataBase64, "base64").readUInt32BE(16),
+      1200,
+    );
+    assert.equal(
+      Buffer.from(fullPage.frame!.dataBase64, "base64").readUInt32BE(20),
+      2400,
+    );
+    assert.deepEqual(
+      fullPage.requests.map((request) => request.method),
+      [
+        "Target.attachToTarget",
+        "Page.getLayoutMetrics",
+        "Page.captureScreenshot",
+        "Target.detachFromTarget",
+      ],
+    );
+    assert.deepEqual(fullPage.requests[2], {
+      id: 3,
+      sessionId: "CDP_SESSION",
+      method: "Page.captureScreenshot",
+      params: {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: true,
+        clip: { x: 0, y: 0, width: 1200, height: 2400, scale: 1 },
+      },
+    });
+
     const plusOneBytes = Buffer.alloc(
       HOSTED_BROWSER_VIEWER_RAW_PNG_MAX_BYTES + 1,
     );
@@ -5356,10 +5857,7 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
     });
     assert.match(String(plusOne.failure), /Browser viewer capture failed/u);
     assert.equal(plusOne.frame, undefined);
-    assert.equal(
-      plusOne.requests.at(-1)?.method,
-      "Target.detachFromTarget",
-    );
+    assert.equal(plusOne.requests.at(-1)?.method, "Target.detachFromTarget");
 
     for (const mode of [
       "oversized_message",
@@ -5389,10 +5887,7 @@ test("viewer screenshot capture uses the pinned CDP Session without files", asyn
         mode.startsWith("detach_") ||
         mode === "duplicate_detach_event"
       ) {
-        assert.equal(
-          result.requests.at(-1)?.method,
-          "Target.detachFromTarget",
-        );
+        assert.equal(result.requests.at(-1)?.method, "Target.detachFromTarget");
       }
     }
 
@@ -5443,7 +5938,9 @@ test(
       t.skip("set KESTREL_BROWSER_CDP_PROBE_EXECUTABLE for the real CDP probe");
       return;
     }
-    const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-viewer-chrome-"));
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "kestrel-viewer-chrome-"),
+    );
     const profilePath = path.join(root, "profile");
     await mkdir(profilePath, { mode: 0o700 });
     const portServer = createServer();
@@ -5529,9 +6026,9 @@ test(
           })};`,
           `const cdpUrl = ${JSON.stringify(cdpUrl)};`,
           'if (args.includes("tab") && args.includes("list")) {',
-          '  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [tab] }, error: null }));',
+          "  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [tab] }, error: null }));",
           '} else if (args.includes("get") && args.includes("cdp-url")) {',
-          '  process.stdout.write(JSON.stringify({ success: true, data: { cdpUrl }, error: null }));',
+          "  process.stdout.write(JSON.stringify({ success: true, data: { cdpUrl }, error: null }));",
           "} else { process.exit(10); }",
         ].join("\n"),
       );
@@ -5605,14 +6102,19 @@ async function createFixture(
           lifecycleState: "ready";
         }>
       >;
-      resolve?(threadId: string, attachmentIds: string[]): Promise<Array<{
-        attachmentId: string;
-        threadId: string;
-        filename: string;
-        mimeType: string;
-        sizeBytes: number;
-        sha256: string;
-      }>>;
+      resolve?(
+        threadId: string,
+        attachmentIds: string[],
+      ): Promise<
+        Array<{
+          attachmentId: string;
+          threadId: string;
+          filename: string;
+          mimeType: string;
+          sizeBytes: number;
+          sha256: string;
+        }>
+      >;
     };
     projectRunRegistry?: ConstructorParameters<
       typeof DesktopBrowserService
@@ -5760,7 +6262,8 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
   onNativePresentation?: (() => void) | undefined;
   viewerFrameBase64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xk1vAAAAAElFTkSuQmCC";
-
+  viewerFramePaused?: (() => void) | undefined;
+  resumeViewerFrame?: Promise<void> | undefined;
   constructor(
     input: {
       snapshotContent?: string;
@@ -5930,6 +6433,8 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
   }
 
   async captureViewerFrame() {
+    this.viewerFramePaused?.();
+    await this.resumeViewerFrame;
     return {
       mediaType: "image/png" as const,
       dataBase64: this.viewerFrameBase64,

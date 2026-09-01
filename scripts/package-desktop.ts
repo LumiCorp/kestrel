@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
 import { Arch, build, Platform, type Configuration } from "electron-builder";
@@ -23,6 +29,19 @@ const version = otaFixture?.version ?? readVersion(desktopManifestPath);
 const electronVersion = readDependencyVersion(desktopManifestPath, "electron");
 const packageMode = parsePackageMode(process.env.KESTREL_DESKTOP_PACKAGE_MODE);
 const releaseBuild = process.env.KESTREL_DESKTOP_RELEASE === "1";
+const DESKTOP_ELECTRON_ARCHIVES: Readonly<
+  Record<string, { fileName: string; bytes: number; sha256: string }>
+> = {
+  "37.2.6": {
+    fileName: "electron-v37.2.6-darwin-arm64.zip",
+    bytes: 111_071_081,
+    sha256: "e3d391ba786d90a3a37182a28774b088769ee0c794d8bb8ff5a9f4cc447d23f8",
+  },
+};
+const electronArchive = resolveVerifiedElectronArchive({
+  archivePath: process.env.KESTREL_DESKTOP_ELECTRON_ARCHIVE,
+  electronVersion,
+});
 
 if (!existsSync(stageDir)) {
   throw new Error(
@@ -60,9 +79,56 @@ await build({
     packageMode === "dir" ? ["dir"] : ["dmg", "zip"],
     Arch.arm64,
   ),
-  config: config as Configuration,
+  config: {
+    ...config,
+    ...(electronArchive === undefined
+      ? {}
+      : { electronDist: electronArchive }),
+  } as Configuration,
   publish: "never",
 });
+
+function resolveVerifiedElectronArchive(input: {
+  archivePath: string | undefined;
+  electronVersion: string;
+}): string | undefined {
+  const requestedPath = input.archivePath?.trim();
+  if (requestedPath === undefined || requestedPath.length === 0) {
+    return undefined;
+  }
+  const expected = DESKTOP_ELECTRON_ARCHIVES[input.electronVersion];
+  if (expected === undefined) {
+    throw new Error(
+      `No pinned macOS arm64 Electron archive metadata exists for ${input.electronVersion}.`,
+    );
+  }
+  const archivePath = path.resolve(requestedPath);
+  if (!existsSync(archivePath)) {
+    throw new Error(`Pinned Electron archive does not exist: ${archivePath}`);
+  }
+  if (path.basename(archivePath) !== expected.fileName) {
+    throw new Error(
+      `Pinned Electron archive must be named ${expected.fileName}.`,
+    );
+  }
+  const size = statSync(archivePath).size;
+  if (size !== expected.bytes) {
+    throw new Error(
+      `Pinned Electron archive byte length mismatch: expected ${expected.bytes}, received ${size}.`,
+    );
+  }
+  const digest = execFileSync(
+    "/usr/bin/shasum",
+    ["-a", "256", archivePath],
+    { encoding: "utf8" },
+  ).trim().split(/\s+/u)[0];
+  if (digest !== expected.sha256) {
+    throw new Error(
+      `Pinned Electron archive SHA-256 mismatch for ${expected.fileName}.`,
+    );
+  }
+  return archivePath;
+}
 
 if (releaseBuild) {
   const appPath = path.join(

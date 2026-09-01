@@ -2801,12 +2801,14 @@ function resolveRuntimeToolRunContext(
   const projectContext =
     asRecord(payloadRecord?.projectContext) ??
     asRecord(metadata?.projectContext);
+  const workspace = asRecord(payloadRecord?.workspace);
   const missionControl =
     asRecord(payloadRecord?.missionControl) ??
     asRecord(metadata?.missionControl);
   const projectId =
     asNonEmptyString(projectContext?.projectId) ??
-    asNonEmptyString(missionControl?.projectId);
+    asNonEmptyString(missionControl?.projectId) ??
+    asNonEmptyString(workspace?.projectId);
   const threadId =
     asNonEmptyString(orchestration?.threadId) ??
     asNonEmptyString(metadata?.threadId);

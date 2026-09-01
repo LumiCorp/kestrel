@@ -10,6 +10,7 @@ import {
   runLaunchServicesCleanupActions,
 } from "../../scripts/desktop-launch-services-gate.js";
 import { waitForAsyncValue } from "../../scripts/desktop-smoke-poll.js";
+import { startFakeOpenRouterServer } from "../ops/helpers/fake-open-router.js";
 
 test("Desktop smoke gates poll asynchronous renderer state outside waitForFunction", () => {
   for (const scriptName of [
@@ -42,6 +43,38 @@ test("packaged Desktop smoke advertises the model it seeds for onboarding", () =
     source,
     /selectOption\(DEFAULT_OPENROUTER_MODEL\)/u,
   );
+  assert.match(source, /\.timeline-entry-assistant \.message-body/u);
+  assert.doesNotMatch(source, /\.message-assistant \.message-body/u);
+});
+
+test("fake OpenRouter recognizes packaged Browser QA inside the serialized request", async () => {
+  const server = await startFakeOpenRouterServer();
+  try {
+    const response = await fetch(`${server.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "z-ai/glm-5.2",
+        messages: [{
+          role: "user",
+          content: `fake-openrouter-browser-qa ${JSON.stringify({
+            projectId: "project-1",
+            runId: "run-1",
+            urlId: "preview-1",
+          })}`,
+        }],
+        tools: [
+          { type: "function", function: { name: "browser_open" } },
+          { type: "function", function: { name: "kestrel_finalize" } },
+        ],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.match(body, /"name":"browser_open"/u);
+  } finally {
+    await server.close();
+  }
 });
 
 test("Desktop smoke polling awaits non-ready asynchronous samples", async () => {

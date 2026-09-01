@@ -50,14 +50,20 @@ export function BrowserViewer(props: {
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let expectedViewer: DesktopBrowserViewerStateV1 | undefined;
     const discover = async () => {
       try {
-        const next = await window.kestrelDesktop.connectBrowserViewer({
-          version: DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
-          threadId: props.threadId,
-          projectId: props.projectId,
-        });
+        const next = await window.kestrelDesktop.connectBrowserViewer(
+          expectedViewer?.available
+            ? exactBinding(expectedViewer, props)
+            : {
+                version: DESKTOP_BROWSER_VIEWER_REQUEST_VERSION,
+                threadId: props.threadId,
+                projectId: props.projectId,
+              },
+        );
         if (cancelled) return;
+        expectedViewer = next.available ? next : undefined;
         setViewer(next);
         setError(undefined);
         if (!next.available) {

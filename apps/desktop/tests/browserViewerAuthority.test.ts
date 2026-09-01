@@ -14,9 +14,23 @@ import test, { type TestContext } from "node:test";
 
 import {
   DesktopBrowserViewerAuthorityCoordinator,
+  sameDesktopBrowserViewerPrincipal,
   type DesktopBrowserViewerPrincipal,
 } from "../src/browserViewerAuthority.js";
 import { DesktopBrowserViewerAuthorityJournal } from "../src/browserViewerAuthorityJournal.js";
+
+test("viewer reconnect identity must exactly match retained authority", () => {
+  const exact = principal();
+  assert.equal(sameDesktopBrowserViewerPrincipal(exact, { ...exact }), true);
+  assert.equal(
+    sameDesktopBrowserViewerPrincipal(exact, {
+      ...exact,
+      connectionId: "connection-drift",
+    }),
+    false,
+  );
+  assert.equal(sameDesktopBrowserViewerPrincipal(undefined, exact), false);
+});
 
 test("restart revokes retained exact authority before a reused sender and bootstrap connect", async (t) => {
   const fixture = await journalFixture(t);

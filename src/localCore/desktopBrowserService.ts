@@ -87,8 +87,7 @@ const COMMAND_TIMEOUT_MS = 30_000;
 const MAX_ENGINE_OUTPUT_BYTES = 512 * 1024;
 const MAX_PAGE_OUTPUT_CHARS = 32_768;
 const MAX_ENGINE_PAGE_OUTPUT_CHARS = 128 * 1024;
-const ENGINE_REVISION =
-  "agent-browser:v0.35.0-kestrel.1+chrome:152.0.7977.54";
+const ENGINE_REVISION = "agent-browser:v0.35.0-kestrel.1+chrome:152.0.7977.54";
 const TERMINAL_STATES = new Set(["closed", "expired", "lost", "failed"]);
 const AGENT_BROWSER_INTERNAL_SHUTDOWN_ACTION =
   "__agent_browser_internal_shutdown";
@@ -97,8 +96,7 @@ const MAX_BROWSER_TABS = 100;
 const BROWSER_DOWNLOAD_RETENTION_MS = 30 * 60 * 1000;
 const BROWSER_DOWNLOAD_GUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const DESKTOP_BROWSER_SESSION_ID_PATTERN =
-  /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+const DESKTOP_BROWSER_SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const DESKTOP_BROWSER_INPUT_LEASE_MS = 30_000;
 const DESKTOP_BROWSER_VIEWER_CAPTURE_TIMEOUT_MS = 5000;
 
@@ -213,6 +211,12 @@ export interface DesktopBrowserEngineAdapter {
   ): () => void;
   captureViewerFrame?(
     input: DesktopBrowserEngineInvocation,
+  ): Promise<{ mediaType: "image/png"; dataBase64: string }>;
+  captureScreenshot?(
+    input: DesktopBrowserEngineInvocation & {
+      fullPage: boolean;
+      acceptedOperation: DesktopBrowserAcceptedOperation;
+    },
   ): Promise<{ mediaType: "image/png"; dataBase64: string }>;
   dispatchViewerInput?(
     input: DesktopBrowserEngineInvocation & {
@@ -717,38 +721,52 @@ export class DesktopBrowserService implements BrowserServicePort {
     generation: number;
     connectionId: string;
   }): Promise<DesktopBrowserViewerFrameV1> {
-    const { runtime } = await this.#requireViewerConnection(input);
-    const capture = this.#engine.captureViewerFrame;
-    if (capture === undefined) {
-      throw browserFailure(
-        "BROWSER_SERVICE_UNAVAILABLE",
-        "The Browser engine does not support transient viewer frames.",
-      );
-    }
-    let captured: { mediaType: "image/png"; dataBase64: string };
-    try {
-      captured = await capture.call(this.#engine, runtime.engine);
-    } catch (error) {
-      if (isEngineLost(error)) {
-        await this.#loseRuntime(runtime);
+    const queuedRuntime = this.#requireRuntime(input.sessionId, input.threadId);
+    const frame = queuedRuntime.operationTail.then(async () => {
+      const { runtime } = await this.#requireViewerConnection(input);
+      if (runtime !== queuedRuntime) {
+        throw browserFailure(
+          "BROWSER_SESSION_LOST",
+          "The Browser viewer runtime changed before frame capture.",
+        );
       }
-      throw normalizeBrowserHostFailure(error, {
-        toolName: "browser.snapshot",
-        dispatchAcknowledged: true,
-        effectful: false,
-      });
-    }
-    this.#assertViewerRuntimeCurrent(runtime, input.generation);
-    runtime.viewerFrameSequence += 1;
-    return {
-      version: DESKTOP_BROWSER_VIEWER_FRAME_VERSION,
-      sessionId: runtime.session.sessionId,
-      generation: runtime.session.generation,
-      sequence: runtime.viewerFrameSequence,
-      capturedAt: this.#now().toISOString(),
-      mediaType: captured.mediaType,
-      dataBase64: captured.dataBase64,
-    };
+      const capture = this.#engine.captureViewerFrame;
+      if (capture === undefined) {
+        throw browserFailure(
+          "BROWSER_SERVICE_UNAVAILABLE",
+          "The Browser engine does not support transient viewer frames.",
+        );
+      }
+      let captured: { mediaType: "image/png"; dataBase64: string };
+      try {
+        captured = await capture.call(this.#engine, runtime.engine);
+      } catch (error) {
+        if (isEngineLost(error)) {
+          await this.#loseRuntime(runtime);
+        }
+        throw normalizeBrowserHostFailure(error, {
+          toolName: "browser.snapshot",
+          dispatchAcknowledged: true,
+          effectful: false,
+        });
+      }
+      this.#assertViewerRuntimeCurrent(runtime, input.generation);
+      runtime.viewerFrameSequence += 1;
+      return {
+        version: DESKTOP_BROWSER_VIEWER_FRAME_VERSION,
+        sessionId: runtime.session.sessionId,
+        generation: runtime.session.generation,
+        sequence: runtime.viewerFrameSequence,
+        capturedAt: this.#now().toISOString(),
+        mediaType: captured.mediaType,
+        dataBase64: captured.dataBase64,
+      };
+    });
+    queuedRuntime.operationTail = frame.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await frame;
   }
 
   async acceptViewerTakeover(input: {
@@ -760,7 +778,8 @@ export class DesktopBrowserService implements BrowserServicePort {
     connectionId: string;
   }): Promise<DesktopBrowserViewerStateV1> {
     return await this.#serialize(async () => {
-      const { runtime, connection } = await this.#requireViewerConnection(input);
+      const { runtime, connection } =
+        await this.#requireViewerConnection(input);
       await this.#expireViewerLease(runtime);
       const activeLease = runtime.activeInputLease;
       if (
@@ -777,9 +796,12 @@ export class DesktopBrowserService implements BrowserServicePort {
         activeLease !== undefined &&
         runtime.engine.nativeAuthenticationHandoff === true &&
         (runtime.nativeHandoff === undefined ||
-          runtime.nativeHandoff.authority.sessionId !== runtime.session.sessionId ||
-          runtime.nativeHandoff.authority.generation !== runtime.session.generation ||
-          runtime.nativeHandoff.authority.connectionId !== connection.connectionId ||
+          runtime.nativeHandoff.authority.sessionId !==
+            runtime.session.sessionId ||
+          runtime.nativeHandoff.authority.generation !==
+            runtime.session.generation ||
+          runtime.nativeHandoff.authority.connectionId !==
+            connection.connectionId ||
           runtime.nativeHandoff.authority.leaseId !== activeLease.leaseId)
       ) {
         await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST").catch(
@@ -862,7 +884,8 @@ export class DesktopBrowserService implements BrowserServicePort {
     leaseId: string;
   }): Promise<DesktopBrowserViewerStateV1> {
     return await this.#serialize(async () => {
-      const { runtime, connection } = await this.#requireViewerConnection(input);
+      const { runtime, connection } =
+        await this.#requireViewerConnection(input);
       const lease = await this.#requireViewerLease(
         runtime,
         connection,
@@ -894,7 +917,8 @@ export class DesktopBrowserService implements BrowserServicePort {
     viewerInput: DesktopBrowserViewerInputV1;
   }): Promise<DesktopBrowserViewerStateV1> {
     return await this.#serialize(async () => {
-      const { runtime, connection } = await this.#requireViewerConnection(input);
+      const { runtime, connection } =
+        await this.#requireViewerConnection(input);
       await this.#requireViewerLease(runtime, connection, input.leaseId);
       const dispatch = this.#engine.dispatchViewerInput;
       if (dispatch === undefined) {
@@ -935,7 +959,8 @@ export class DesktopBrowserService implements BrowserServicePort {
     leaseId: string;
   }): Promise<DesktopBrowserViewerStateV1> {
     return await this.#serialize(async () => {
-      const { runtime, connection } = await this.#requireViewerConnection(input);
+      const { runtime, connection } =
+        await this.#requireViewerConnection(input);
       await this.#requireViewerLease(runtime, connection, input.leaseId);
       try {
         await this.#revokeNativeHandoff(runtime);
@@ -970,7 +995,8 @@ export class DesktopBrowserService implements BrowserServicePort {
     connectionId: string;
   }): Promise<void> {
     await this.#serialize(async () => {
-      const { runtime, connection } = await this.#requireViewerConnection(input);
+      const { runtime, connection } =
+        await this.#requireViewerConnection(input);
       if (runtime.activeInputLease?.connectionId === connection.connectionId) {
         try {
           await this.#revokeNativeHandoff(runtime);
@@ -1003,7 +1029,10 @@ export class DesktopBrowserService implements BrowserServicePort {
       const threadId = requireText(input.threadId, "viewer threadId");
       const projectId = requireText(input.projectId, "viewer projectId");
       const principalId = requireText(input.principalId, "viewer principalId");
-      const connectionId = requireText(input.connectionId, "viewer connectionId");
+      const connectionId = requireText(
+        input.connectionId,
+        "viewer connectionId",
+      );
       const runtime = this.#active.get(sessionId);
       if (
         runtime === undefined ||
@@ -1089,10 +1118,13 @@ export class DesktopBrowserService implements BrowserServicePort {
       this.#assertViewerSessionState(active);
       const selected = active.viewerConnections.get(connectionId);
       const principalMatches = selected
-        ? selected.principalId === principalId && selected.projectId === projectId
-        : [...active.viewerConnections.values()].some((connection) =>
-            connection.principalId === principalId &&
-            connection.projectId === projectId) ||
+        ? selected.principalId === principalId &&
+          selected.projectId === projectId
+        : [...active.viewerConnections.values()].some(
+            (connection) =>
+              connection.principalId === principalId &&
+              connection.projectId === projectId,
+          ) ||
           (active.viewerConnections.size === 0 &&
             active.authority.userId === principalId);
       if (!principalMatches) {
@@ -1180,21 +1212,33 @@ export class DesktopBrowserService implements BrowserServicePort {
   ): Promise<BrowserUploadPreparedEffectV1> {
     await this.#requireInitialized();
     if (input.version !== BROWSER_UPLOAD_PREPARATION_VERSION) {
-      throw browserFailure("BROWSER_SERVICE_UNAVAILABLE", "Browser upload preparation is invalid.");
+      throw browserFailure(
+        "BROWSER_SERVICE_UNAVAILABLE",
+        "Browser upload preparation is invalid.",
+      );
     }
     const sessionId = requireText(input.effectiveInput.sessionId, "sessionId");
     const generation = requireGeneration(input.effectiveInput.generation);
-    const snapshotId = requireText(input.effectiveInput.snapshotId, "snapshotId");
+    const snapshotId = requireText(
+      input.effectiveInput.snapshotId,
+      "snapshotId",
+    );
     const targetRef = requireEngineRef(
       requireText(input.effectiveInput.targetRef, "targetRef"),
     );
-    const attachmentId = requireText(input.effectiveInput.attachmentId, "attachmentId");
+    const attachmentId = requireText(
+      input.effectiveInput.attachmentId,
+      "attachmentId",
+    );
     const runtime = this.#requireRuntime(sessionId, input.threadId);
     if (
       generation !== runtime.session.generation ||
       attachmentId !== input.attachment.attachmentId
     ) {
-      throw browserFailure("BROWSER_SESSION_LOST", "Browser upload preparation authority is stale.");
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "Browser upload preparation authority is stale.",
+      );
     }
     const resolved = await this.#resolveUploadAttachment(
       input.threadId,
@@ -1220,7 +1264,8 @@ export class DesktopBrowserService implements BrowserServicePort {
           threadId: input.threadId,
           attachmentId,
           filename: resolved.filename,
-          declaredMediaType: resolved.declaredMediaType ?? "application/octet-stream",
+          declaredMediaType:
+            resolved.declaredMediaType ?? "application/octet-stream",
           detectedMediaType: resolved.detectedMediaType ?? resolved.mimeType,
           sizeBytes: resolved.sizeBytes,
           sha256: resolved.sha256,
@@ -1235,7 +1280,10 @@ export class DesktopBrowserService implements BrowserServicePort {
         this.#engine.releaseOperation(accepted);
       }
     });
-    runtime.operationTail = operation.then(() => undefined, () => undefined);
+    runtime.operationTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
     return await operation;
   }
 
@@ -1277,7 +1325,10 @@ export class DesktopBrowserService implements BrowserServicePort {
     const effect = parseBrowserDownloadPreparedEffectV1(effectValue);
     const runtime = this.#requireRuntime(effect.sessionId, effect.threadId);
     if (runtime.session.generation !== effect.generation) {
-      throw browserFailure("BROWSER_SESSION_LOST", "Browser download authority is stale.");
+      throw browserFailure(
+        "BROWSER_SESSION_LOST",
+        "Browser download authority is stale.",
+      );
     }
     const download = await this.#requirePendingDownload(
       runtime,
@@ -1754,23 +1805,27 @@ export class DesktopBrowserService implements BrowserServicePort {
     }
     const threadId = requireText(lifecycle.authority.threadId, "threadId");
     const target = requireRecord(input.target, "target");
-    const hostedQaResolution = mode === "qa"
-      ? this.#options.hostedSession?.resolveQaDestination({
-          target,
-          authority: lifecycle.authority,
-        })
-      : undefined;
-    const qaResolution = mode === "qa"
-      ? hostedQaResolution ?? await this.#resolveQaDestination(target, lifecycle)
-      : undefined;
+    const hostedQaResolution =
+      mode === "qa"
+        ? this.#options.hostedSession?.resolveQaDestination({
+            target,
+            authority: lifecycle.authority,
+          })
+        : undefined;
+    const qaResolution =
+      mode === "qa"
+        ? (hostedQaResolution ??
+          (await this.#resolveQaDestination(target, lifecycle)))
+        : undefined;
     const destination =
       mode === "qa"
         ? qaResolution!.destination
         : requirePublicDestination(target);
-    const targetIdentity = mode === "qa"
-      ? hostedQaResolution?.targetIdentity ??
-        `qa:${requireText(target.projectId, "target.projectId")}:${requireText(target.runId, "target.runId")}:${requireText(target.urlId, "target.urlId")}`
-      : "operator";
+    const targetIdentity =
+      mode === "qa"
+        ? (hostedQaResolution?.targetIdentity ??
+          `qa:${requireText(target.projectId, "target.projectId")}:${requireText(target.runId, "target.runId")}:${requireText(target.urlId, "target.urlId")}`)
+        : "operator";
     const activeForThread = [...this.#active.values()].filter(
       (runtime) => runtime.session.threadId === threadId,
     );
@@ -1859,7 +1914,9 @@ export class DesktopBrowserService implements BrowserServicePort {
     const hostedSession = this.#options.hostedSession?.session;
     const sessionId = requireDesktopBrowserSessionId(
       hostedSession?.sessionId ?? `browser-${this.#id()}`,
-      hostedSession ? "hosted Browser session ID" : "generated Browser session ID",
+      hostedSession
+        ? "hosted Browser session ID"
+        : "generated Browser session ID",
     );
     if (
       hostedSession &&
@@ -2305,7 +2362,10 @@ export class DesktopBrowserService implements BrowserServicePort {
           lifecycle.signal?.throwIfAborted();
           const chunk = Buffer.from(value);
           bytes += chunk.byteLength;
-          if (bytes > DESKTOP_MAX_ATTACHMENT_BYTES || bytes > effect.sizeBytes) {
+          if (
+            bytes > DESKTOP_MAX_ATTACHMENT_BYTES ||
+            bytes > effect.sizeBytes
+          ) {
             throw browserFailure(
               "BROWSER_ARTIFACT_TOO_LARGE",
               "The approved Browser upload stream exceeded its exact bound.",
@@ -2480,7 +2540,7 @@ export class DesktopBrowserService implements BrowserServicePort {
     const output = browserOutput("browser.download", {
       sessionId: effect.sessionId,
       generation: effect.generation,
-      artifact: authorization,
+      artifact: browserArtifactOutput(authorization),
     });
     await lifecycle.persistCompletedResult(output);
     // The durable completed result is the promotion commit boundary. A failed
@@ -2626,7 +2686,10 @@ export class DesktopBrowserService implements BrowserServicePort {
         kind === "url" ? ["open", requireText(input.url, "url")] : [kind];
       const priorDownloads = runtime.interceptedDownloadCount;
       await this.#command(runtime, acceptedOperation, command);
-      const pendingDownload = this.#pendingDownloadSince(runtime, priorDownloads);
+      const pendingDownload = this.#pendingDownloadSince(
+        runtime,
+        priorDownloads,
+      );
       runtime.snapshots.clear();
       runtime.continuations.clear();
       const page = await this.#readPageIdentity(runtime, acceptedOperation);
@@ -2665,7 +2728,10 @@ export class DesktopBrowserService implements BrowserServicePort {
       const command = mapInteraction(kind, ref, action);
       const priorDownloads = runtime.interceptedDownloadCount;
       await this.#command(runtime, acceptedOperation, command);
-      const pendingDownload = this.#pendingDownloadSince(runtime, priorDownloads);
+      const pendingDownload = this.#pendingDownloadSince(
+        runtime,
+        priorDownloads,
+      );
       await this.#refreshActivePageAuthority(
         runtime,
         prepared,
@@ -2727,11 +2793,25 @@ export class DesktopBrowserService implements BrowserServicePort {
     }
     if (operation === "browser.capture") {
       await rm(runtime.engine.screenshotPath, { force: true });
-      await this.#command(runtime, acceptedOperation, [
-        "screenshot",
-        runtime.engine.screenshotPath,
-        ...(input.fullPage === true ? ["--full"] : []),
-      ]);
+      const captureScreenshot = this.#engine.captureScreenshot;
+      if (captureScreenshot === undefined) {
+        await this.#command(runtime, acceptedOperation, [
+          "screenshot",
+          runtime.engine.screenshotPath,
+          ...(input.fullPage === true ? ["--full"] : []),
+        ]);
+      } else {
+        const capture = await captureScreenshot.call(this.#engine, {
+          ...runtime.engine,
+          acceptedOperation,
+          fullPage: input.fullPage === true,
+        });
+        await writeFile(
+          runtime.engine.screenshotPath,
+          Buffer.from(capture.dataBase64, "base64"),
+          { mode: 0o600 },
+        );
+      }
       const page = await this.#readPageIdentity(runtime, acceptedOperation);
       await this.#applyActivePageAuthority(
         runtime,
@@ -2784,7 +2864,7 @@ export class DesktopBrowserService implements BrowserServicePort {
       return browserOutput(operation, {
         sessionId: runtime.session.sessionId,
         generation: runtime.session.generation,
-        artifact: authorization,
+        artifact: browserArtifactOutput(authorization),
         normalizedOrigin: page.origin,
         capturedAt: this.#now().toISOString(),
         boundary: "untrusted_browser_content",
@@ -3493,8 +3573,9 @@ export class DesktopBrowserService implements BrowserServicePort {
         }
         throw new Error("Attachment resolution is unavailable.");
       }
-      [resolved] = await (store ?? new DesktopAttachmentStore(this.#options.homePath))
-        .resolve!(threadId, [expected.attachmentId]);
+      [resolved] = await (
+        store ?? new DesktopAttachmentStore(this.#options.homePath)
+      ).resolve!(threadId, [expected.attachmentId]);
     } catch {
       throw browserFailure(
         "BROWSER_SERVICE_UNAVAILABLE",
@@ -3507,8 +3588,10 @@ export class DesktopBrowserService implements BrowserServicePort {
       resolved.attachmentId !== expected.attachmentId ||
       resolved.threadId !== threadId ||
       resolved.filename !== expected.filename ||
-      (resolved.declaredMediaType ?? "application/octet-stream") !== expected.declaredMediaType ||
-      (resolved.detectedMediaType ?? resolved.mimeType) !== expected.detectedMediaType ||
+      (resolved.declaredMediaType ?? "application/octet-stream") !==
+        expected.declaredMediaType ||
+      (resolved.detectedMediaType ?? resolved.mimeType) !==
+        expected.detectedMediaType ||
       resolved.sizeBytes !== expected.sizeBytes ||
       resolved.sha256 !== expected.sha256
     ) {
@@ -3543,7 +3626,9 @@ export class DesktopBrowserService implements BrowserServicePort {
       acceptedOperation,
       true,
     );
-    const current = await this.#command(runtime, acceptedOperation, ["snapshot"]);
+    const current = await this.#command(runtime, acceptedOperation, [
+      "snapshot",
+    ]);
     const page = await this.#readPageIdentity(runtime, acceptedOperation);
     if (
       page.tabId !== snapshot.tabId ||
@@ -3564,7 +3649,9 @@ export class DesktopBrowserService implements BrowserServicePort {
     let target;
     try {
       if (typeof this.#engine.describeFileInput !== "function") {
-        throw new Error("Browser engine file-input description is unavailable.");
+        throw new Error(
+          "Browser engine file-input description is unavailable.",
+        );
       }
       target = await this.#engine.describeFileInput({
         ...runtime.engine,
@@ -3622,11 +3709,14 @@ export class DesktopBrowserService implements BrowserServicePort {
       runtime.interceptedDownloads.some(
         (candidate) => candidate.downloadId === download.downloadId,
       ) ||
-      runtime.interceptedDownloads.length >= DESKTOP_MAX_ATTACHMENTS_PER_MESSAGE ||
+      runtime.interceptedDownloads.length >=
+        DESKTOP_MAX_ATTACHMENTS_PER_MESSAGE ||
       runtime.interceptedDownloads.reduce(
         (total, candidate) => total + candidate.measuredBytes,
         0,
-      ) + download.measuredBytes > DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES
+      ) +
+        download.measuredBytes >
+        DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES
     ) {
       throw browserFailure(
         "BROWSER_ARTIFACT_TOO_LARGE",
@@ -3636,7 +3726,10 @@ export class DesktopBrowserService implements BrowserServicePort {
     }
     runtime.interceptedDownloadCount += 1;
     runtime.interceptedDownloads.push(download);
-    const delay = Math.max(1, Date.parse(download.expiresAt) - this.#now().getTime());
+    const delay = Math.max(
+      1,
+      Date.parse(download.expiresAt) - this.#now().getTime(),
+    );
     const timer = setTimeout(() => {
       void this.#serialize(async () => {
         await this.#removePendingDownload(runtime, download.downloadId);
@@ -3646,7 +3739,9 @@ export class DesktopBrowserService implements BrowserServicePort {
     runtime.downloadExpiryTimers.set(download.downloadId, timer);
   }
 
-  async #pruneExpiredDownloads(runtime: ActiveDesktopBrowserRuntime): Promise<void> {
+  async #pruneExpiredDownloads(
+    runtime: ActiveDesktopBrowserRuntime,
+  ): Promise<void> {
     const now = this.#now().getTime();
     for (const download of [...runtime.interceptedDownloads]) {
       if (Date.parse(download.expiresAt) <= now) {
@@ -3890,7 +3985,11 @@ export class DesktopBrowserService implements BrowserServicePort {
         }
         return;
       } catch {
-        this.#viewerEvent(runtime, "authorization_loss", "qa_authority_changed");
+        this.#viewerEvent(
+          runtime,
+          "authorization_loss",
+          "qa_authority_changed",
+        );
         await this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST");
         throw browserFailure(
           "BROWSER_SESSION_LOST",
@@ -3974,7 +4073,9 @@ export class DesktopBrowserService implements BrowserServicePort {
     this.#assertViewerSessionState(runtime);
   }
 
-  async #expireViewerLease(runtime: ActiveDesktopBrowserRuntime): Promise<void> {
+  async #expireViewerLease(
+    runtime: ActiveDesktopBrowserRuntime,
+  ): Promise<void> {
     const lease = runtime.activeInputLease;
     if (
       lease !== undefined &&
@@ -4010,10 +4111,9 @@ export class DesktopBrowserService implements BrowserServicePort {
       this.#now().getTime() >= Date.parse(exactLease.expiresAt)
     ) {
       await this.#expireViewerLease(runtime);
-      throw Object.assign(
-        new Error(HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED),
-        { code: HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED },
-      );
+      throw Object.assign(new Error(HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED), {
+        code: HOSTED_BROWSER_VIEWER_AUTHORITY_EXPIRED,
+      });
     }
     await this.#expireViewerLease(runtime);
     const lease = runtime.activeInputLease;
@@ -4214,7 +4314,8 @@ export class DesktopBrowserService implements BrowserServicePort {
         if (
           this.#active.get(runtime.session.sessionId) !== runtime ||
           runtime.nativeHandoff !== handoff
-        ) return;
+        )
+          return;
         await this.#expireViewerLease(runtime);
       }).catch(() => undefined);
     }, delay);
@@ -4596,7 +4697,8 @@ export class DesktopBrowserService implements BrowserServicePort {
     runtime.engine.stopDownloadInterception?.();
     runtime.engine.stopDownloadInterception = undefined;
     runtime.engine.synchronizeDownloads = undefined;
-    for (const timer of runtime.downloadExpiryTimers.values()) clearTimeout(timer);
+    for (const timer of runtime.downloadExpiryTimers.values())
+      clearTimeout(timer);
     runtime.downloadExpiryTimers.clear();
     runtime.interceptedDownloads = [];
     const ownedPaths = desktopBrowserOwnedPaths(
@@ -4905,6 +5007,11 @@ export class DesktopBrowserService implements BrowserServicePort {
 export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
   readonly #engineExecutablePath: string;
   readonly #chromeExecutablePath: string;
+  readonly #nativeCapturePrimed = new Set<string>();
+  readonly #nativeConcealments = new Map<
+    string,
+    Promise<unknown | undefined>
+  >();
   readonly #acceptedOperations = new Map<
     string,
     DesktopBrowserAcceptedOperation
@@ -4980,17 +5087,6 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     const cdp = await this.#openStep("cdp_discovery", () =>
       this.#run(input, ["get", "cdp-url"]),
     );
-    if (input.nativeAuthenticationHandoff === true) {
-      await this.#openStep("native_window_concealment", async () => {
-        const tabs = parseTabs(
-          (await this.#run(input, ["tab", "--json"])).stdout,
-        );
-        await minimizeAgentBrowserNativeWindow(
-          extractScalar(cdp.stdout, "cdpUrl"),
-          tabs.activeTabId,
-        );
-      });
-    }
     const interception = await this.#openStep("download_quarantine", () =>
       installAgentBrowserDownloadInterception(
         extractScalar(cdp.stdout, "cdpUrl"),
@@ -5007,6 +5103,17 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     await this.#openStep("download_synchronization", () =>
       interception.synchronize(),
     );
+    if (input.nativeAuthenticationHandoff === true) {
+      await this.#openStep("native_window_concealment", async () => {
+        const activeTargetId = requirePinnedViewerActiveTarget(
+          (await this.#run(input, ["tab", "list"])).stdout,
+        );
+        const cdpUrl = requirePinnedViewerCdpUrl(
+          (await this.#run(input, ["get", "cdp-url"])).stdout,
+        );
+        await minimizeAgentBrowserNativeWindow(cdpUrl, activeTargetId);
+      });
+    }
   }
 
   async command(
@@ -5027,22 +5134,25 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
   ): Promise<{ targetRef: string; targetLabel: string }> {
     this.#assertAccepted(input, input.acceptedOperation);
     const targetRef = requireEngineRef(input.targetRef);
-    const description = (await this.#run(
-      input,
-      ["get", "local-name", targetRef],
-    )).stdout;
+    const description = (
+      await this.#run(input, ["get", "local-name", targetRef])
+    ).stdout;
     const localName = extractSuccessfulAgentString(
       description,
       "localName",
     ).toLowerCase();
-    const type = extractSuccessfulAgentString(description, "type").toLowerCase();
+    const type = extractSuccessfulAgentString(
+      description,
+      "type",
+    ).toLowerCase();
     if (localName !== "input" || type !== "file") {
       throw new Error("BROWSER_TARGET_STALE: target is not input[type=file].");
     }
     let accessibleLabel: string | undefined;
     try {
       accessibleLabel = extractSuccessfulAgentString(
-        (await this.#run(input, ["get", "attr", targetRef, "aria-label"])).stdout,
+        (await this.#run(input, ["get", "attr", targetRef, "aria-label"]))
+          .stdout,
         "value",
         true,
       )?.trim();
@@ -5068,7 +5178,9 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     const runtimeRoot = path.resolve(input.runtimePath);
     const ownedPath = path.resolve(input.ownedPath);
     if (path.dirname(ownedPath) !== runtimeRoot) {
-      throw new Error("BROWSER_ENGINE_FAILURE: upload staging path is not owned.");
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: upload staging path is not owned.",
+      );
     }
     await this.#run(input, ["upload", targetRef, ownedPath], {
       ...(input.signal ? { signal: input.signal } : {}),
@@ -5078,13 +5190,91 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
   async captureViewerFrame(
     input: DesktopBrowserEngineInvocation,
   ): Promise<{ mediaType: "image/png"; dataBase64: string }> {
+    return await this.#captureFrame(input, false);
+  }
+
+  async captureScreenshot(
+    input: DesktopBrowserEngineInvocation & {
+      fullPage: boolean;
+      acceptedOperation: DesktopBrowserAcceptedOperation;
+    },
+  ): Promise<{ mediaType: "image/png"; dataBase64: string }> {
+    this.#assertAccepted(input, input.acceptedOperation);
+    return await this.#captureFrame(input, input.fullPage);
+  }
+
+  async #captureFrame(
+    input: DesktopBrowserEngineInvocation,
+    fullPage: boolean,
+  ): Promise<{ mediaType: "image/png"; dataBase64: string }> {
+    if (process.platform === "darwin") {
+      const priorConcealmentFailure = await this.#nativeConcealments.get(
+        input.sessionId,
+      );
+      if (priorConcealmentFailure !== undefined) {
+        throw priorConcealmentFailure;
+      }
+    }
     const activeTargetId = requirePinnedViewerActiveTarget(
       (await this.#run(input, ["tab", "list"])).stdout,
     );
     const cdpUrl = requirePinnedViewerCdpUrl(
       (await this.#run(input, ["get", "cdp-url"])).stdout,
     );
-    const frame = await captureViewerPngThroughCdp(cdpUrl, activeTargetId);
+    const presentation =
+      input.nativeAuthenticationHandoff === true
+        ? await prepareAgentBrowserNativeCaptureWindow(cdpUrl, activeTargetId)
+        : undefined;
+    let frame: { mediaType: "image/png"; dataBase64: string } | undefined;
+    let captureFailure: unknown;
+    try {
+      frame = await captureViewerPngThroughCdp(
+        cdpUrl,
+        activeTargetId,
+        fullPage,
+      );
+    } catch (error) {
+      captureFailure = error;
+    }
+    let concealmentFailure: unknown;
+    if (presentation !== undefined) {
+      try {
+        if (process.platform === "darwin") {
+          if (this.#nativeCapturePrimed.has(input.sessionId)) {
+            await this.#setNativeApplicationHidden(input, true);
+          } else {
+            this.#nativeCapturePrimed.add(input.sessionId);
+            this.#scheduleNativeApplicationConcealment(
+              input,
+              cdpUrl,
+              presentation,
+            );
+          }
+        } else {
+          await revokeAgentBrowserNativeWindow(cdpUrl, presentation);
+        }
+      } catch (error) {
+        concealmentFailure = error;
+        if (process.platform === "darwin") {
+          await revokeAgentBrowserNativeWindow(cdpUrl, presentation).catch(
+            () => undefined,
+          );
+        }
+      }
+    }
+    if (captureFailure !== undefined && concealmentFailure === undefined) {
+      throw captureFailure;
+    }
+    if (captureFailure === undefined && concealmentFailure !== undefined) {
+      throw concealmentFailure;
+    }
+    if (captureFailure !== undefined && concealmentFailure !== undefined) {
+      throw new AggregateError(
+        [captureFailure, concealmentFailure],
+        "BROWSER_ENGINE_FAILURE: Browser frame capture or native-window concealment failed.",
+      );
+    }
+    if (frame === undefined) throw viewerCdpFailure();
     const currentTargetId = requirePinnedViewerActiveTarget(
       (await this.#run(input, ["tab", "list"])).stdout,
     );
@@ -5102,10 +5292,12 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     },
   ): Promise<void> {
     const cdp = await this.#run(input, ["get", "cdp-url"]);
-    const tabs = parseTabs((await this.#run(input, ["tab", "--json"])).stdout);
+    const activeTargetId = requirePinnedViewerActiveTarget(
+      (await this.#run(input, ["tab", "--json"])).stdout,
+    );
     await sendBrowserPageCdpCommand(
       extractScalar(cdp.stdout, "cdpUrl"),
-      tabs.activeTabId,
+      activeTargetId,
       input.viewerInput.kind === "pointer"
         ? "Input.dispatchMouseEvent"
         : "Input.dispatchKeyEvent",
@@ -5127,12 +5319,32 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
       );
     }
     assertNativeHandoffAuthority(input, input.authority);
-    const cdp = await this.#run(input, ["get", "cdp-url"]);
-    const tabs = parseTabs((await this.#run(input, ["tab", "--json"])).stdout);
-    return await presentAgentBrowserNativeWindow(
-      extractScalar(cdp.stdout, "cdpUrl"),
-      tabs.activeTabId,
+    const priorConcealmentFailure = await this.#nativeConcealments.get(
+      input.sessionId,
     );
+    if (priorConcealmentFailure !== undefined) {
+      throw priorConcealmentFailure;
+    }
+    const cdp = await this.#run(input, ["get", "cdp-url"]);
+    const activeTargetId = requirePinnedViewerActiveTarget(
+      (await this.#run(input, ["tab", "--json"])).stdout,
+    );
+    if (process.platform === "darwin") {
+      await this.#setNativeApplicationHidden(input, false);
+    }
+    try {
+      return await presentAgentBrowserNativeWindow(
+        extractScalar(cdp.stdout, "cdpUrl"),
+        activeTargetId,
+      );
+    } catch (error) {
+      if (process.platform === "darwin") {
+        await this.#setNativeApplicationHidden(input, true).catch(
+          () => undefined,
+        );
+      }
+      throw error;
+    }
   }
 
   async revokeNativeHandoff(
@@ -5149,10 +5361,23 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
     }
     assertNativeHandoffAuthority(input, input.authority);
     const cdp = await this.#run(input, ["get", "cdp-url"]);
-    await revokeAgentBrowserNativeWindow(
-      extractScalar(cdp.stdout, "cdpUrl"),
-      input.presentation,
-    );
+    const cdpUrl = extractScalar(cdp.stdout, "cdpUrl");
+    if (process.platform === "darwin") {
+      try {
+        await this.#setNativeApplicationHidden(input, true);
+        await prepareAgentBrowserNativeCaptureWindow(
+          cdpUrl,
+          input.presentation.targetId,
+        );
+      } catch (error) {
+        await revokeAgentBrowserNativeWindow(cdpUrl, input.presentation).catch(
+          () => undefined,
+        );
+        throw error;
+      }
+      return;
+    }
+    await revokeAgentBrowserNativeWindow(cdpUrl, input.presentation);
   }
 
   async close(
@@ -5160,6 +5385,9 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
       acceptedOperation?: DesktopBrowserAcceptedOperation | undefined;
     },
   ): Promise<void> {
+    await this.#nativeConcealments.get(input.sessionId)?.catch(() => undefined);
+    this.#nativeConcealments.delete(input.sessionId);
+    this.#nativeCapturePrimed.delete(input.sessionId);
     if (input.acceptedOperation !== undefined) {
       this.#assertAccepted(input, input.acceptedOperation);
     }
@@ -5210,6 +5438,38 @@ export class AgentBrowserCliAdapter implements DesktopBrowserEngineAdapter {
       sessionId: input.sessionId,
       engineExecutablePath: this.#engineExecutablePath,
     });
+  }
+
+  #scheduleNativeApplicationConcealment(
+    input: DesktopBrowserEngineInvocation,
+    cdpUrl: string,
+    presentation: DesktopBrowserNativeHandoffPresentation,
+  ): void {
+    const concealment = new Promise<unknown | undefined>((resolve) => {
+      setImmediate(() => {
+        void this.#setNativeApplicationHidden(input, true).then(
+          () => resolve(undefined),
+          async (error) => {
+            await revokeAgentBrowserNativeWindow(cdpUrl, presentation).catch(
+              () => undefined,
+            );
+            resolve(error);
+          },
+        );
+      });
+    });
+    this.#nativeConcealments.set(input.sessionId, concealment);
+  }
+
+  async #setNativeApplicationHidden(
+    input: DesktopBrowserEngineInvocation,
+    hidden: boolean,
+  ): Promise<void> {
+    const pid = await resolveOwnedChromeApplicationPid({
+      daemonPid: await readDesktopBrowserOwnedDaemonPid(input),
+      profilePath: input.profilePath,
+    });
+    await setDarwinApplicationHidden(pid, hidden);
   }
 
   #assertAccepted(
@@ -5457,16 +5717,13 @@ export async function presentAgentBrowserNativeWindow(
       "Page.bringToFront",
       {},
     );
-    const verified = await sendRequest(
+    await waitForAgentBrowserNativeWindowState(
       parsed.toString(),
-      "Browser.getWindowBounds",
-      { windowId: presentation.windowId },
+      presentation.windowId,
+      "normal",
+      sendRequest,
+      "BROWSER_ENGINE_FAILURE: Browser native handoff presentation was not proven.",
     );
-    if (requireWindowState(verified) !== "normal") {
-      throw new Error(
-        "BROWSER_ENGINE_FAILURE: Browser native handoff presentation was not proven.",
-      );
-    }
     const current = await resolveNativeHandoffWindow(
       parsed.toString(),
       presentation.targetId,
@@ -5516,6 +5773,82 @@ export async function minimizeAgentBrowserNativeWindow(
     sendRequest,
   );
   return presentation;
+}
+
+export async function prepareAgentBrowserNativeCaptureWindow(
+  cdpUrl: string,
+  targetId: string,
+  sendRequest: typeof sendBrowserCdpRequest = sendBrowserCdpRequest,
+): Promise<DesktopBrowserNativeHandoffPresentation> {
+  const parsed = parseLocalBrowserCdpUrl(cdpUrl);
+  const exactTarget = requireText(targetId, "Browser native capture targetId");
+  const window = await sendRequest(
+    parsed.toString(),
+    "Browser.getWindowForTarget",
+    { targetId: exactTarget },
+  );
+  const windowId = window.windowId;
+  if (!Number.isSafeInteger(windowId) || Number(windowId) < 1) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser native capture window identity is invalid.",
+    );
+  }
+  const initialState = requireWindowState(window);
+  const presentation = Object.freeze({
+    windowId: Number(windowId),
+    targetId: exactTarget,
+  });
+  try {
+    if (initialState === "minimized") {
+      await sendRequest(parsed.toString(), "Browser.setWindowBounds", {
+        windowId: presentation.windowId,
+        bounds: { windowState: "normal" },
+      });
+    }
+    await waitForAgentBrowserNativeWindowState(
+      parsed.toString(),
+      presentation.windowId,
+      "normal",
+      sendRequest,
+      "BROWSER_ENGINE_FAILURE: Browser native capture window activation was not proven.",
+    );
+    const currentWindowId = await resolveNativeHandoffWindow(
+      parsed.toString(),
+      exactTarget,
+      sendRequest,
+    );
+    if (currentWindowId !== presentation.windowId) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: Browser native capture target changed windows.",
+      );
+    }
+    return presentation;
+  } catch (error) {
+    await revokeAgentBrowserNativeWindow(
+      parsed.toString(),
+      presentation,
+      sendRequest,
+    ).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function waitForAgentBrowserNativeWindowState(
+  cdpUrl: string,
+  windowId: number,
+  expectedState: "normal" | "minimized",
+  sendRequest: typeof sendBrowserCdpRequest,
+  failureMessage: string,
+): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  do {
+    const verified = await sendRequest(cdpUrl, "Browser.getWindowBounds", {
+      windowId,
+    });
+    if (requireWindowState(verified) === expectedState) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  } while (Date.now() < deadline);
+  throw new Error(failureMessage);
 }
 
 export async function revokeAgentBrowserNativeWindow(
@@ -5608,14 +5941,13 @@ async function minimizeAndVerifyNativeHandoffWindow(
     windowId,
     bounds: { windowState: "minimized" },
   });
-  const verified = await sendRequest(cdpUrl, "Browser.getWindowBounds", {
+  await waitForAgentBrowserNativeWindowState(
+    cdpUrl,
     windowId,
-  });
-  if (requireWindowState(verified) !== "minimized") {
-    throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser native handoff revocation was not proven.",
-    );
-  }
+    "minimized",
+    sendRequest,
+    "BROWSER_ENGINE_FAILURE: Browser native handoff revocation was not proven.",
+  );
 }
 
 function requireWindowState(
@@ -5623,9 +5955,7 @@ function requireWindowState(
 ): "normal" | "minimized" {
   const bounds = requireRecord(result.bounds, "Browser window bounds");
   if (bounds.windowState !== "normal" && bounds.windowState !== "minimized") {
-    throw new Error(
-      "BROWSER_ENGINE_FAILURE: Browser window state is invalid.",
-    );
+    throw new Error("BROWSER_ENGINE_FAILURE: Browser window state is invalid.");
   }
   return bounds.windowState;
 }
@@ -5677,12 +6007,15 @@ export async function installAgentBrowserDownloadInterception(
     let stopped = false;
     let eventTail = Promise.resolve();
     let eventFailure: Error | undefined;
-    const pendingDownloads = new Map<string, {
-      filename: string;
-      normalizedSourceOrigin: string;
-      receivedBytes: number;
-      completing: boolean;
-    }>();
+    const pendingDownloads = new Map<
+      string,
+      {
+        filename: string;
+        normalizedSourceOrigin: string;
+        receivedBytes: number;
+        completing: boolean;
+      }
+    >();
     const barriers = new Map<
       number,
       {
@@ -5835,18 +6168,21 @@ export async function installAgentBrowserDownloadInterception(
             DESKTOP_MAX_ATTACHMENTS_PER_MESSAGE
           ) {
             const ownedPath = path.join(quarantineRoot, guid);
-            socket.send(JSON.stringify({
-              id: ++nextCommandId,
-              method: "Browser.cancelDownload",
-              params: { guid },
-            }));
-            eventTail = eventTail.then(() => rm(ownedPath, { force: true })).catch(
-              (error) => {
-                eventFailure ??= error instanceof Error
-                  ? error
-                  : new Error("BROWSER_ENGINE_FAILURE");
-              },
+            socket.send(
+              JSON.stringify({
+                id: ++nextCommandId,
+                method: "Browser.cancelDownload",
+                params: { guid },
+              }),
             );
+            eventTail = eventTail
+              .then(() => rm(ownedPath, { force: true }))
+              .catch((error) => {
+                eventFailure ??=
+                  error instanceof Error
+                    ? error
+                    : new Error("BROWSER_ENGINE_FAILURE");
+              });
             eventFailure ??= browserFailure(
               "BROWSER_ARTIFACT_TOO_LARGE",
               "The Browser download quarantine item limit was reached.",
@@ -5856,7 +6192,9 @@ export async function installAgentBrowserDownloadInterception(
           }
           pendingDownloads.set(guid, {
             filename: sanitizeBrowserDownloadFilename(params.suggestedFilename),
-            normalizedSourceOrigin: normalizeBrowserDownloadSourceOrigin(params.url),
+            normalizedSourceOrigin: normalizeBrowserDownloadSourceOrigin(
+              params.url,
+            ),
             receivedBytes: 0,
             completing: false,
           });
@@ -5869,92 +6207,98 @@ export async function installAgentBrowserDownloadInterception(
         const state = params.state;
         const receivedBytes = params.receivedBytes;
         if (state === "completed") pending.completing = true;
-        eventTail = eventTail.then(async () => {
-        const ownedPath = path.join(quarantineRoot, guid);
-        if (
-          typeof receivedBytes === "number" &&
-          (!Number.isSafeInteger(receivedBytes) ||
-            receivedBytes < pending.receivedBytes)
-        ) {
-          socket.send(JSON.stringify({
-            id: ++nextCommandId,
-            method: "Browser.cancelDownload",
-            params: { guid },
-          }));
-          pendingDownloads.delete(guid);
-          await rm(ownedPath, { force: true });
-          throw new Error(
-            "BROWSER_ENGINE_FAILURE: Browser download progress was invalid.",
-          );
-        }
-        if (typeof receivedBytes === "number") {
-          pending.receivedBytes = receivedBytes;
-        }
-        const completedUsage = getCompletedQuarantineUsage();
-        const inProgressBytes = [...pendingDownloads.values()].reduce(
-          (total, candidate) => total + candidate.receivedBytes,
-          0,
-        );
-        if (
-          pending.receivedBytes > DESKTOP_MAX_ATTACHMENT_BYTES ||
-          completedUsage.measuredBytes + inProgressBytes >
-            DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES
-        ) {
-          socket.send(JSON.stringify({
-            id: ++nextCommandId,
-            method: "Browser.cancelDownload",
-            params: { guid },
-          }));
-          pendingDownloads.delete(guid);
-          await rm(ownedPath, { force: true });
-          throw browserFailure(
-            "BROWSER_ARTIFACT_TOO_LARGE",
-            "The Browser download exceeded the quarantine file limit.",
-            { browserOutcomeKnown: true, downloadIntercepted: true },
-          );
-        }
-        if (state === "canceled") {
-          pendingDownloads.delete(guid);
-          await rm(ownedPath, { force: true });
-          return;
-        }
-        if (state !== "completed") return;
-        try {
-          const measured = await measureOwnedBrowserDownload(
-            ownedPath,
-            DESKTOP_MAX_ATTACHMENT_BYTES,
-          );
-          const createdAt = now().toISOString();
-          const download: DesktopBrowserInterceptedDownload = {
-            downloadId: `download-${digest({ guid })}`,
-            browserGuid: guid,
-            filename: pending.filename,
-            declaredMediaType: "application/octet-stream",
-            normalizedSourceOrigin: pending.normalizedSourceOrigin,
-            measuredBytes: measured.measuredBytes,
-            sha256: measured.sha256,
-            createdAt,
-            expiresAt: new Date(
-              Date.parse(createdAt) + BROWSER_DOWNLOAD_RETENTION_MS,
-            ).toISOString(),
-            ownedPath,
-          };
-          await onDownloadIntercepted(download);
-          pendingDownloads.delete(guid);
-        } catch (error) {
-          pendingDownloads.delete(guid);
-          await rm(ownedPath, { force: true }).catch(() => undefined);
-          throw error;
-        }
-        }).catch((error) => {
-          eventFailure ??= error instanceof Error
-            ? error
-            : new Error("BROWSER_ENGINE_FAILURE");
-        });
+        eventTail = eventTail
+          .then(async () => {
+            const ownedPath = path.join(quarantineRoot, guid);
+            if (
+              typeof receivedBytes === "number" &&
+              (!Number.isSafeInteger(receivedBytes) ||
+                receivedBytes < pending.receivedBytes)
+            ) {
+              socket.send(
+                JSON.stringify({
+                  id: ++nextCommandId,
+                  method: "Browser.cancelDownload",
+                  params: { guid },
+                }),
+              );
+              pendingDownloads.delete(guid);
+              await rm(ownedPath, { force: true });
+              throw new Error(
+                "BROWSER_ENGINE_FAILURE: Browser download progress was invalid.",
+              );
+            }
+            if (typeof receivedBytes === "number") {
+              pending.receivedBytes = receivedBytes;
+            }
+            const completedUsage = getCompletedQuarantineUsage();
+            const inProgressBytes = [...pendingDownloads.values()].reduce(
+              (total, candidate) => total + candidate.receivedBytes,
+              0,
+            );
+            if (
+              pending.receivedBytes > DESKTOP_MAX_ATTACHMENT_BYTES ||
+              completedUsage.measuredBytes + inProgressBytes >
+                DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES
+            ) {
+              socket.send(
+                JSON.stringify({
+                  id: ++nextCommandId,
+                  method: "Browser.cancelDownload",
+                  params: { guid },
+                }),
+              );
+              pendingDownloads.delete(guid);
+              await rm(ownedPath, { force: true });
+              throw browserFailure(
+                "BROWSER_ARTIFACT_TOO_LARGE",
+                "The Browser download exceeded the quarantine file limit.",
+                { browserOutcomeKnown: true, downloadIntercepted: true },
+              );
+            }
+            if (state === "canceled") {
+              pendingDownloads.delete(guid);
+              await rm(ownedPath, { force: true });
+              return;
+            }
+            if (state !== "completed") return;
+            try {
+              const measured = await measureOwnedBrowserDownload(
+                ownedPath,
+                DESKTOP_MAX_ATTACHMENT_BYTES,
+              );
+              const createdAt = now().toISOString();
+              const download: DesktopBrowserInterceptedDownload = {
+                downloadId: `download-${digest({ guid })}`,
+                browserGuid: guid,
+                filename: pending.filename,
+                declaredMediaType: "application/octet-stream",
+                normalizedSourceOrigin: pending.normalizedSourceOrigin,
+                measuredBytes: measured.measuredBytes,
+                sha256: measured.sha256,
+                createdAt,
+                expiresAt: new Date(
+                  Date.parse(createdAt) + BROWSER_DOWNLOAD_RETENTION_MS,
+                ).toISOString(),
+                ownedPath,
+              };
+              await onDownloadIntercepted(download);
+              pendingDownloads.delete(guid);
+            } catch (error) {
+              pendingDownloads.delete(guid);
+              await rm(ownedPath, { force: true }).catch(() => undefined);
+              throw error;
+            }
+          })
+          .catch((error) => {
+            eventFailure ??=
+              error instanceof Error
+                ? error
+                : new Error("BROWSER_ENGINE_FAILURE");
+          });
       } catch (error) {
-        eventFailure ??= error instanceof Error
-          ? error
-          : new Error("BROWSER_ENGINE_FAILURE");
+        eventFailure ??=
+          error instanceof Error ? error : new Error("BROWSER_ENGINE_FAILURE");
       }
     });
     const failConnection = () => {
@@ -6208,9 +6552,7 @@ async function sendBrowserPageCdpCommand(
           );
           return;
         }
-        socket.send(
-          JSON.stringify({ id: 2, sessionId, method, params }),
-        );
+        socket.send(JSON.stringify({ id: 2, sessionId, method, params }));
         return;
       }
       if (response.id !== 2) return;
@@ -6262,10 +6604,12 @@ function viewerKeyboardCdpParameters(
 function viewerModifierMask(
   modifiers: DesktopBrowserViewerInputV1["modifiers"],
 ): number {
-  return (modifiers?.includes("alt") ? 1 : 0) |
+  return (
+    (modifiers?.includes("alt") ? 1 : 0) |
     (modifiers?.includes("control") ? 2 : 0) |
     (modifiers?.includes("meta") ? 4 : 0) |
-    (modifiers?.includes("shift") ? 8 : 0);
+    (modifiers?.includes("shift") ? 8 : 0)
+  );
 }
 
 function requirePinnedViewerResponse(stdout: string): unknown {
@@ -6278,9 +6622,16 @@ function requirePinnedViewerResponse(stdout: string): unknown {
     );
   }
   const response = requireOptionalRecord(parsed);
+  const responseKeys = response === undefined ? [] : Object.keys(response);
+  const hasBoundary = responseKeys.includes("_boundary");
   if (
     response === undefined ||
-    !exactRecordKeys(response, ["success", "data", "error"]) ||
+    !exactRecordKeys(
+      response,
+      hasBoundary
+        ? ["_boundary", "success", "data", "error"]
+        : ["success", "data", "error"],
+    ) ||
     response.success !== true ||
     response.error !== null
   ) {
@@ -6288,10 +6639,36 @@ function requirePinnedViewerResponse(stdout: string): unknown {
       "BROWSER_ENGINE_FAILURE: agent-browser viewer metadata was invalid.",
     );
   }
-  return response.data;
+  if (hasBoundary) {
+    const boundary = requireOptionalRecord(response._boundary);
+    if (
+      boundary === undefined ||
+      !exactRecordKeys(boundary, ["nonce", "origin"]) ||
+      typeof boundary.nonce !== "string" ||
+      !/^[a-f0-9]{32}$/u.test(boundary.nonce) ||
+      typeof boundary.origin !== "string" ||
+      boundary.origin.length === 0 ||
+      boundary.origin.length > 8192
+    ) {
+      throw new Error(
+        "BROWSER_ENGINE_FAILURE: agent-browser viewer metadata was invalid.",
+      );
+    }
+  }
+  const data = requireOptionalRecord(response.data);
+  if (data === undefined) return response.data;
+  if (!("lifecycle" in data)) return data;
+  if (requireOptionalRecord(data.lifecycle) === undefined) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser viewer metadata was invalid.",
+    );
+  }
+  const normalized = { ...data };
+  delete normalized.lifecycle;
+  return normalized;
 }
 
-function requirePinnedViewerActiveTarget(stdout: string): string {
+export function requirePinnedViewerActiveTarget(stdout: string): string {
   const data = requireOptionalRecord(requirePinnedViewerResponse(stdout));
   if (
     data === undefined ||
@@ -6343,7 +6720,9 @@ function requirePinnedViewerActiveTarget(stdout: string): string {
       active: boolean;
     };
   });
-  if (new Set(targets.map((target) => target.targetId)).size !== targets.length) {
+  if (
+    new Set(targets.map((target) => target.targetId)).size !== targets.length
+  ) {
     throw new Error(
       "BROWSER_ENGINE_FAILURE: agent-browser active viewer target was invalid.",
     );
@@ -6400,6 +6779,7 @@ function exactRecordKeys(
 async function captureViewerPngThroughCdp(
   cdpUrl: string,
   targetId: string,
+  fullPage = false,
 ): Promise<{ mediaType: "image/png"; dataBase64: string }> {
   return await new Promise((resolve, reject) => {
     const socket = new WebSocket(cdpUrl, {
@@ -6407,13 +6787,15 @@ async function captureViewerPngThroughCdp(
       maxPayload: HOSTED_BROWSER_VIEWER_MAX_SERIALIZED_FRAME_BYTES,
       perMessageDeflate: false,
     });
-    let stage: "attach" | "capture" | "detach" = "attach";
+    let stage: "attach" | "layout" | "capture" | "detach" = "attach";
     let attachedEventSessionId: string | undefined;
     let detachedEventSeen = false;
     let sessionId: string | undefined;
     let frame: { mediaType: "image/png"; dataBase64: string } | undefined;
     let detachSent = false;
     let settled = false;
+    const captureRequestId = fullPage ? 3 : 2;
+    const detachRequestId = fullPage ? 4 : 3;
     const close = () => {
       if (socket.readyState === WebSocket.CLOSED) return;
       try {
@@ -6442,7 +6824,7 @@ async function captureViewerPngThroughCdp(
       }
       detachSent = true;
       send({
-        id: 3,
+        id: detachRequestId,
         method: "Target.detachFromTarget",
         params: { sessionId },
       });
@@ -6552,12 +6934,81 @@ async function captureViewerPngThroughCdp(
           return;
         }
         sessionId = result.sessionId;
-        stage = "capture";
+        stage = fullPage ? "layout" : "capture";
+        if (fullPage) {
+          send({
+            id: 2,
+            sessionId,
+            method: "Page.getLayoutMetrics",
+            params: {},
+          });
+          return;
+        }
         send({
-          id: 2,
+          id: captureRequestId,
           sessionId,
           method: "Page.captureScreenshot",
-          params: { format: "png", fromSurface: true },
+          params: {
+            format: "png",
+            fromSurface: true,
+          },
+        });
+        return;
+      }
+      if (stage === "layout") {
+        const result = requireOptionalRecord(message.result);
+        const contentSize = requireOptionalRecord(result?.cssContentSize);
+        const allowedLayoutMetricKeys = new Set([
+          "layoutViewport",
+          "visualViewport",
+          "contentSize",
+          "cssLayoutViewport",
+          "cssVisualViewport",
+          "cssContentSize",
+        ]);
+        if (
+          !exactRecordKeys(message, ["id", "sessionId", "result"]) ||
+          message.id !== 2 ||
+          message.sessionId !== sessionId ||
+          result === undefined ||
+          Object.keys(result).some(
+            (key) => !allowedLayoutMetricKeys.has(key),
+          ) ||
+          contentSize === undefined ||
+          !exactRecordKeys(contentSize, ["x", "y", "width", "height"]) ||
+          ![
+            contentSize.x,
+            contentSize.y,
+            contentSize.width,
+            contentSize.height,
+          ].every(
+            (value) => typeof value === "number" && Number.isFinite(value),
+          ) ||
+          (contentSize.width as number) <= 0 ||
+          (contentSize.height as number) <= 0 ||
+          (contentSize.width as number) > 32_767 ||
+          (contentSize.height as number) > 32_767
+        ) {
+          finish(viewerCdpFailure());
+          return;
+        }
+        stage = "capture";
+        send({
+          id: captureRequestId,
+          sessionId,
+          method: "Page.captureScreenshot",
+          params: {
+            format: "png",
+            fromSurface: true,
+            captureBeyondViewport: true,
+            clip: {
+              x: contentSize.x,
+              y: contentSize.y,
+              width: contentSize.width,
+              height: contentSize.height,
+              scale: 1,
+            },
+          },
         });
         return;
       }
@@ -6565,7 +7016,7 @@ async function captureViewerPngThroughCdp(
         const result = requireOptionalRecord(message.result);
         if (
           !exactRecordKeys(message, ["id", "sessionId", "result"]) ||
-          message.id !== 2 ||
+          message.id !== captureRequestId ||
           message.sessionId !== sessionId ||
           result === undefined ||
           !exactRecordKeys(result, ["data"]) ||
@@ -6604,7 +7055,7 @@ async function captureViewerPngThroughCdp(
       if (
         !detachedEventSeen ||
         !exactRecordKeys(message, ["id", "result"]) ||
-        message.id !== 3 ||
+        message.id !== detachRequestId ||
         result === undefined ||
         !exactRecordKeys(result, []) ||
         frame === undefined
@@ -6617,9 +7068,10 @@ async function captureViewerPngThroughCdp(
   });
 }
 
-function requireCanonicalViewerPng(
-  dataBase64: string,
-): { mediaType: "image/png"; dataBase64: string } {
+function requireCanonicalViewerPng(dataBase64: string): {
+  mediaType: "image/png";
+  dataBase64: string;
+} {
   const byteLength = hostedBrowserViewerPngBase64ByteLength(dataBase64);
   if (
     byteLength === undefined ||
@@ -6631,9 +7083,9 @@ function requireCanonicalViewerPng(
   const bytes = Buffer.from(dataBase64, "base64");
   if (
     bytes.byteLength !== byteLength ||
-    !bytes.subarray(0, 8).equals(
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    )
+    !bytes
+      .subarray(0, 8)
+      .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
   ) {
     throw viewerCdpFailure();
   }
@@ -6675,9 +7127,11 @@ export async function spawnAndCollect(input: {
       settled = true;
       clearTimeout(timer);
       child.kill("SIGKILL");
-      reject(input.signal?.reason instanceof Error
-        ? input.signal.reason
-        : new Error("BROWSER_ACTION_CANCELLED"));
+      reject(
+        input.signal?.reason instanceof Error
+          ? input.signal.reason
+          : new Error("BROWSER_ACTION_CANCELLED"),
+      );
     };
     const timer = setTimeout(() => {
       if (settled) return;
@@ -6752,6 +7206,109 @@ class BrowserChildProcessExitError extends Error {
     this.signal = signal;
     this.stdout = stdout;
     this.stderr = stderr;
+  }
+}
+
+async function resolveOwnedChromeApplicationPid(input: {
+  daemonPid: number;
+  profilePath: string;
+}): Promise<number> {
+  const processTable = (
+    await spawnAndCollect({
+      executable: "/bin/ps",
+      args: ["-axo", "pid=,ppid=,command="],
+      cwd: "/",
+      env: { PATH: "/usr/bin:/bin", LANG: "C", NODE_ENV: "production" },
+      timeoutMs: 2_000,
+    })
+  ).stdout;
+  const rows = processTable.split("\n").flatMap((line) => {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/u);
+    return match === null
+      ? []
+      : [
+          {
+            pid: Number(match[1]),
+            ppid: Number(match[2]),
+            command: match[3] ?? "",
+          },
+        ];
+  });
+  const owned = new Set([input.daemonPid]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of rows) {
+      if (owned.has(row.ppid) && !owned.has(row.pid)) {
+        owned.add(row.pid);
+        changed = true;
+      }
+    }
+  }
+  const profileArgument = `--user-data-dir=${input.profilePath}`;
+  const candidates = rows.filter(
+    (row) =>
+      owned.has(row.pid) &&
+      row.command.includes(profileArgument) &&
+      !/(?:^|\s)--type=/u.test(row.command),
+  );
+  if (candidates.length !== 1 || candidates[0] === undefined) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: the exact owned Chrome application process was not proven.",
+    );
+  }
+  return candidates[0].pid;
+}
+
+async function setDarwinApplicationHidden(
+  pid: number,
+  hidden: boolean,
+): Promise<void> {
+  if (process.platform !== "darwin") {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: native Browser application concealment is unavailable.",
+    );
+  }
+  if (!Number.isSafeInteger(pid) || pid < 2) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Chrome application PID is invalid.",
+    );
+  }
+  const transition = hidden
+    ? "const transitionResult = ObjC.unwrap(app.hide);"
+    : "const transitionResult = ObjC.unwrap(app.unhide);";
+  const script = [
+    "ObjC.import('AppKit');",
+    `const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${pid});`,
+    "if (!app) throw new Error('Browser application unavailable');",
+    transition,
+    "delay(0.2);",
+    `JSON.stringify({pid: ${pid}, hidden: ObjC.unwrap(app.hidden)});`,
+  ].join(" ");
+  const result = await spawnAndCollect({
+    executable: "/usr/bin/osascript",
+    args: ["-l", "JavaScript", "-e", script],
+    cwd: "/",
+    env: { PATH: "/usr/bin:/bin", LANG: "C", NODE_ENV: "production" },
+    timeoutMs: 4_000,
+  });
+  let receipt: unknown;
+  try {
+    receipt = JSON.parse(result.stdout.trim());
+  } catch {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: native Browser application concealment receipt is invalid.",
+    );
+  }
+  const record = requireRecord(receipt, "native Browser application receipt");
+  if (
+    record?.pid !== pid ||
+    record.hidden !== hidden ||
+    !exactRecordKeys(record, ["pid", "hidden"])
+  ) {
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: native Browser application concealment was not proven.",
+    );
   }
 }
 
@@ -6853,7 +7410,8 @@ async function terminateOwnedProcessTree(input: {
         initialInspection.command,
         input.engineExecutablePath,
       )
-    ) return;
+    )
+      return;
     throw new Error(
       "BROWSER_ENGINE_FAILURE: agent-browser daemon identity changed before cleanup.",
     );
@@ -6918,7 +7476,8 @@ async function terminateOwnedProcessTree(input: {
           inspection.command,
           input.engineExecutablePath,
         )
-      ) return;
+      )
+        return;
       throw new Error(
         "BROWSER_ENGINE_FAILURE: agent-browser daemon identity changed during cleanup.",
       );
@@ -6951,7 +7510,9 @@ export function desktopBrowserZombieCommandMatches(
   command: string,
   engineExecutablePath: string,
 ): boolean {
-  return command.trim() === `[${path.basename(engineExecutablePath)}] <defunct>`;
+  return (
+    command.trim() === `[${path.basename(engineExecutablePath)}] <defunct>`
+  );
 }
 
 export async function assertDesktopBrowserOwnedDaemonArtifacts(
@@ -7373,7 +7934,10 @@ async function openExactOwnedBrowserDownload(
       { browserOutcomeKnown: true, effectDispatched: false },
     );
   }
-  const handle = await open(ownedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const handle = await open(
+    ownedPath,
+    constants.O_RDONLY | constants.O_NOFOLLOW,
+  );
   try {
     const opened = await handle.stat();
     if (
@@ -7405,7 +7969,9 @@ async function openExactOwnedBrowserDownload(
 function requireBrowserDownloadGuid(value: unknown): string {
   const guid = requireText(value, "Browser download GUID");
   if (!BROWSER_DOWNLOAD_GUID_PATTERN.test(guid)) {
-    throw new Error("BROWSER_ENGINE_FAILURE: Browser download GUID is invalid.");
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: Browser download GUID is invalid.",
+    );
   }
   return guid;
 }
@@ -7494,8 +8060,16 @@ function browserOutput(
   };
 }
 
+function browserArtifactOutput(
+  authorization: BrowserAuthorizedArtifactV1,
+): Omit<BrowserAuthorizedArtifactV1, "version"> {
+  const { version: _authorizationVersion, ...artifact } = authorization;
+  return artifact;
+}
+
 function sanitizeBrowserUploadResultFilename(value: string): string {
-  const filename = path.basename(value.replaceAll("\\", "/"))
+  const filename = path
+    .basename(value.replaceAll("\\", "/"))
     .replace(/[\u0000-\u001f\u007f]/gu, "")
     .trim()
     .slice(0, 255);
@@ -7838,10 +8412,7 @@ function extractOptionalAgentString(
   return typeof value === "string" ? value : undefined;
 }
 
-function extractSuccessfulAgentString(
-  stdout: string,
-  field: string,
-): string;
+function extractSuccessfulAgentString(stdout: string, field: string): string;
 function extractSuccessfulAgentString(
   stdout: string,
   field: string,
@@ -7856,17 +8427,23 @@ function extractSuccessfulAgentString(
   try {
     parsed = JSON.parse(stdout) as unknown;
   } catch {
-    throw new Error("BROWSER_ENGINE_FAILURE: agent-browser returned invalid JSON.");
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser returned invalid JSON.",
+    );
   }
   const outer = requireOptionalRecord(parsed);
   const data = requireOptionalRecord(outer?.data);
   if (outer?.success !== true || outer.error !== null || data === undefined) {
-    throw new Error("BROWSER_ENGINE_FAILURE: agent-browser returned an unsuccessful response.");
+    throw new Error(
+      "BROWSER_ENGINE_FAILURE: agent-browser returned an unsuccessful response.",
+    );
   }
   const value = data[field];
   if (typeof value === "string") return value;
   if (allowNull && value === null) return undefined;
-  throw new Error("BROWSER_ENGINE_FAILURE: agent-browser returned invalid response data.");
+  throw new Error(
+    "BROWSER_ENGINE_FAILURE: agent-browser returned invalid response data.",
+  );
 }
 
 function extractEngineContent(

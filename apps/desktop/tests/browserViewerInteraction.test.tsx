@@ -14,6 +14,7 @@ import type {
 test("Desktop Browser viewer accepts takeover, sends typed secret input, and returns explicitly", async () => {
   const browser = new Window({ url: "http://localhost/" });
   const inputs: DesktopBrowserViewerInputRequestV1[] = [];
+  const connections: Parameters<DesktopBridge["connectBrowserViewer"]>[0][] = [];
   let state: DesktopBrowserViewerStateV1 = {
     version: "desktop_browser_viewer_state_v1",
     available: true,
@@ -26,7 +27,8 @@ test("Desktop Browser viewer accepts takeover, sends typed secret input, and ret
     takeoverRequested: false,
   };
   const bridge = {
-    async connectBrowserViewer() {
+    async connectBrowserViewer(input) {
+      connections.push(input);
       return state;
     },
     async readBrowserViewerFrame() {
@@ -97,6 +99,21 @@ test("Desktop Browser viewer accepts takeover, sends typed secret input, and ret
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 1_100));
   });
+  assert.deepEqual(connections.slice(0, 2), [
+    {
+      version: "desktop_browser_viewer_request_v1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    },
+    {
+      version: "desktop_browser_viewer_request_v1",
+      threadId: "thread-1",
+      projectId: "project-1",
+      sessionId: "browser-1",
+      generation: 1,
+      connectionId: "viewer-1",
+    },
+  ]);
   const takeControl = [...container.querySelectorAll("button")].find(
     (button) => button.textContent === "Take control",
   );

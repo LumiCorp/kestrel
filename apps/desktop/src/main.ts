@@ -120,6 +120,7 @@ import {
 } from "./linkPreview.js";
 import {
   DesktopBrowserViewerAuthorityCoordinator,
+  sameDesktopBrowserViewerPrincipal,
   type DesktopBrowserViewerAuthorityLossReason,
   type DesktopBrowserViewerPrincipal,
 } from "./browserViewerAuthority.js";
@@ -1474,7 +1475,8 @@ function requireCurrentDesktopBrowserViewerPrincipal(
   if (
     principal === undefined ||
     principal.senderId !== event.sender.id ||
-    principal.principalId !== desktopBrowserViewerPrincipalId(event.sender.id) ||
+    principal.principalId !==
+      desktopBrowserViewerPrincipalId(event.sender.id) ||
     principal.threadId !== request.threadId ||
     principal.projectId !== request.projectId ||
     principal.sessionId !== request.sessionId ||
@@ -1922,19 +1924,20 @@ function registerIpcHandlers(
       requireCurrentMainWindowIpcSender(event);
       assertDesktopBrowserViewerAppEnabled();
       const request = parseDesktopBrowserViewerBinding(input);
-      await requireAvailableDesktopBrowserViewerThread(
-        runnerTransport,
-        request.threadId,
-      );
-      if (
+      const reconnecting =
         request.sessionId !== undefined ||
         request.generation !== undefined ||
-        request.connectionId !== undefined
-      ) {
-        throw createDesktopError({
-          code: "desktop.browser_viewer_connect_invalid",
-          message: "Browser viewer connection starts from a Thread and Project.",
-        });
+        request.connectionId !== undefined;
+      let reconnectIdentity:
+        | (DesktopBrowserViewerBindingV1 & {
+            sessionId: string;
+            generation: number;
+            connectionId: string;
+          })
+        | undefined;
+      if (reconnecting) {
+        exactDesktopBrowserViewerBinding(request);
+        reconnectIdentity = request;
       }
       const principalId = desktopBrowserViewerPrincipalId(event.sender.id);
       return await requireDesktopBrowserViewerAuthority().connect({
@@ -1943,22 +1946,38 @@ function registerIpcHandlers(
         threadId: request.threadId,
         projectId: request.projectId,
         connect: async (expected) => {
-          const viewer =
-            await requireLocalCoreConnectionManager().executeOnce(
-              async (client) =>
-                await client.connectDesktopBrowserViewer({
-                  principalId,
-                  threadId: request.threadId,
-                  projectId: request.projectId,
-                  ...(expected === undefined
-                    ? {}
-                    : {
-                        sessionId: expected.sessionId,
-                        generation: expected.generation,
-                        connectionId: expected.connectionId,
-                      }),
-                }),
-            );
+          if (
+            reconnectIdentity !== undefined &&
+            !sameDesktopBrowserViewerPrincipal(expected, {
+              senderId: event.sender.id,
+              principalId,
+              threadId: request.threadId,
+              projectId: request.projectId,
+              sessionId: reconnectIdentity.sessionId,
+              generation: reconnectIdentity.generation,
+              connectionId: reconnectIdentity.connectionId,
+            })
+          ) {
+            throw createDesktopError({
+              code: "desktop.browser_viewer_unauthorized",
+              message: "The Browser viewer is not authorized for this window.",
+            });
+          }
+          const viewer = await requireLocalCoreConnectionManager().executeOnce(
+            async (client) =>
+              await client.connectDesktopBrowserViewer({
+                principalId,
+                threadId: request.threadId,
+                projectId: request.projectId,
+                ...(expected === undefined
+                  ? {}
+                  : {
+                      sessionId: expected.sessionId,
+                      generation: expected.generation,
+                      connectionId: expected.connectionId,
+                    }),
+              }),
+          );
           return {
             value: viewer,
             previousSessionTerminal: viewer.available === false,
@@ -6679,9 +6698,10 @@ async function refreshDesktopCoreSettingsSnapshot(): Promise<DesktopSettings> {
 }
 
 function adoptDesktopSettings(settings: DesktopSettings): void {
-  const browserWasEnabled = getEffectiveDesktopEnabledAppIds(
-    desktopSettings,
-  ).includes("built_in.browser");
+  const browserWasEnabled =
+    getEffectiveDesktopEnabledAppIds(desktopSettings).includes(
+      "built_in.browser",
+    );
   desktopSettings = settings;
   if (
     browserWasEnabled &&

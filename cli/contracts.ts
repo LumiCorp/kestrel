@@ -146,6 +146,8 @@ export interface WorkspacesFile {
 export interface WorkspaceRuntimeContext {
   workspaceId: string;
   workspaceRoot: string;
+  /** Trusted product Project identity when the workspace is Project-bound. */
+  projectId?: string | undefined;
   launchCwd?: string | undefined;
   appRoot: string;
   packageManager?: string | undefined;

@@ -16,6 +16,8 @@ interface FakeOpenRouterScenarioState {
   failedAttempts: number;
   waitingCallId?: string | undefined;
   commitStep: number;
+  browserQaStep: number;
+  browserQaSession?: { sessionId: string; generation: number } | undefined;
 }
 
 export async function startFakeOpenRouterServer(
@@ -28,6 +30,7 @@ export async function startFakeOpenRouterServer(
     delayResolvers: new Set(),
     failedAttempts: 0,
     commitStep: 0,
+    browserQaStep: 0,
   };
   const sockets = new Set<Socket>();
   const server = http.createServer((request, response) => {
@@ -211,6 +214,8 @@ async function handleFakeOpenRouterRequest(
     scenarios.delayReleased = false;
     scenarios.failedAttempts = 0;
     scenarios.commitStep = 0;
+    scenarios.browserQaStep = 0;
+    delete scenarios.browserQaSession;
     delete scenarios.waitingCallId;
     response.writeHead(204, { connection: "close" });
     response.end();
@@ -480,6 +485,97 @@ async function handleFakeOpenRouterRequest(
     }
   }
 
+  const browserQaInput = [
+    userMessage,
+    ...(parsed.messages?.flatMap((message) =>
+      typeof message.content === "string" ? [message.content] : []
+    ) ?? []),
+  ].map(parseBrowserQaInput).find((candidate) => candidate !== undefined);
+  if (browserQaInput !== undefined) {
+    if (scenarios.browserQaStep === 0) {
+      scenarios.browserQaStep = 1;
+      writeToolCallResponse(response, parsed.stream === true, model, {
+        callId: `fake-browser-open-${requests.length}`,
+        name: "browser_open",
+        input: {
+          mode: "qa",
+          target: {
+            kind: "desktop_project_run",
+            projectId: browserQaInput.projectId,
+            runId: browserQaInput.runId,
+            urlId: browserQaInput.urlId,
+          },
+        },
+      });
+      return;
+    }
+    scenarios.browserQaSession ??= findBrowserQaSession(parsed.messages);
+    if (scenarios.browserQaSession === undefined) {
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "missing Browser QA session result" }));
+      return;
+    }
+    if (scenarios.browserQaStep === 1) {
+      if (!hasSuccessfulBrowserQaResult(parsed.messages, "browser.open")) {
+        writeBrowserQaError(response, "Browser QA open did not return OK evidence");
+        return;
+      }
+      scenarios.browserQaStep = 2;
+      writeToolCallResponse(response, parsed.stream === true, model, {
+        callId: `fake-browser-capture-${requests.length}`,
+        name: "browser_capture",
+        input: {
+          ...scenarios.browserQaSession,
+          kind: "screenshot",
+        },
+      });
+      return;
+    }
+    if (scenarios.browserQaStep === 2) {
+      if (
+        !hasSuccessfulBrowserQaResult(
+          parsed.messages,
+          "browser.capture",
+          "- artifactKind: browser-screenshot",
+        )
+      ) {
+        writeBrowserQaError(
+          response,
+          `Browser QA capture did not return screenshot evidence: ${browserQaResultDiagnostic(parsed.messages, "browser.capture")}`,
+        );
+        return;
+      }
+      scenarios.browserQaStep = 3;
+      writeToolCallResponse(response, parsed.stream === true, model, {
+        callId: `fake-browser-close-${requests.length}`,
+        name: "browser_close",
+        input: scenarios.browserQaSession,
+      });
+      return;
+    }
+    if (finalizeToolName !== null) {
+      if (
+        !hasSuccessfulBrowserQaResult(
+          parsed.messages,
+          "browser.close",
+          "- state: closed",
+        )
+      ) {
+        writeBrowserQaError(response, "Browser QA close did not return terminal evidence");
+        return;
+      }
+      writeToolCallResponse(response, parsed.stream === true, model, {
+        callId: `fake-browser-finalize-${requests.length}`,
+        name: finalizeToolName,
+        input: {
+          status: "goal_satisfied",
+          message: "BROWSER_QA_CANARY_OK",
+        },
+      });
+      return;
+    }
+  }
+
   if (toolMode) {
     const waiting =
       modeSource.includes("fake-openrouter-wait") &&
@@ -626,6 +722,101 @@ async function handleFakeOpenRouterRequest(
       ],
     }),
   );
+}
+
+function parseBrowserQaInput(value: string): {
+  projectId: string;
+  runId: string;
+  urlId: string;
+} | undefined {
+  const match = /fake-openrouter-browser-qa\s+(\{[^{}]+\})/u.exec(value);
+  if (match?.[1] === undefined) return;
+  try {
+    const parsed = JSON.parse(match[1]) as Record<string, unknown>;
+    if (
+      typeof parsed.projectId === "string" &&
+      typeof parsed.runId === "string" &&
+      typeof parsed.urlId === "string"
+    ) {
+      return {
+        projectId: parsed.projectId,
+        runId: parsed.runId,
+        urlId: parsed.urlId,
+      };
+    }
+  } catch {
+    return;
+  }
+  return;
+}
+
+function findBrowserQaSession(
+  messages: Array<{ content?: string | undefined }> | undefined,
+): { sessionId: string; generation: number } | undefined {
+  for (const message of [...(messages ?? [])].reverse()) {
+    if (typeof message.content !== "string") continue;
+    const candidates = [message.content];
+    try {
+      candidates.push(JSON.stringify(JSON.parse(message.content)));
+    } catch {
+      // Tool results may be wrapped in explanatory text.
+    }
+    for (const candidate of candidates) {
+      const normalized = candidate.replaceAll('\\"', '"');
+      if (!normalized.includes("browser.open")) continue;
+      const sessionId = (
+        /"sessionId"\s*:\s*"([^"\\]+)"/u.exec(normalized)?.[1]
+        ?? /^- sessionId:\s*(\S+)$/mu.exec(normalized)?.[1]
+      );
+      const generation = Number.parseInt(
+        /"generation"\s*:\s*(\d+)/u.exec(normalized)?.[1]
+          ?? /^- generation:\s*(\d+)$/mu.exec(normalized)?.[1]
+          ?? "",
+        10,
+      );
+      if (
+        sessionId !== undefined &&
+        Number.isSafeInteger(generation) &&
+        generation > 0
+      ) {
+        return { sessionId, generation };
+      }
+    }
+  }
+  return;
+}
+
+function hasSuccessfulBrowserQaResult(
+  messages: Array<{ content?: string | undefined }> | undefined,
+  operation: string,
+  requiredEvidence?: string,
+): boolean {
+  return (messages ?? []).some((message) =>
+    typeof message.content === "string" &&
+    message.content.includes(`Tool result: ${operation}`) &&
+    message.content.includes("- status: OK") &&
+    (requiredEvidence === undefined || message.content.includes(requiredEvidence))
+  );
+}
+
+function browserQaResultDiagnostic(
+  messages: Array<{ content?: string | undefined }> | undefined,
+  operation: string,
+): string {
+  const result = (messages ?? [])
+    .flatMap((message) => typeof message.content === "string" ? [message.content] : [])
+    .find((content) => content.includes(`Tool result: ${operation}`));
+  if (result === undefined) return "matching tool result absent";
+  return result
+    .split("\n")
+    .filter((line) => /^Tool result:|^- (?:status|operation|outcome|sessionId|generation|artifact)/u.test(line))
+    .join(" | ")
+    .slice(0, 1_000);
+}
+
+function writeBrowserQaError(response: ServerResponse, error: string): void {
+  response.writeHead(400, { "content-type": "application/json" });
+  response.end(JSON.stringify({ error }));
 }
 
 function writeToolCallResponse(

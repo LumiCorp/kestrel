@@ -235,7 +235,7 @@ export class DesktopBrowserViewerAuthorityCoordinator {
   }
 }
 
-function sameDesktopBrowserViewerPrincipal(
+export function sameDesktopBrowserViewerPrincipal(
   left: DesktopBrowserViewerPrincipal | undefined,
   right: DesktopBrowserViewerPrincipal | undefined,
 ): boolean {

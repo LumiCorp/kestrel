@@ -1546,6 +1546,7 @@ function resumePendingEffect(input: {
     pendingToolInput,
     pendingToolCall?.executionRole,
   );
+  const collectedCandidate = collectedOutput;
   collectedOutput = normalizeEffectResultForTool({
     toolName,
     toolInput: pendingToolInput,
@@ -1556,7 +1557,7 @@ function resumePendingEffect(input: {
     toolName,
     toolInput: pendingToolInput,
     output: collectedOutput,
-    candidate: input.effectResult,
+    candidate: collectedCandidate,
   });
   const rawOutput = unwrapAgentToolOutput(toolResult);
   const shaped = shapeAgentToolResultForRuntime({

@@ -744,6 +744,7 @@ export function projectBrowserAuditOutput(
   if (session !== undefined) {
     const parsed = parseBrowserSessionV1(session);
     projected.session = {
+      version: parsed.version,
       sessionId: parsed.sessionId,
       threadId: parsed.threadId,
       mode: parsed.mode,
@@ -751,6 +752,9 @@ export function projectBrowserAuditOutput(
       engineRevision: parsed.engineRevision,
       generation: parsed.generation,
       effectiveAllowlistRevision: parsed.effectiveAllowlistRevision,
+      createdAt: parsed.createdAt,
+      updatedAt: parsed.updatedAt,
+      lastActivityAt: parsed.lastActivityAt,
       idleExpiresAt: parsed.idleExpiresAt,
       hardExpiresAt: parsed.hardExpiresAt,
       ...(parsed.terminalReason === undefined

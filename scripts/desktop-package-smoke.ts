@@ -8,6 +8,8 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -77,6 +79,32 @@ writeFileSync(path.join(onboardingProjectPath, "README.md"), "# First Kestrel pr
   encoding: "utf8",
   mode: 0o600,
 });
+writeFileSync(
+  path.join(onboardingProjectPath, "package.json"),
+  `${JSON.stringify({
+    name: "kestrel-browser-package-smoke",
+    private: true,
+    scripts: { dev: "node server.mjs" },
+  }, null, 2)}\n`,
+  { encoding: "utf8", mode: 0o600 },
+);
+writeFileSync(
+  path.join(onboardingProjectPath, "server.mjs"),
+  [
+    'import http from "node:http";',
+    'const server = http.createServer((_request, response) => {',
+    '  response.writeHead(200, { "content-type": "text/html; charset=utf-8" });',
+    '  response.end("<!doctype html><title>Kestrel Browser QA</title><main><h1>Browser QA ready</h1></main>");',
+    '});',
+    'server.listen(0, "127.0.0.1", () => {',
+    '  const address = server.address();',
+    '  if (address === null || typeof address === "string") throw new Error("missing address");',
+    '  console.log(`http://127.0.0.1:${address.port}`);',
+    '});',
+    '',
+  ].join("\n"),
+  { encoding: "utf8", mode: 0o600 },
+);
 const fakeOpenRouter = await startFakeOpenRouterServer({ model: DEFAULT_OPENROUTER_MODEL });
 await seedOfflineModelConfiguration({
   coreHome,
@@ -253,6 +281,11 @@ try {
 
   await window.screenshot({ path: screenshotPath, fullPage: true });
   const offlineModel = await verifyOfflineModel(window, fakeOpenRouter.url);
+  const browserQa = await verifyPackagedBrowserQa(
+    window,
+    coreHome,
+    onboardingProjectPath,
+  );
   const liveModel = liveModelApproved
     ? await verifyLiveModelResponse(window)
     : undefined;
@@ -345,6 +378,7 @@ try {
       screenshotPath,
       surfaces,
       offlineModel,
+      browserQa,
       persistence: {
         marker: persistenceMarker,
         relaunched: true,
@@ -458,7 +492,7 @@ async function verifyLiveModelResponse(window: Page): Promise<{
   await window.waitForFunction(
     (token) => {
       const assistantResponded = Array.from(
-        document.querySelectorAll(".message-assistant .message-body"),
+        document.querySelectorAll(".timeline-entry-assistant .message-body"),
       ).some((element) => element.textContent?.trim() === String(token));
       if (assistantResponded) {
         return true;
@@ -473,7 +507,7 @@ async function verifyLiveModelResponse(window: Page): Promise<{
     { timeout: 180_000 },
   );
   await window.getByText(expectedToken, { exact: true }).waitFor({ timeout: 30_000 });
-  const assistantMessage = window.locator(".message-assistant .message-body-markdown").filter({
+  const assistantMessage = window.locator(".timeline-entry-assistant .message-body-markdown").filter({
     hasText: expectedToken,
   });
   await assistantMessage.waitFor({ state: "visible", timeout: 30_000 });
@@ -516,13 +550,23 @@ async function seedOfflineModelConfiguration(input: {
     }, null, 2)}\n`,
     { encoding: "utf8", mode: 0o600 },
   );
+  const settings = createDefaultDesktopSettings(policy);
   await writeDesktopSettings(
     path.join(paths.settingsPath, "local-core-settings.json"),
     {
-      ...createDefaultDesktopSettings(policy),
+      ...settings,
       selectedProvider: "openrouter",
       openrouterModel: policy.model,
       openrouterBaseUrl: input.baseUrl,
+      plugins: settings.plugins.map((plugin) =>
+        plugin.pluginId === "built_in.browser"
+          ? { ...plugin, enabled: true }
+          : plugin,
+      ),
+      defaultEnabledBuiltInAppIds: [
+        ...settings.defaultEnabledBuiltInAppIds,
+        "built_in.browser",
+      ],
     },
   );
 }
@@ -566,6 +610,129 @@ async function verifyOfflineModel(
   const response = "Hello from the fake cross-surface model.";
   await window.getByText(response, { exact: true }).waitFor({ timeout: 180_000 });
   return { verified: true, baseUrl, response };
+}
+
+async function verifyPackagedBrowserQa(
+  window: Page,
+  coreHome: string,
+  projectPath: string,
+): Promise<{
+  verified: true;
+  sessionId: string;
+  generation: number;
+  screenshotCaptured: true;
+  terminalState: "closed";
+  runtimeRemoved: true;
+}> {
+  const projects = await window.evaluate(async () => {
+    const settings = await (globalThis as typeof globalThis & {
+      kestrelDesktop: {
+        getSettings(): Promise<{
+          projects: Array<{ id?: unknown; path?: unknown }>;
+        }>;
+      };
+    }).kestrelDesktop.getSettings();
+    return settings.projects;
+  });
+  const canonicalProjectPath = realpathSync(projectPath);
+  const project = projects.find(
+    (candidate) =>
+      typeof candidate.path === "string" &&
+      realpathSync(candidate.path) === canonicalProjectPath,
+  );
+  assert.equal(typeof project?.id, "string", "Browser QA project identity is missing.");
+  assert.equal(typeof project?.path, "string", "Browser QA project path is missing.");
+  const started = await window.evaluate(async ({ exactProjectPath }) =>
+    await (globalThis as typeof globalThis & {
+      kestrelDesktop: {
+        startProjectRun(input: {
+          projectPath: string;
+          scriptName: string;
+          packageManagerOverride: "npm";
+        }): Promise<unknown>;
+      };
+    }).kestrelDesktop.startProjectRun({
+      projectPath: exactProjectPath,
+      scriptName: "dev",
+      packageManagerOverride: "npm",
+    }), { exactProjectPath: project.path as string }) as {
+      runId?: unknown;
+  };
+  assert.equal(typeof started.runId, "string", "Browser QA project run did not start.");
+  const run = await waitForAsyncValue(
+    async () => await window.evaluate(async ({ runId }) => {
+      const runs = await (globalThis as typeof globalThis & {
+        kestrelDesktop: { listProjectRuns(): Promise<Array<Record<string, unknown>>> };
+      }).kestrelDesktop.listProjectRuns();
+      return runs.find((candidate) => candidate.runId === runId);
+    }, { runId: started.runId }),
+    (candidate) =>
+      candidate !== undefined &&
+      candidate.status === "running" &&
+      typeof candidate.primaryPreviewUrl === "string" &&
+      Array.isArray(candidate.previewUrls) &&
+      candidate.previewUrls.length > 0,
+    {
+      description: "packaged Browser QA project preview",
+      timeoutMs: 30_000,
+    },
+  ) as {
+    runId: string;
+    previewUrls: Array<{ urlId?: unknown }>;
+  };
+  const urlId = run.previewUrls.find((entry) => typeof entry.urlId === "string")?.urlId;
+  assert.equal(typeof urlId, "string", "Browser QA preview URL identity is missing.");
+
+  await openConversationSurface(window);
+  await window.getByRole("textbox", { name: "Message", exact: true }).fill(
+    `fake-openrouter-browser-qa ${JSON.stringify({
+      projectId: project!.id,
+      runId: run.runId,
+      urlId,
+    })}`,
+  );
+  await window.getByRole("button", { name: "Send message", exact: true }).click();
+  await window.waitForFunction(
+    (token) => {
+      if (Array.from(document.querySelectorAll(".timeline-entry-assistant .message-body"))
+        .some((element) => element.textContent?.trim() === String(token))) {
+        return true;
+      }
+      const failure = document.querySelector(".timeline-entry-attention .timeline-attention-copy")
+        ?.textContent?.trim();
+      if (failure !== undefined && failure.length > 0) throw new Error(failure);
+      return false;
+    },
+    "BROWSER_QA_CANARY_OK",
+    { timeout: 180_000 },
+  );
+
+  await window.evaluate(async ({ runId }) =>
+    await (globalThis as typeof globalThis & {
+      kestrelDesktop: { stopProjectRun(runId: string): Promise<unknown> };
+    }).kestrelDesktop.stopProjectRun(runId), { runId: run.runId });
+  const browserRoot = path.join(resolveLocalCorePaths(coreHome).stateRootPath, "browser");
+  const ledger = JSON.parse(readFileSync(path.join(browserRoot, "sessions.json"), "utf8")) as {
+    sessions?: Array<{ sessionId?: unknown; generation?: unknown; state?: unknown }> | undefined;
+  };
+  const session = ledger.sessions?.at(-1);
+  assert.equal(session?.state, "closed", "Browser QA Session did not close terminally.");
+  assert.equal(typeof session?.sessionId, "string");
+  assert.equal(typeof session?.generation, "number");
+  const runtimeRoot = path.join(browserRoot, "runtime");
+  assert.equal(
+    existsSync(runtimeRoot) === false || readdirSync(runtimeRoot).length === 0,
+    true,
+    "Browser QA runtime/profile authority remained after close.",
+  );
+  return {
+    verified: true,
+    sessionId: session!.sessionId as string,
+    generation: session!.generation as number,
+    screenshotCaptured: true,
+    terminalState: "closed",
+    runtimeRemoved: true,
+  };
 }
 
 async function waitForReadyWindow(app: ElectronApplication): Promise<Page> {

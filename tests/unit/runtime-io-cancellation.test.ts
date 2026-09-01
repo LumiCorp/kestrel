@@ -819,6 +819,67 @@ test("RuntimeIO redacts registered sensitive values from successful tool results
   assert.equal(JSON.stringify(result).includes("[REDACTED]"), true);
 });
 
+test("RuntimeIO redaction preserves sanitized Browser artifact evidence", async () => {
+  const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  const signedUrl = "https://artifacts.example/screenshot?signature=browser-secret";
+  boundaryRuntime.sensitiveValues.register({
+    reference: {
+      referenceId: "credential:browser-artifact-url",
+      kind: "credential",
+      scope: "tool",
+    },
+    value: signedUrl,
+  });
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    executionBoundaryRuntime: boundaryRuntime,
+    toolCall: async () => buildAgentToolSuccessResult({
+      toolName: "browser.capture",
+      input: {
+        sessionId: "browser-session-1",
+        generation: 1,
+        kind: "screenshot",
+      },
+      output: {
+        version: "browser_tool_result_v1",
+        operation: "browser.capture",
+        sessionId: "browser-session-1",
+        generation: 1,
+        artifact: {
+          id: "file-browser-screenshot",
+          title: "Browser screenshot",
+          kind: "browser-screenshot",
+          url: signedUrl,
+          mediaType: "image/png",
+          bytes: 128,
+          sha256: "a".repeat(64),
+        },
+        capturedAt: "2026-09-01T14:00:00.000Z",
+        boundary: "untrusted_browser_content",
+      },
+      presentation: {
+        artifacts: [{
+          id: "file-browser-screenshot",
+          title: "Browser screenshot",
+          kind: "image",
+          url: signedUrl,
+          mediaType: "image/png",
+        }],
+      },
+    }),
+  });
+
+  const result = await io.tool("browser.capture", {
+    sessionId: "browser-session-1",
+    generation: 1,
+    kind: "screenshot",
+  });
+  assert.doesNotMatch(JSON.stringify(result), /browser-secret/u);
+  assert.match(result.modelContext.text, /- operation: browser\.capture/u);
+  assert.match(result.modelContext.text, /- artifactKind: browser-screenshot/u);
+});
+
 test("real Tavily adapter echoes are redacted before RuntimeIO persistence and model projection", async () => {
   const secret = "tavily-provider-echo-secret";
   const profile: SandboxCapabilityProfileV1 = {

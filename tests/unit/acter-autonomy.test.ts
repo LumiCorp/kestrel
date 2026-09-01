@@ -38,7 +38,10 @@ import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js"
 import { kestrelOneGitHubIssueCreateTool } from "../../tools/kestrelOne/githubActions.js";
 import { internetResearchTool } from "../../tools/internet/research.js";
 import { desktopHostOpenTool } from "../../tools/desktop/hostOpen.js";
-import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
+import {
+  buildAgentToolFailureResult,
+  buildAgentToolSuccessResult,
+} from "../../tools/toolResult.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
 import {
   createToolActivationRefV1,
@@ -4393,6 +4396,73 @@ test("exec.wait_effect settles completed dev.shell.run results before loop", asy
   assert.match(String(transcriptOutput?.text), /Tool result: dev\.shell\.run/u);
   assert.match(String(transcriptOutput?.text), /1000 fib\.txt/u);
   assert.doesNotMatch(String(transcriptOutput?.text), /Tool result: effect_result_lookup/u);
+});
+
+test("exec.wait_effect preserves a failed AgentToolResult nested in a completed durable effect", async () => {
+  const step = createExecWaitEffectStep(buildExecConfig());
+  const failedCapture = buildAgentToolFailureResult({
+    toolName: "browser.capture",
+    input: {
+      sessionId: "browser-session-1",
+      generation: 1,
+      kind: "screenshot",
+    },
+    error: new Error("The Browser engine returned an invalid result."),
+  });
+  const context = buildContext({
+    session: {
+      sessionId: "session-1",
+      version: 1,
+      state: {
+        agent: {
+          nextAction: {
+            kind: "tool",
+            name: "browser.capture",
+            input: {
+              sessionId: "browser-session-1",
+              generation: 1,
+              kind: "screenshot",
+            },
+          },
+          exec: {
+            pendingEffectKey: "effect-capture-1",
+            pendingEffectType: "execute_tool_call",
+            pendingToolCall: {
+              name: "browser.capture",
+              input: {
+                sessionId: "browser-session-1",
+                generation: 1,
+                kind: "screenshot",
+              },
+            },
+          },
+        },
+      },
+      currentStepAgent: "agent.exec.wait_effect",
+      updatedAt: new Date().toISOString(),
+    },
+  });
+
+  const transition = await step(context, {
+    useModel: async () => {
+      throw new Error("not expected");
+    },
+    useTool: async <T>(): Promise<T> => ({
+      status: "DONE",
+      output: failedCapture,
+    }) as T,
+  });
+
+  const react = transition.statePatch?.agent as Record<string, unknown>;
+  const modelTranscript = react.modelTranscript as Record<string, unknown>;
+  const transcriptItems = modelTranscript.items as Array<Record<string, unknown>>;
+  const transcriptResult = [...transcriptItems].reverse().find(
+    (item) => item.kind === "tool_result",
+  );
+  const transcriptOutput = transcriptResult?.toolOutput as Record<string, unknown>;
+  assert.equal(transcriptResult?.toolName, "browser.capture");
+  assert.match(String(transcriptOutput?.text), /status: FAILED/u);
+  assert.doesNotMatch(String(transcriptOutput?.text), /status: OK/u);
 });
 
 test("exec.wait_user resumes blocked mode-switch requests with transcript goal and effective interaction mode", async () => {

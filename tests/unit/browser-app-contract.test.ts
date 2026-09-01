@@ -713,9 +713,9 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
         sessionMode: "operator",
       };
     },
-    async execute(prepared) {
+    async execute(prepared, lifecycle) {
       executedPrepared = prepared;
-      return {
+      const output = {
         version: "browser_tool_result_v1",
         operation: "browser.capture",
         sessionId: "browser-session-1",
@@ -732,6 +732,8 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
         capturedAt: "2026-08-29T12:00:00.000Z",
         boundary: "untrusted_browser_content",
       };
+      await lifecycle.persistCompletedResult(output);
+      return output;
     },
     async authorizeArtifact(input) {
       authorization = input;
@@ -777,6 +779,66 @@ test("Browser artifact normalizer uses AgentToolArtifactPresentation", async () 
     sessionId: "browser-session-1",
     artifactId: "artifact-1",
     artifactKind: "browser-screenshot",
+  });
+});
+
+test("Browser QA binds Desktop workspace Project identity into host authority", async () => {
+  let authority:
+    | Parameters<BrowserServicePort["execute"]>[1]["authority"]
+    | undefined;
+  const port: BrowserServicePort = {
+    ...passiveBrowserPort(),
+    async execute(_prepared, lifecycle) {
+      authority = lifecycle.authority;
+      return {
+        version: "browser_tool_result_v1",
+        operation: "browser.open",
+        outcome: "opened",
+        session: {
+          ...session,
+          sessionId: "browser-qa-session-1",
+          threadId: "thread-desktop-qa",
+          mode: "qa",
+        },
+      };
+    },
+  };
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.open"],
+    context: { browserService: port },
+  });
+  const workspaceRoot = path.join(path.sep, "workspace", "project-a");
+
+  const result = await executeBrowserCall(
+    registry,
+    "browser.open",
+    {
+      mode: "qa",
+      target: {
+        kind: "desktop_project_run",
+        projectId: "project-a",
+        runId: "run-preview-1",
+        urlId: "preview-1",
+      },
+    },
+    "allow",
+    {
+      metadata: { threadId: "thread-desktop-qa" },
+      workspace: {
+        workspaceId: "local:project-a",
+        workspaceRoot,
+        projectId: "project-a",
+        appRoot: ".",
+        commands: {},
+      },
+    },
+  );
+
+  assert.equal(result.status, "OK");
+  assert.deepEqual(authority, {
+    threadId: "thread-desktop-qa",
+    projectId: "project-a",
+    projectRoot: workspaceRoot,
   });
 });
 
@@ -856,6 +918,14 @@ test("Browser capture and download keep authorized URLs only on presentation", a
       runContext,
     });
     assert.equal(result.outcome.kind, "success");
+    assert.match(
+      result.modelContext.text,
+      new RegExp(`- operation: ${scenario.toolName.replace(".", "\\.")}`),
+    );
+    assert.match(
+      result.modelContext.text,
+      new RegExp(`- artifactKind: ${scenario.artifactKind}`),
+    );
     assert.equal(result.presentation?.artifacts?.[0]?.url, authorizedUrl);
     assert.equal(result.presentation?.artifacts?.[0]?.title, scenario.title);
     assert.equal(
@@ -1875,6 +1945,22 @@ test("Browser origins and session semantics normalize before audit persistence",
   );
 });
 
+test("Browser open audit projection remains a valid idempotent Session contract", () => {
+  const projected = projectBrowserAuditOutput(
+    "browser.open",
+    validOutputs["browser.open"],
+  );
+  const replayed = projectBrowserAuditOutput("browser.open", projected);
+
+  assert.deepEqual(replayed, projected);
+  assert.deepEqual(
+    parseBrowserSessionV1(
+      (projected as { session: unknown }).session,
+    ),
+    session,
+  );
+});
+
 test("runtime release manifest pins exact assets without latest aliases", () => {
   assert.equal(
     BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision,
@@ -1909,6 +1995,7 @@ async function executeBrowserCall(
   toolName: (typeof BROWSER_TOOL_NAMES)[number],
   rawInput: Record<string, unknown>,
   decision: "allow" | "approval_required" | "deny" = "allow",
+  payload: Record<string, unknown> = {},
 ) {
   const effectiveRawInput =
     toolName === "browser.open" ? rawInput : { generation: 1, ...rawInput };
@@ -1932,7 +2019,7 @@ async function executeBrowserCall(
   const runContext = {
     runId: `run-${toolName}-${String(rawInput.operation ?? "operation")}-${sequence}`,
     sessionId: "thread-session-1",
-    payload: {},
+    payload,
     sessionState: {},
   };
   const snapshot = await registry.createToolSurfaceSnapshot({
