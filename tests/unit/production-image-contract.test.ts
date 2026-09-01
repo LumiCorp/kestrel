@@ -253,6 +253,61 @@ test("partial Docker build contexts include root pnpm patches before install", a
   }
 });
 
+test("Environment Router image closes over every workspace dependency", async () => {
+  const [dockerfile, manifestSource, server, smoke] = await Promise.all([
+    readFile("apps/environment-router/Dockerfile", "utf8"),
+    readFile("apps/environment-router/package.json", "utf8"),
+    readFile("apps/environment-router/src/server.ts", "utf8"),
+    readFile("apps/environment-router/scripts/image-smoke.sh", "utf8"),
+  ]);
+  const manifest = JSON.parse(manifestSource) as {
+    dependencies: Record<string, string>;
+    scripts: { build: string };
+  };
+  const packageDirectories: Record<string, string> = {
+    "@kestrel-agents/conversation": "packages/conversation",
+    "@kestrel-agents/protocol": "packages/protocol",
+    "@kestrel/mcp-security": "packages/mcp-security",
+    "@lumi/kestrel-environment-auth": "packages/environment-auth",
+  };
+
+  assert.deepEqual(
+    Object.entries(manifest.dependencies)
+      .filter(([, version]) => version.startsWith("workspace:"))
+      .map(([name]) => name)
+      .sort(),
+    Object.keys(packageDirectories).sort(),
+  );
+  for (const [packageName, packageDirectory] of Object.entries(
+    packageDirectories,
+  )) {
+    assert.match(
+      dockerfile,
+      new RegExp(
+        `COPY ${packageDirectory.replace("/", "\\/")}\\/package\\.json ${packageDirectory.replace("/", "\\/")}\\/package\\.json`,
+        "u",
+      ),
+    );
+    assert.match(
+      dockerfile,
+      new RegExp(
+        `COPY ${packageDirectory.replace("/", "\\/")} ${packageDirectory.replace("/", "\\/")}`,
+        "u",
+      ),
+    );
+    assert.match(manifest.scripts.build, new RegExp(packageName, "u"));
+  }
+  const contractRevision = server.match(
+    /const ENVIRONMENT_GATEWAY_CONTRACT_REVISION = (\d+);/u,
+  )?.[1];
+  assert.ok(contractRevision);
+  assert.match(
+    smoke,
+    new RegExp(`health\\.runtimeContractRevision !== ${contractRevision}`, "u"),
+  );
+  assert.match(smoke, /--env FLY_MACHINE_ID=gateway-smoke-machine/u);
+});
+
 test("Fly image contexts exclude host-staged Vercel native bindings", async () => {
   const dockerignores = await Promise.all(
     [

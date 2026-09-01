@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm run build:self",
+    "build": "pnpm --filter @kestrel-agents/conversation build && pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel/mcp-security build && pnpm --filter @kestrel-agents/protocol build && pnpm run build:self",
     "build:self": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test": "pnpm run test:unit",
