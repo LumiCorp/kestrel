@@ -714,6 +714,8 @@ async function runHostedProviderProof(baseUrl: URL) {
             rawModelId,
             provider: "openrouter",
           },
+          additionalToolNames: ["exec_command"],
+          kestrelOneAppApprovalModes: { exec_command: "auto" },
           default: false,
         },
       },
