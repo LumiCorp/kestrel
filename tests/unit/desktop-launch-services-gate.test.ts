@@ -29,6 +29,21 @@ test("Desktop smoke gates poll asynchronous renderer state outside waitForFuncti
   }
 });
 
+test("packaged Desktop smoke advertises the model it seeds for onboarding", () => {
+  const source = readFileSync(
+    new URL("../../scripts/desktop-package-smoke.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /startFakeOpenRouterServer\(\{ model: DEFAULT_OPENROUTER_MODEL \}\)/u,
+  );
+  assert.match(
+    source,
+    /selectOption\(DEFAULT_OPENROUTER_MODEL\)/u,
+  );
+});
+
 test("Desktop smoke polling awaits non-ready asynchronous samples", async () => {
   const samples = ["starting_runtime", "starting_web", "ready"];
   const observed: string[] = [];

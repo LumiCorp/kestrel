@@ -27,6 +27,7 @@ import {
   createDefaultLocalCoreRuntimeConfiguration,
   resolveLocalCoreRuntimeConfigurationPath,
 } from "../src/localCore/runtimeConfiguration.js";
+import { DEFAULT_OPENROUTER_MODEL } from "../models/openrouter/constants.js";
 import { startFakeOpenRouterServer } from "../tests/ops/helpers/fake-open-router.js";
 import { waitForAsyncValue } from "./desktop-smoke-poll.js";
 
@@ -76,7 +77,7 @@ writeFileSync(path.join(onboardingProjectPath, "README.md"), "# First Kestrel pr
   encoding: "utf8",
   mode: 0o600,
 });
-const fakeOpenRouter = await startFakeOpenRouterServer();
+const fakeOpenRouter = await startFakeOpenRouterServer({ model: DEFAULT_OPENROUTER_MODEL });
 await seedOfflineModelConfiguration({
   coreHome,
   baseUrl: fakeOpenRouter.url,
@@ -492,7 +493,7 @@ async function seedOfflineModelConfiguration(input: {
   const policy = {
     version: 1 as const,
     provider: "openrouter" as const,
-    model: "openai/gpt-5.2-chat",
+    model: DEFAULT_OPENROUTER_MODEL,
     modelByStage: {},
     modelCapabilities: { visionInputEnabled: false },
   };
@@ -532,7 +533,7 @@ async function completeFirstRunOnboarding(
   const getStarted = window.getByRole("button", { name: /Get started/u });
   await getStarted.waitFor({ state: "visible", timeout: 60_000 });
   await getStarted.click();
-  await window.getByLabel("Model", { exact: true }).selectOption("openai/gpt-5.2-chat");
+  await window.getByLabel("Model", { exact: true }).selectOption(DEFAULT_OPENROUTER_MODEL);
   await window.getByLabel("API key", { exact: true }).fill("kestrel-package-smoke-token");
   await window.getByRole("button", { name: /Verify connection/u }).click();
   await window.getByRole("heading", { name: "Choose a project", exact: true }).waitFor({
