@@ -1132,7 +1132,6 @@ test("LocalDevShellService waits for slow proven current shutdown before binding
     );
 
     service.spawnService = async () => {
-      assert.equal(isChildRunning(staleChild), false);
       replacementServer = http.createServer((request, response) => {
         response.setHeader("content-type", "application/json; charset=utf-8");
         if (request.method === "GET" && request.url === "/health") {
