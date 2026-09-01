@@ -2,6 +2,7 @@ FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3e
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 
 RUN corepack enable
 
