@@ -664,6 +664,8 @@ async function startRouterContainer() {
     "--volume",
     `${routerFixturePath}:/tmp/router-fixture.mjs:ro`,
     "--env",
+    `FLY_MACHINE_ID=${gatewayId}`,
+    "--env",
     "KESTREL_CONTROL_PLANE_URL=http://127.0.0.1:18081",
     "--env",
     `KESTREL_ENVIRONMENT_APP_NAME=${identities.appName}`,

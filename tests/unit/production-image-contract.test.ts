@@ -229,6 +229,7 @@ test("local real-model qualification accepts and preserves exact prebuilt runtim
   assert.match(canary, /modelTimeoutMs: 60_000/u);
   assert.match(canary, /signal: AbortSignal\.timeout\(90_000\)/u);
   assert.match(canary, /abortBehavior: "cancel"/u);
+  assert.match(canary, /`FLY_MACHINE_ID=\$\{gatewayId\}`/u);
 });
 
 test("partial Docker build contexts include root pnpm patches before install", async () => {
