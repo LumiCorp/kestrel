@@ -252,7 +252,13 @@ export class LocalCoreClient {
     connectionId?: string | undefined;
   }): Promise<DesktopBrowserViewerStateV1> {
     return readObjectField(
-      await this.post("/v1/browser/viewer/connect", input),
+      await this.request(
+        "POST",
+        "/v1/browser/viewer/connect",
+        input,
+        true,
+        { timeout: this.timeoutMs * 6 },
+      ),
       "viewer",
       "Desktop Browser viewer state",
     );
@@ -1337,7 +1343,7 @@ export class LocalCoreClient {
     path: string,
     body: unknown,
     auth: boolean,
-    options: { timeout?: "default" | "none" | undefined } = {},
+    options: { timeout?: "default" | "none" | number | undefined } = {},
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const payload = body === undefined ? undefined : JSON.stringify(body);
@@ -1346,7 +1352,14 @@ export class LocalCoreClient {
           socketPath: this.socketPath,
           path,
           method,
-          ...(options.timeout === "none" ? {} : { timeout: this.timeoutMs }),
+          ...(options.timeout === "none"
+            ? {}
+            : {
+                timeout:
+                  typeof options.timeout === "number"
+                    ? options.timeout
+                    : this.timeoutMs,
+              }),
           headers: {
             ...(auth ? { authorization: `Bearer ${this.token}` } : {}),
             ...(payload !== undefined

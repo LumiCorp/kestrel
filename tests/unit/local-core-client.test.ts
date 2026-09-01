@@ -34,6 +34,61 @@ test("LocalCoreClient lets a runtime store reset outlive the generic request tim
   }
 });
 
+test("LocalCoreClient lets Browser viewer connection wait for serialized Browser startup", async () => {
+  const genericTimeoutMs = 20;
+  const responseDelayMs = 80;
+  const fixture = await startDelayedLocalCore(responseDelayMs);
+  try {
+    const client = new LocalCoreClient({
+      socketPath: fixture.socketPath,
+      token: "test-token",
+      timeoutMs: genericTimeoutMs,
+    });
+
+    const startedAt = Date.now();
+    const viewer = await client.connectDesktopBrowserViewer({
+      principalId: "desktop-window:1",
+      threadId: "thread-1",
+      projectId: "project-1",
+    });
+
+    assert.ok(Date.now() - startedAt >= responseDelayMs);
+    assert.deepEqual(viewer, {
+      version: "desktop_browser_viewer_state_v1",
+      available: false,
+      threadId: "thread-1",
+      projectId: "project-1",
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("LocalCoreClient bounds a stalled Browser viewer connection", async () => {
+  const genericTimeoutMs = 20;
+  const fixture = await startDelayedLocalCore(200);
+  try {
+    const client = new LocalCoreClient({
+      socketPath: fixture.socketPath,
+      token: "test-token",
+      timeoutMs: genericTimeoutMs,
+    });
+
+    const startedAt = Date.now();
+    await assert.rejects(
+      () => client.connectDesktopBrowserViewer({
+        principalId: "desktop-window:1",
+        threadId: "thread-1",
+        projectId: "project-1",
+      }),
+      /Local Core API request timed out: POST \/v1\/browser\/viewer\/connect/u,
+    );
+    assert.ok(Date.now() - startedAt >= genericTimeoutMs * 6);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("LocalCoreClient keeps the generic timeout for ordinary requests", async () => {
   const genericTimeoutMs = 20;
   const fixture = await startDelayedLocalCore(80);
@@ -294,6 +349,18 @@ async function startDelayedLocalCore(responseDelayMs: number): Promise<{
             workspaceRegistryReady: true,
             diagnosticsPath: "/tmp/kestrel/state/0.6/diagnostics",
             logsPath: "/tmp/kestrel/state/0.6/core/logs",
+          },
+        }));
+        return;
+      }
+      if (request.url === "/v1/browser/viewer/connect") {
+        response.end(JSON.stringify({
+          ok: true,
+          viewer: {
+            version: "desktop_browser_viewer_state_v1",
+            available: false,
+            threadId: "thread-1",
+            projectId: "project-1",
           },
         }));
         return;
