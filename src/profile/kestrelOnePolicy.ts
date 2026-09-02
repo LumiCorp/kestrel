@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION } from "@kestrel-agents/protocol";
+import { HOSTED_WORKSPACE_PROFILE_CONTRACT_V1 } from "@kestrel-agents/protocol";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import {
@@ -38,9 +38,11 @@ import {
   getApprovalPolicyPack,
 } from "../mode/approvalPolicyPacks.js";
 
-export const KESTREL_POLICY_ID = "kestrel";
+export const KESTREL_POLICY_ID =
+  HOSTED_WORKSPACE_PROFILE_CONTRACT_V1.policy.id;
 export const KESTREL_POLICY_LABEL = "Kestrel";
-export const KESTREL_POLICY_VERSION = 5;
+export const KESTREL_POLICY_VERSION =
+  HOSTED_WORKSPACE_PROFILE_CONTRACT_V1.policy.version;
 export const KESTREL_PROMPT_POLICY_ID = "kestrel";
 export const KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
   "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
@@ -315,7 +317,7 @@ export const KESTREL_ONE_ENVIRONMENT_PRESETS: Readonly<
   }),
   workspace_hosted: Object.freeze({
     id: "workspace_hosted",
-    version: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+    version: HOSTED_WORKSPACE_PROFILE_CONTRACT_V1.environmentPreset.version,
   }),
 });
 
@@ -807,7 +809,7 @@ export function defaultApprovalPolicyPackForPreset(
   return presetId === "cli_safe_local" || presetId === "desktop_safe_local"
     ? "isolated_code"
     : presetId === "workspace_hosted"
-      ? "hosted_workspace"
+      ? HOSTED_WORKSPACE_PROFILE_CONTRACT_V1.approvalPolicyPackId
     : "dev";
 }
 

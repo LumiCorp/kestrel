@@ -1363,6 +1363,140 @@ test("approval resume rehydrates an exact static built-in before inspection and 
   await resumed.close();
 });
 
+test("registry restart rehydrates a prepared exec_command after trusted managed-worktree provisioning", async () => {
+  const startInputs: Array<Record<string, unknown>> = [];
+  const blockedRunId = "run-managed-restart-blocked";
+  const continuationRunId = "run-managed-restart-continuation";
+  const sessionId = "session-managed-restart";
+  const sourceWorkspaceRoot = "/workspace";
+  const managedWorkspaceRoot =
+    "/workspace/.kestrel/worktrees/session-managed-restart";
+  const createRegistry = () =>
+    new UnifiedToolRegistry({
+      allowlist: ["exec_command"],
+      context: {
+        devShell: { enabled: true },
+        devShellService: {
+          startProcess: async (input: unknown) => {
+            startInputs.push(input as Record<string, unknown>);
+            return {
+              processId: "process-managed-restart",
+              status: "COMPLETED",
+              text: "ok\n",
+              truncated: false,
+              cursor: 0,
+              nextCursor: 3,
+              exitCode: 0,
+            };
+          },
+        } as never,
+      },
+    });
+  const blockedContext: ToolRunContext = {
+    runId: blockedRunId,
+    sessionId,
+    payload: {
+      workspace: {
+        workspaceRoot: sourceWorkspaceRoot,
+        sourceWorkspaceRoot,
+        managedWorktreeRequired: true,
+      },
+    },
+    sessionState: {},
+  };
+  const original = createRegistry();
+  const prepared = await prepareTestToolCall({
+    gateway: original,
+    toolName: "exec_command",
+    toolInput: { command: "printf ok", cwd: "." },
+    runId: blockedRunId,
+    sessionId,
+    options: { runContext: blockedContext },
+  });
+  await original.close();
+
+  const continuationContext: ToolRunContext = {
+    runId: continuationRunId,
+    sessionId,
+    payload: {
+      resumeBlockedRun: true,
+      metadata: { blockedRunId },
+      workspace: {
+        workspaceRoot: managedWorkspaceRoot,
+        sourceWorkspaceRoot,
+        managedWorktree: true,
+        leaseId: "lease-managed-restart",
+      },
+    },
+    sessionState: {
+      agent: {
+        exec: {
+          managedWorktreeBinding: {
+            status: "bound",
+            sessionId,
+            runId: continuationRunId,
+            worktreeRoot: managedWorkspaceRoot,
+            leaseId: "lease-managed-restart",
+          },
+        },
+      },
+    },
+  };
+  const restarted = createRegistry();
+
+  for (const rejectedContext of [
+    {
+      ...continuationContext,
+      sessionState: {
+        agent: {
+          exec: {
+            managedWorktreeBinding: {
+              status: "bound",
+              sessionId,
+              runId: continuationRunId,
+              worktreeRoot: managedWorkspaceRoot,
+              leaseId: "lease-unrelated",
+            },
+          },
+        },
+      },
+    },
+    {
+      ...continuationContext,
+      payload: {
+        ...(continuationContext.payload as Record<string, unknown>),
+        clientCapabilities: {
+          kestrelOne: {
+            appApprovalModes: { exec_command: "deny" },
+          },
+        },
+      },
+    },
+  ] satisfies ToolRunContext[]) {
+    const rejectedRegistry = createRegistry();
+    await assert.rejects(
+      () =>
+        rejectedRegistry.executePreparedToolCall(prepared, {
+          runContext: rejectedContext,
+        }),
+      (error) =>
+        error instanceof RuntimeFailure &&
+        error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+    );
+    await rejectedRegistry.close();
+  }
+
+  const result = await restarted.executePreparedToolCall(prepared, {
+    runContext: continuationContext,
+  });
+
+  assert.equal(result.status, "OK");
+  assert.equal(startInputs.length, 1);
+  assert.equal(startInputs[0]?.workspaceRoot, managedWorkspaceRoot);
+  assert.equal(startInputs[0]?.sourceWriteAuthority, "source_write");
+  await restarted.close();
+});
+
 test("static restart rehydration rejects changed workspace authority", async () => {
   const original = new UnifiedToolRegistry({
     allowlist: ["free.time.current"],

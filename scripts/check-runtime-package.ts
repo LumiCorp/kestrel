@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -99,6 +99,7 @@ const requiredFiles = [
   "scripts/migrate.ts",
   "scripts/kchat-smoke.ts",
   "README.md",
+  "tsconfig.build.json",
   "LICENSE",
 ] as const;
 
@@ -364,6 +365,45 @@ try {
     /kchat smoke: protocol ok/u,
     "clean-installed runtime CLI must start Local Core and round-trip protocol commands",
   );
+  const hostedProfileGatePath = path.join(
+    consumerDir,
+    "hosted-profile-release-gate.mjs",
+  );
+  const installedProtocolPath = path.join(
+    consumerDir,
+    process.platform === "win32" ? "node_modules" : "lib/node_modules",
+    "@kestrel-agents",
+    "protocol",
+    "dist",
+    "index.js",
+  );
+  writeFileSync(
+    hostedProfileGatePath,
+    packagedHostedProfileReleaseGateSource({
+      runnerHostUrl: pathToFileURL(
+        path.join(runtimePackageRoot, "dist", "cli", "runner", "RunnerHost.js"),
+      ).href,
+      protocolUrl: pathToFileURL(installedProtocolPath).href,
+    }),
+  );
+  const hostedProfileGate = execFileSync(
+    process.execPath,
+    [hostedProfileGatePath],
+    {
+      cwd: consumerDir,
+      encoding: "utf8",
+      env: {
+        ...cliEnv,
+        KESTREL_HOME: path.join(consumerDir, ".kestrel-hosted-profile-gate"),
+      },
+      timeout: 90_000,
+    },
+  );
+  assert.match(
+    hostedProfileGate,
+    /packaged hosted profile release gate passed/u,
+    "packaged runtime must resolve and validate the exact hosted V4 contract without dispatching a run",
+  );
   const preflightInputPath = path.join(consumerDir, "job-preflight-input.json");
   const preflightOutputPath = path.join(consumerDir, "job-preflight-output.json");
   const preflightHome = path.join(consumerDir, ".kestrel-preflight");
@@ -440,6 +480,121 @@ try {
   rmSync(packDir, { recursive: true, force: true });
   rmSync(extractDir, { recursive: true, force: true });
   rmSync(consumerDir, { recursive: true, force: true });
+}
+
+function packagedHostedProfileReleaseGateSource(input: {
+  runnerHostUrl: string;
+  protocolUrl: string;
+}): string {
+  return `
+import assert from "node:assert/strict";
+import { RunnerHost } from ${JSON.stringify(input.runnerHostUrl)};
+import { validateHostedWorkspaceProfileContractV1 } from ${JSON.stringify(input.protocolUrl)};
+
+const events = [];
+let runtimeCreations = 0;
+const runtimeFactory = () => {
+  runtimeCreations += 1;
+  throw new Error("release gate must not create a runtime or spend on a model");
+};
+const host = new RunnerHost(
+  { emit(type, payload) { events.push({ type, payload }); } },
+  runtimeFactory,
+);
+await host.executionProfileResolve("packaged-hosted-profile-release-gate", {
+  environmentPresetId: "workspace_hosted",
+  managedConfiguration: {
+    modelProvider: "openrouter",
+    model: "openai/gpt-5.6-luna",
+    additionalToolNames: ["exec_command"],
+    kestrelOneAppApprovalModes: { exec_command: "ask" },
+    kestrelOneAppApprovalPolicies: {
+      exec_command: { environment: "ask", minimum: "auto" },
+    },
+  },
+  exactToolNames: ["exec_command"],
+});
+const resolution = events.at(0)?.payload;
+assert.equal(events.at(0)?.type, "execution-profile.resolved");
+const expectations = {
+  exec_command: {
+    available: true,
+    approvalMode: "ask",
+    rememberApprovalEligible: true,
+  },
+};
+assert.equal(
+  validateHostedWorkspaceProfileContractV1(resolution, expectations).ok,
+  true,
+);
+const mutations = [
+  { ...resolution, environmentPreset: { id: "cli_dev_local", version: 4 } },
+  { ...resolution, environmentPreset: { id: "workspace_hosted", version: 3 } },
+  { ...resolution, hostedApprovalProducerProtocol: "v3" },
+  { ...resolution, policy: { id: "kestrel-one", version: 5 } },
+  { ...resolution, policy: { id: "kestrel", version: 4 } },
+  {
+    ...resolution,
+    resolvedProfile: {
+      ...resolution.resolvedProfile,
+      approvalPolicyPackId: "ci_bot",
+    },
+  },
+  {
+    ...resolution,
+    profileId: "kestrel:workspace_hosted:" + "0".repeat(64),
+  },
+  {
+    ...resolution,
+    resolvedProfile: {
+      ...resolution.resolvedProfile,
+      id: "kestrel:workspace_hosted:" + "0".repeat(64),
+    },
+  },
+  {
+    ...resolution,
+    exactToolDecisions: {
+      ...resolution.exactToolDecisions,
+      exec_command: {
+        ...resolution.exactToolDecisions.exec_command,
+        available: false,
+      },
+    },
+  },
+  {
+    ...resolution,
+    exactToolDecisions: {
+      ...resolution.exactToolDecisions,
+      exec_command: {
+        ...resolution.exactToolDecisions.exec_command,
+        approvalDisposition: {
+          ...resolution.exactToolDecisions.exec_command.approvalDisposition,
+          mode: "auto",
+        },
+      },
+    },
+  },
+  {
+    ...resolution,
+    exactToolDecisions: {
+      ...resolution.exactToolDecisions,
+      exec_command: {
+        ...resolution.exactToolDecisions.exec_command,
+        rememberApprovalEligible: false,
+      },
+    },
+  },
+];
+for (const mutation of mutations) {
+  assert.equal(
+    validateHostedWorkspaceProfileContractV1(mutation, expectations).ok,
+    false,
+  );
+}
+assert.equal(runtimeCreations, 0);
+await host.close();
+process.stdout.write("packaged hosted profile release gate passed\\n");
+`;
 }
 
 function isSensitiveOrTestPath(filePath: string): boolean {
