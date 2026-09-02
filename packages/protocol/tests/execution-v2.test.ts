@@ -9,6 +9,7 @@ import {
   RUNNER_EVENT_CONTRACT_VERSION,
   RUNNER_EVENT_TYPES,
   RUNNER_JOB_STREAM_EVENT_TYPES,
+  HOSTED_WORKSPACE_PROFILE_CONTRACT_V1,
   WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
   RunnerProtocolContractError,
   RUNNER_STREAMING_COMMAND_TYPES,
@@ -24,6 +25,7 @@ import {
   parseConversationMessageCursor,
   parseRunnerCommandV2,
   parseRunnerEventV2,
+  validateHostedWorkspaceProfileContractV1,
   type RunnerCommandType,
   type RunnerEventType,
 } from "../src/index.js";
@@ -1164,6 +1166,108 @@ test("profile events carry an explicit preset-4 producer protocol marker", () =>
     WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
   );
   assert.equal(event.payload.hostedApprovalProducerProtocol, "v4");
+});
+
+test("hosted workspace contract v1 is immutable and rejects every incompatible axis", () => {
+  const exactToolDecision = structuredClone(
+    (eventPayloads["execution-profile.resolved"]!
+      .exactToolDecisions as Record<string, Record<string, unknown>>)
+      .exec_command,
+  );
+  const accepted = {
+    ...eventPayloads["execution-profile.resolved"],
+    policy: { id: "kestrel", version: 5 },
+    environmentPreset: { id: "workspace_hosted", version: 4 },
+    hostedApprovalProducerProtocol: "v4",
+    resolvedProfile: {
+      ...(eventPayloads["execution-profile.resolved"]!
+        .resolvedProfile as Record<string, unknown>),
+      approvalPolicyPackId: "hosted_workspace",
+    },
+    exactToolDecisions: { exec_command: exactToolDecision },
+  } as unknown as Parameters<
+    typeof validateHostedWorkspaceProfileContractV1
+  >[0];
+  assert.equal(Object.isFrozen(HOSTED_WORKSPACE_PROFILE_CONTRACT_V1), true);
+  assert.equal(
+    Object.isFrozen(HOSTED_WORKSPACE_PROFILE_CONTRACT_V1.environmentPreset),
+    true,
+  );
+  assert.equal(
+    validateHostedWorkspaceProfileContractV1(accepted, {
+      exec_command: {
+        available: true,
+        approvalMode: "ask",
+        rememberApprovalEligible: true,
+      },
+    }).ok,
+    true,
+  );
+
+  const mutations = [
+    { ...accepted, environmentPreset: { id: "cli_dev_local", version: 4 } },
+    { ...accepted, environmentPreset: { id: "workspace_hosted", version: 3 } },
+    { ...accepted, hostedApprovalProducerProtocol: "v3" },
+    { ...accepted, policy: { id: "kestrel-one", version: 5 } },
+    { ...accepted, policy: { id: "kestrel", version: 4 } },
+    {
+      ...accepted,
+      resolvedProfile: {
+        ...accepted.resolvedProfile,
+        approvalPolicyPackId: "ci_bot",
+      },
+    },
+    { ...accepted, profileId: `kestrel:workspace_hosted:${"b".repeat(64)}` },
+    {
+      ...accepted,
+      resolvedProfile: {
+        ...accepted.resolvedProfile,
+        id: `kestrel:workspace_hosted:${"b".repeat(64)}`,
+      },
+    },
+    { ...accepted, fingerprint: "not-a-fingerprint" },
+    {
+      ...accepted,
+      exactToolDecisions: {
+        exec_command: { ...exactToolDecision, available: false },
+      },
+    },
+    {
+      ...accepted,
+      exactToolDecisions: {
+        exec_command: {
+          ...exactToolDecision,
+          approvalDisposition: {
+            ...(exactToolDecision.approvalDisposition as Record<string, unknown>),
+            mode: "auto",
+          },
+        },
+      },
+    },
+    {
+      ...accepted,
+      exactToolDecisions: {
+        exec_command: {
+          ...exactToolDecision,
+          rememberApprovalEligible: false,
+        },
+      },
+    },
+  ] as unknown as Parameters<
+    typeof validateHostedWorkspaceProfileContractV1
+  >[0][];
+  for (const mutation of mutations) {
+    assert.equal(
+      validateHostedWorkspaceProfileContractV1(mutation, {
+        exec_command: {
+          available: true,
+          approvalMode: "ask",
+          rememberApprovalEligible: true,
+        },
+      }).ok,
+      false,
+    );
+  }
 });
 
 test("hosted producer protocol markers reject unknown release modes", () => {

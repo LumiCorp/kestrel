@@ -13,6 +13,10 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Hosted Runtime and Kestrel One now share one immutable V4 hosted-profile
+  contract and an executable no-spend release gate that rejects drift across
+  the preset, producer protocol, policy, approval pack, profile identity, and
+  exact-tool decision before a run can start.
 - Kestrel Desktop and Kestrel One can expose the first-party Browser App when
   an operator enables it. A user can allow a domain once, reuse that personal
   grant on later Browser actions, view or take over the live session, upload an
@@ -38,6 +42,9 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Workspace Runtime now rehydrates an exact prepared built-in after an approval
+  pause, process restart, and trusted managed-worktree provisioning. Changed
+  authority and untrusted leases remain fail-closed.
 - Kestrel One now accepts the final hosted V4 execution profile after the
   Kestrel policy revision changed, while rejecting legacy producer profiles
   before model execution.

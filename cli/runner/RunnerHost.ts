@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
+  assertHostedWorkspaceProfileContractV1,
   encodeConversationMessageCursor,
   HOSTED_APPROVAL_PRODUCER_PROTOCOL,
   parseConversationMessageCursor,
@@ -739,12 +740,16 @@ export class RunnerHost {
           resolution.resolvedProfile,
           payload.exactToolNames,
         );
+    const resolvedPayload: ExecutionProfileResolvedEventPayload = {
+      ...resolution,
+      ...(exactToolDecisions === undefined ? {} : { exactToolDecisions }),
+    };
+    if (payload.environmentPresetId === "workspace_hosted") {
+      assertHostedWorkspaceProfileContractV1(resolvedPayload);
+    }
     this.writer.emit(
       "execution-profile.resolved",
-      {
-        ...resolution,
-        ...(exactToolDecisions === undefined ? {} : { exactToolDecisions }),
-      },
+      resolvedPayload,
       { commandId },
     );
   }
