@@ -38,6 +38,9 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Kestrel One now accepts the final hosted V4 execution profile after the
+  Kestrel policy revision changed, while rejecting legacy producer profiles
+  before model execution.
 - Hosted approval failures now preserve the distinction between retryable
   transaction metadata failures and terminal access or resource failures.
 - Project-bound Kestrel One turns now preserve their exact context authorization

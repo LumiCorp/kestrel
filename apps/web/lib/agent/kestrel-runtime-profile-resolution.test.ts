@@ -80,7 +80,7 @@ test(
             version: 1,
             profileId: `kestrel:workspace_hosted:${"a".repeat(64)}`,
             fingerprint: "a".repeat(64),
-            policy: { id: "kestrel", version: 4 },
+            policy: { id: "kestrel", version: 5 },
             environmentPreset: { id: "workspace_hosted", version: 4 },
             hostedApprovalProducerProtocol: "v4",
             resolvedProfile: {
@@ -229,7 +229,7 @@ test("hosted exact-tool preflight rejects an unavailable required tool before mo
       version: 1,
       profileId: `kestrel:workspace_hosted:${"f".repeat(64)}`,
       fingerprint: "f".repeat(64),
-      policy: { id: "kestrel", version: 4 },
+      policy: { id: "kestrel", version: 5 },
       environmentPreset: { id: "workspace_hosted", version: 4 },
       hostedApprovalProducerProtocol: "v4",
       exactToolDecisions: {
@@ -268,7 +268,7 @@ test("ordinary hosted turns remain rolling-compatible without exact shell prefli
           version: 1,
           profileId: `kestrel:workspace_hosted:${"e".repeat(64)}`,
           fingerprint: "e".repeat(64),
-          policy: { id: "kestrel", version: 4 },
+          policy: { id: "kestrel", version: 5 },
           environmentPreset: { id: "workspace_hosted", version: 4 },
           hostedApprovalProducerProtocol: "v4",
           resolvedProfile: {
@@ -303,30 +303,20 @@ test("ordinary hosted turns remain rolling-compatible without exact shell prefli
   assert.equal(calls[0]?.exactToolNames, undefined);
 });
 
-test("bridge Web accepts the preset 2 bridge and canonical V4 activation", async () => {
-  const transition = [
-    { presetVersion: 2, hostedApprovalProducerProtocol: undefined },
-    { presetVersion: 4, hostedApprovalProducerProtocol: "v4" as const },
-  ];
-  for (const [index, stage] of transition.entries()) {
-    await assert.doesNotReject(() => resolveHostedKestrelExecutionProfile({
+test("strict Web accepts only the canonical final V4 profile", async () => {
+  await assert.doesNotReject(() => resolveHostedKestrelExecutionProfile({
       client: {
         async resolveExecutionProfile() {
           return {
             version: 1,
             profileId: `kestrel:workspace_hosted:${"b".repeat(64)}`,
             fingerprint: "b".repeat(64),
-            policy: { id: "kestrel", version: 4 },
+            policy: { id: "kestrel", version: 5 },
             environmentPreset: {
               id: "workspace_hosted",
-              version: stage.presetVersion,
+              version: 4,
             },
-            ...(stage.hostedApprovalProducerProtocol === undefined
-              ? {}
-              : {
-                  hostedApprovalProducerProtocol:
-                    stage.hostedApprovalProducerProtocol,
-                }),
+            hostedApprovalProducerProtocol: "v4",
             resolvedProfile: {
               id: `kestrel:workspace_hosted:${"b".repeat(64)}`,
               label: "Kestrel One",
@@ -347,15 +337,14 @@ test("bridge Web accepts the preset 2 bridge and canonical V4 activation", async
         },
       },
       route: {
-        runId: `exec_rollout_${index}`,
+        runId: "exec_final_v4",
         environmentId: "env_123",
         effectiveCapabilities: [],
       },
     }));
-  }
 });
 
-test("bridge Web fails closed for unsupported or ambiguous hosted profiles", async () => {
+test("strict Web fails closed for legacy or ambiguous hosted profiles", async () => {
   const unsupported: ReadonlyArray<{
     environmentPreset: {
       id: "workspace_hosted" | "cli_dev_local";
@@ -366,6 +355,10 @@ test("bridge Web fails closed for unsupported or ambiguous hosted profiles", asy
     policy?: { id: string; version: number } | undefined;
     profileId?: string | undefined;
   }> = [
+    {
+      environmentPreset: { id: "workspace_hosted", version: 2 },
+      approvalPolicyPackId: "hosted_workspace",
+    },
     {
       environmentPreset: { id: "workspace_hosted", version: 2 },
       approvalPolicyPackId: "hosted_workspace",
@@ -384,12 +377,12 @@ test("bridge Web fails closed for unsupported or ambiguous hosted profiles", asy
     {
       environmentPreset: { id: "workspace_hosted", version: 2 },
       approvalPolicyPackId: "hosted_workspace",
-      policy: { id: "kestrel-one", version: 4 },
+      policy: { id: "kestrel-one", version: 5 },
     },
     {
       environmentPreset: { id: "workspace_hosted", version: 2 },
       approvalPolicyPackId: "hosted_workspace",
-      policy: { id: "kestrel", version: 3 },
+      policy: { id: "kestrel", version: 4 },
     },
     {
       environmentPreset: { id: "workspace_hosted", version: 2 },
@@ -435,6 +428,12 @@ test("bridge Web fails closed for unsupported or ambiguous hosted profiles", asy
       hostedApprovalProducerProtocol: "v4" as const,
       approvalPolicyPackId: "ci_bot",
     },
+    {
+      environmentPreset: { id: "workspace_hosted", version: 4 },
+      hostedApprovalProducerProtocol: "v4" as const,
+      approvalPolicyPackId: "hosted_workspace",
+      policy: { id: "kestrel", version: 4 },
+    },
   ];
   for (const [index, candidate] of unsupported.entries()) {
     await assert.rejects(
@@ -447,7 +446,7 @@ test("bridge Web fails closed for unsupported or ambiguous hosted profiles", asy
                 candidate.profileId ??
                 `kestrel:workspace_hosted:${"b".repeat(64)}`,
               fingerprint: "b".repeat(64),
-              policy: candidate.policy ?? { id: "kestrel", version: 4 },
+              policy: candidate.policy ?? { id: "kestrel", version: 5 },
               environmentPreset: candidate.environmentPreset,
               ...(candidate.hostedApprovalProducerProtocol
                 ? { hostedApprovalProducerProtocol: candidate.hostedApprovalProducerProtocol }
@@ -539,7 +538,7 @@ test("the command canary requests and validates exact shell availability without
           version: 1,
           profileId: `kestrel:workspace_hosted:${"d".repeat(64)}`,
           fingerprint: "d".repeat(64),
-          policy: { id: "kestrel", version: 4 },
+          policy: { id: "kestrel", version: 5 },
           environmentPreset: { id: "workspace_hosted", version: 4 },
           hostedApprovalProducerProtocol: "v4",
           exactToolDecisions: { exec_command: ASK_EXEC_COMMAND_DECISION },
@@ -679,7 +678,7 @@ test("hosted Desktop and web routes carry the exact approved economics profile",
           version: 1,
           profileId: `kestrel:workspace_hosted:${"c".repeat(64)}`,
           fingerprint: "c".repeat(64),
-          policy: { id: "kestrel", version: 4 },
+          policy: { id: "kestrel", version: 5 },
           environmentPreset: { id: "workspace_hosted", version: 4 },
           hostedApprovalProducerProtocol: "v4",
           resolvedProfile: {
