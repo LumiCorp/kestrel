@@ -6,6 +6,13 @@ const source = await readFile(
   new URL("./workspace-post-cutover-canary.ts", import.meta.url),
   "utf8",
 );
+const noSpendRouteSource = await readFile(
+  new URL(
+    "../app/api/threads/[id]/workspace/canary/exact-tool-preflight/route.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 test("post-cutover command canary joins the exact exec_command to its Ask First card", () => {
   assert.match(source, /turn\?\.status === "waiting_for_input"/u);
@@ -28,6 +35,15 @@ test("post-cutover command canary runs an exact no-spend preflight before creati
     /assertExecCommandNoSpendPreflight\(exactToolPreflight\);[\s\S]*await runAgentCommandCanary/u,
   );
   assert.match(source, /agent_exec_command_no_spend_preflight/u);
+});
+
+test("the no-spend route carries the Environment's exact runtime model into profile resolution", () => {
+  assert.match(noSpendRouteSource, /getResolvedKestrelRuntimeExecutionModel/u);
+  assert.match(noSpendRouteSource, /toKestrelOneRuntimeModelSelection/u);
+  assert.match(
+    noSpendRouteSource,
+    /runtimeModels: \[runtimeModel\],[\s\S]*exactToolName: "exec_command"/u,
+  );
 });
 
 test("post-cutover command canary approves once through the durable interaction API before proving completion", () => {
