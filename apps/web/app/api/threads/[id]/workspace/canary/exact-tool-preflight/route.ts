@@ -4,6 +4,9 @@ import {
   getKestrelOneHostedAgentId,
   resolveHostedKestrelExecutionProfile,
 } from "@/lib/agent/kestrel-runtime";
+import { toKestrelOneRuntimeModelSelection } from "@/lib/agent/kestrel-runtime-model";
+import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
+import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
 import { resolveEnvironmentExecutionRoute } from "@/lib/environments/execution-route";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
@@ -47,6 +50,23 @@ export async function POST(
         tenantId: organizationId,
       },
     };
+    const resolvedModel = await getResolvedKestrelRuntimeExecutionModel({
+      organizationId,
+      environmentId: route.environmentId,
+    });
+    if (!resolvedModel) {
+      throw new Error(
+        getGatewayResolutionFailureMessage({
+          surface: "chat",
+        }),
+      );
+    }
+    const runtimeModel = toKestrelOneRuntimeModelSelection({
+      ...resolvedModel.model,
+      organizationId,
+      environmentId: route.environmentId,
+      credentialRevision: resolvedModel.gateway.credentialRevision,
+    });
     const resolution = await resolveHostedKestrelExecutionProfile({
       client,
       context: requestContext,
@@ -57,6 +77,7 @@ export async function POST(
         approvalPolicies: route.approvalPolicies,
         reasoningPolicy: route.reasoningPolicy,
       },
+      runtimeModels: [runtimeModel],
       exactToolName: "exec_command",
     });
     return NextResponse.json({
