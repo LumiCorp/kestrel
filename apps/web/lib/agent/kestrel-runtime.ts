@@ -80,9 +80,8 @@ import {
 
 const DEFAULT_PROFILE_ID = "kestrel";
 const DEFAULT_HOSTED_AGENT_ID = "kestrel-one";
-const LEGACY_HOSTED_WORKSPACE_PRESET_VERSION = 2;
 const HOSTED_WORKSPACE_POLICY_ID = "kestrel";
-const HOSTED_WORKSPACE_POLICY_VERSION = 4;
+const HOSTED_WORKSPACE_POLICY_VERSION = 5;
 const HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
   "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
@@ -854,14 +853,10 @@ export async function resolveHostedKestrelExecutionProfile(input: {
 export function assertHostedWorkspaceProfileCompatibility(
   resolution: Awaited<ReturnType<HostedKestrelExecutionProfileResolver["resolveExecutionProfile"]>>,
 ): void {
-  const preset4ProducerSupported =
+  const finalProducerSupported =
     resolution.environmentPreset.version ===
       WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION &&
     resolution.hostedApprovalProducerProtocol === "v4";
-  const deployedPreset2BridgeSupported =
-    resolution.environmentPreset.version ===
-      LEGACY_HOSTED_WORKSPACE_PRESET_VERSION &&
-    resolution.hostedApprovalProducerProtocol === undefined;
   const policyIdentitySupported =
     resolution.policy.id === HOSTED_WORKSPACE_POLICY_ID &&
     resolution.policy.version === HOSTED_WORKSPACE_POLICY_VERSION &&
@@ -873,7 +868,7 @@ export function assertHostedWorkspaceProfileCompatibility(
     resolution.resolvedProfile.id === expectedProfileId;
   if (
     resolution.environmentPreset.id !== "workspace_hosted" ||
-    !(preset4ProducerSupported || deployedPreset2BridgeSupported) ||
+    !finalProducerSupported ||
     !policyIdentitySupported ||
     !profileIdentitySupported
   ) {
@@ -890,10 +885,7 @@ export function assertHostedWorkspaceProfileCompatibility(
           policy: resolution.policy,
           hostedApprovalProducerProtocol:
             resolution.hostedApprovalProducerProtocol ?? null,
-          acceptedPresetVersions: [
-            LEGACY_HOSTED_WORKSPACE_PRESET_VERSION,
-            WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
-          ],
+          acceptedPresetVersions: [WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION],
         },
       },
     );
