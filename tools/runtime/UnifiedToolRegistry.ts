@@ -2091,8 +2091,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     input: { activation: PreparedToolCallV1["activation"] },
     runContext: ToolRunContext | undefined,
   ): PinnedExecutionSource | undefined {
+    const builtInDescriptor = this.builtInDescriptors.get(
+      input.activation.descriptor.toolId,
+    );
     const descriptor =
-      this.builtInDescriptors.get(input.activation.descriptor.toolId) ??
+      builtInDescriptor ??
       this.resolveExposedMcpTool(
         input.activation.descriptor.toolId,
         runContext,
@@ -2113,7 +2116,15 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                 ? {}
                 : { mcpContext: blockedResumeScope.mcpContext }),
             },
-          }));
+          })) ||
+      (builtInDescriptor !== undefined &&
+        runContext !== undefined &&
+        blockedResumeScope !== undefined &&
+        input.activation.scopeFingerprint ===
+          fingerprintBlockedManagedWorktreeSourceScope(
+            runContext,
+            blockedResumeScope,
+          ));
     if (
       descriptor === undefined ||
       hashCanonical(toToolDescriptorRefV1(descriptor)) !==
@@ -3161,6 +3172,48 @@ function resolveBlockedResumeScope(runContext: ToolRunContext | undefined):
       ? {}
       : { mcpContext: blockedMcpContext }),
   };
+}
+
+function fingerprintBlockedManagedWorktreeSourceScope(
+  runContext: ToolRunContext,
+  blockedResumeScope: {
+    runId: string;
+    mcpContext?: Record<string, unknown> | undefined;
+  },
+): string | undefined {
+  if (
+    hasTrustedManagedWorktreeBinding(
+      runContext.runId,
+      runContext.sessionState,
+      runContext.payload,
+      runContext.sessionId,
+    ) === false
+  ) {
+    return;
+  }
+  const payload = asRecord(runContext.payload) ?? {};
+  const workspace = asRecord(payload.workspace);
+  const sourceWorkspaceRoot = asNonEmptyString(
+    workspace?.sourceWorkspaceRoot,
+  );
+  if (workspace?.managedWorktree !== true || sourceWorkspaceRoot === undefined) {
+    return;
+  }
+  return fingerprintToolRunScopeV1({
+    ...runContext,
+    runId: blockedResumeScope.runId,
+    payload: {
+      ...payload,
+      workspace: {
+        ...workspace,
+        workspaceRoot: sourceWorkspaceRoot,
+        managedWorktree: undefined,
+      },
+      ...(blockedResumeScope.mcpContext === undefined
+        ? {}
+        : { mcpContext: blockedResumeScope.mcpContext }),
+    },
+  });
 }
 
 function withoutGrantId(

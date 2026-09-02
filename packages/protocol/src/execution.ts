@@ -25,6 +25,20 @@ export const RUNNER_COMMAND_CONTRACT_VERSION = "runner-command-v3" as const;
 export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v3" as const;
 export const WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION = 4 as const;
 export const HOSTED_APPROVAL_PRODUCER_PROTOCOL = "v4" as const;
+export const HOSTED_WORKSPACE_PROFILE_CONTRACT_V1 = Object.freeze({
+  version: 1 as const,
+  environmentPreset: Object.freeze({
+    id: "workspace_hosted" as const,
+    version: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+  }),
+  producerProtocol: HOSTED_APPROVAL_PRODUCER_PROTOCOL,
+  policy: Object.freeze({ id: "kestrel" as const, version: 5 as const }),
+  approvalPolicyPackId: "hosted_workspace" as const,
+  profileIdentity: Object.freeze({
+    prefix: "kestrel:workspace_hosted:" as const,
+    fingerprintPattern: "^[a-f0-9]{64}$" as const,
+  }),
+});
 export const RUNNER_WAITING_PROMPT_HISTORY_KIND = "runtime.waiting_prompt" as const;
 export const RUNNER_ASSISTANT_TEXT_HISTORY_KIND = "runtime.assistant_text" as const;
 
@@ -1968,6 +1982,133 @@ export interface ExecutionProfileResolvedEventPayload {
   hostedApprovalProducerProtocol?: typeof HOSTED_APPROVAL_PRODUCER_PROTOCOL | undefined;
   resolvedProfile: RunnerProfile;
   exactToolDecisions?: Record<string, EffectiveToolDecisionV1> | undefined;
+}
+
+export interface HostedWorkspaceExactToolExpectationV1 {
+  available: boolean;
+  approvalMode?: "auto" | "ask" | "deny" | undefined;
+  rememberApprovalEligible?: boolean | undefined;
+}
+
+export interface HostedWorkspaceProfileContractValidationV1 {
+  ok: boolean;
+  expectedProfileId: string;
+  mismatches: readonly string[];
+}
+
+export interface HostedWorkspaceProfileResolutionLikeV1 {
+  profileId: string;
+  fingerprint: string;
+  policy: { id: string; version: number };
+  environmentPreset: { id: string; version: number };
+  hostedApprovalProducerProtocol?: string | undefined;
+  resolvedProfile: {
+    id: string;
+    approvalPolicyPackId?: string | undefined;
+  };
+  exactToolDecisions?:
+    | Record<
+        string,
+        {
+          available: boolean;
+          approvalDisposition: { mode: "auto" | "ask" | "deny" };
+          rememberApprovalEligible: boolean;
+        }
+      >
+    | undefined;
+}
+
+export function validateHostedWorkspaceProfileContractV1(
+  resolution: HostedWorkspaceProfileResolutionLikeV1,
+  exactToolExpectations: Readonly<
+    Record<string, HostedWorkspaceExactToolExpectationV1>
+  > = {},
+): HostedWorkspaceProfileContractValidationV1 {
+  const contract = HOSTED_WORKSPACE_PROFILE_CONTRACT_V1;
+  const fingerprintValid = new RegExp(
+    contract.profileIdentity.fingerprintPattern,
+    "u",
+  ).test(resolution.fingerprint);
+  const expectedProfileId =
+    `${contract.profileIdentity.prefix}${resolution.fingerprint}`;
+  const mismatches: string[] = [];
+  if (resolution.environmentPreset.id !== contract.environmentPreset.id) {
+    mismatches.push("environment preset id");
+  }
+  if (
+    resolution.environmentPreset.version !== contract.environmentPreset.version
+  ) {
+    mismatches.push("environment preset version");
+  }
+  if (
+    resolution.hostedApprovalProducerProtocol !== contract.producerProtocol
+  ) {
+    mismatches.push("producer protocol");
+  }
+  if (
+    resolution.policy.id !== contract.policy.id ||
+    resolution.policy.version !== contract.policy.version
+  ) {
+    mismatches.push("policy identity");
+  }
+  if (
+    resolution.resolvedProfile.approvalPolicyPackId !==
+      contract.approvalPolicyPackId
+  ) {
+    mismatches.push("approval policy pack");
+  }
+  if (
+    fingerprintValid === false ||
+    resolution.profileId !== expectedProfileId ||
+    resolution.resolvedProfile.id !== expectedProfileId
+  ) {
+    mismatches.push("profile identity");
+  }
+  for (const [toolName, expectation] of Object.entries(
+    exactToolExpectations,
+  )) {
+    const decision = resolution.exactToolDecisions?.[toolName];
+    if (decision?.available !== expectation.available) {
+      mismatches.push(`exact tool '${toolName}' availability`);
+    }
+    if (
+      expectation.approvalMode !== undefined &&
+      decision?.approvalDisposition.mode !== expectation.approvalMode
+    ) {
+      mismatches.push(`exact tool '${toolName}' approval mode`);
+    }
+    if (
+      expectation.rememberApprovalEligible !== undefined &&
+      decision?.rememberApprovalEligible !==
+        expectation.rememberApprovalEligible
+    ) {
+      mismatches.push(`exact tool '${toolName}' remember eligibility`);
+    }
+  }
+  return {
+    ok: mismatches.length === 0,
+    expectedProfileId,
+    mismatches: Object.freeze(mismatches),
+  };
+}
+
+export function assertHostedWorkspaceProfileContractV1(
+  resolution: HostedWorkspaceProfileResolutionLikeV1,
+  exactToolExpectations: Readonly<
+    Record<string, HostedWorkspaceExactToolExpectationV1>
+  > = {},
+): void {
+  const validation = validateHostedWorkspaceProfileContractV1(
+    resolution,
+    exactToolExpectations,
+  );
+  if (validation.ok === false) {
+    throw new RunnerProtocolContractError(
+      `Hosted workspace profile contract v1 rejected: ${validation.mismatches.join(
+        ", ",
+      )}`,
+    );
+  }
 }
 
 export interface JobStartedEventPayload {

@@ -7,6 +7,10 @@ import path from "node:path";
 import { RunnerHost } from "../../cli/runner/RunnerHost.js";
 import type { RunnerEventSink } from "../../cli/runner/EventWriter.js";
 import { KESTREL_HARNESS_ECONOMICS } from "../../src/profile/kestrelOnePolicy.js";
+import {
+  validateHostedWorkspaceProfileContractV1,
+  type ExecutionProfileResolvedEventPayload,
+} from "@kestrel-agents/protocol";
 
 const writer: RunnerEventSink = {
   emit() {},
@@ -72,8 +76,9 @@ test("RunnerHost emits execution profile resolution from provider", async () => 
           version: 1,
           profileId: `kestrel:workspace_hosted:${"a".repeat(64)}`,
           fingerprint: "a".repeat(64),
-          policy: { id: "kestrel", version: 3 },
-          environmentPreset: { id: "workspace_hosted", version: 1 },
+          policy: { id: "kestrel", version: 5 },
+          environmentPreset: { id: "workspace_hosted", version: 4 },
+          hostedApprovalProducerProtocol: "v4",
           resolvedProfile: {
             id: `kestrel:workspace_hosted:${"a".repeat(64)}`,
             label: "Kestrel One",
@@ -86,6 +91,7 @@ test("RunnerHost emits execution profile resolution from provider", async () => 
               modelByStage: { "agent.loop": "openai/gpt-5.6-luna" },
             },
             harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
+            approvalPolicyPackId: "hosted_workspace",
           },
         };
       },
@@ -131,8 +137,9 @@ test("RunnerHost resolves exact Build-mode tool decisions without model executio
           version: 1,
           profileId: `kestrel:workspace_hosted:${"b".repeat(64)}`,
           fingerprint: "b".repeat(64),
-          policy: { id: "kestrel", version: 4 },
+          policy: { id: "kestrel", version: 5 },
           environmentPreset: { id: "workspace_hosted", version: 4 },
+          hostedApprovalProducerProtocol: "v4",
           resolvedProfile: {
             id: `kestrel:workspace_hosted:${"b".repeat(64)}`,
             label: "Kestrel",
@@ -145,7 +152,7 @@ test("RunnerHost resolves exact Build-mode tool decisions without model executio
               modelByStage: { "agent.loop": "openai/gpt-5.6-luna" },
             },
             harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
-            approvalPolicyPackId: "dev",
+            approvalPolicyPackId: "hosted_workspace",
             defaultInteractionMode: "chat",
             defaultActSubmode: "safe",
             toolAllowlist: ["exec_command"],
@@ -195,8 +202,9 @@ test("RunnerHost exact-tool preflight fails closed without actor access", async 
           version: 1,
           profileId: `kestrel:workspace_hosted:${"c".repeat(64)}`,
           fingerprint: "c".repeat(64),
-          policy: { id: "kestrel", version: 4 },
+          policy: { id: "kestrel", version: 5 },
           environmentPreset: { id: "workspace_hosted", version: 4 },
+          hostedApprovalProducerProtocol: "v4",
           resolvedProfile: {
             id: `kestrel:workspace_hosted:${"c".repeat(64)}`,
             label: "Kestrel",
@@ -209,7 +217,7 @@ test("RunnerHost exact-tool preflight fails closed without actor access", async 
               modelByStage: { "agent.loop": "openai/gpt-5.6-luna" },
             },
             harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
-            approvalPolicyPackId: "dev",
+            approvalPolicyPackId: "hosted_workspace",
             toolAllowlist: [],
           },
         };
@@ -248,8 +256,9 @@ test("RunnerHost exact-tool preflight preserves a denied approval disposition", 
           version: 1,
           profileId: `kestrel:workspace_hosted:${"d".repeat(64)}`,
           fingerprint: "d".repeat(64),
-          policy: { id: "kestrel", version: 4 },
+          policy: { id: "kestrel", version: 5 },
           environmentPreset: { id: "workspace_hosted", version: 4 },
+          hostedApprovalProducerProtocol: "v4",
           resolvedProfile: {
             id: `kestrel:workspace_hosted:${"d".repeat(64)}`,
             label: "Kestrel",
@@ -262,7 +271,7 @@ test("RunnerHost exact-tool preflight preserves a denied approval disposition", 
               modelByStage: { "agent.loop": "openai/gpt-5.6-luna" },
             },
             harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
-            approvalPolicyPackId: "dev",
+            approvalPolicyPackId: "hosted_workspace",
             toolAllowlist: ["exec_command"],
             kestrelOneAppApprovalPolicies: {
               exec_command: {
@@ -391,11 +400,12 @@ test("RunnerHost rejects a hosted provider result without immutable economics", 
   await host.close();
 });
 
-test("default RunnerHost loads the immutable profile it resolves", async () => {
+test("hosted profile release gate resolves the packaged contract without run or model spend", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-runner-profile-"));
   const previousHome = process.env.KESTREL_HOME;
   process.env.KESTREL_HOME = home;
   const events: Array<{ type: string; payload: unknown }> = [];
+  let runtimeCreations = 0;
   const host = new RunnerHost(
     {
       emit(type, payload) {
@@ -403,6 +413,7 @@ test("default RunnerHost loads the immutable profile it resolves", async () => {
       },
     },
     () => {
+      runtimeCreations += 1;
       throw new Error("runtime must not be created");
     },
   );
@@ -413,11 +424,75 @@ test("default RunnerHost loads the immutable profile it resolves", async () => {
       managedConfiguration: {
         modelProvider: "openrouter",
         model: "openai/gpt-5.6-luna",
+        additionalToolNames: ["exec_command"],
+        kestrelOneAppApprovalModes: { exec_command: "ask" },
+        kestrelOneAppApprovalPolicies: {
+          exec_command: { environment: "ask", minimum: "auto" },
+        },
       },
+      exactToolNames: ["exec_command"],
     });
-    const resolved = events[0]?.payload as { profileId?: string } | undefined;
+    const resolved = events[0]?.payload as
+      | ExecutionProfileResolvedEventPayload
+      | undefined;
     assert.equal(events[0]?.type, "execution-profile.resolved");
     assert.match(resolved?.profileId ?? "", /^kestrel:workspace_hosted:[a-f0-9]{64}$/u);
+    assert.equal(runtimeCreations, 0);
+    assert.equal(
+      validateHostedWorkspaceProfileContractV1(resolved!, {
+        exec_command: {
+          available: true,
+          approvalMode: "ask",
+          rememberApprovalEligible: true,
+        },
+      }).ok,
+      true,
+    );
+
+    for (const mutation of [
+      { ...resolved!, environmentPreset: { id: "cli_dev_local" as const, version: 4 } },
+      { ...resolved!, environmentPreset: { id: "workspace_hosted" as const, version: 3 } },
+      { ...resolved!, hostedApprovalProducerProtocol: "v3" as never },
+      { ...resolved!, policy: { id: "kestrel-one", version: 5 } },
+      { ...resolved!, policy: { id: "kestrel", version: 4 } },
+      {
+        ...resolved!,
+        resolvedProfile: {
+          ...resolved!.resolvedProfile,
+          approvalPolicyPackId: "ci_bot" as const,
+        },
+      },
+      { ...resolved!, profileId: `kestrel:workspace_hosted:${"0".repeat(64)}` },
+      {
+        ...resolved!,
+        resolvedProfile: {
+          ...resolved!.resolvedProfile,
+          id: `kestrel:workspace_hosted:${"0".repeat(64)}`,
+        },
+      },
+      {
+        ...resolved!,
+        exactToolDecisions: {
+          ...resolved!.exactToolDecisions,
+          exec_command: {
+            ...resolved!.exactToolDecisions!.exec_command!,
+            available: false,
+          },
+        },
+      },
+    ]) {
+      assert.equal(
+        validateHostedWorkspaceProfileContractV1(mutation, {
+          exec_command: {
+            available: true,
+            approvalMode: "ask",
+            rememberApprovalEligible: true,
+          },
+        }).ok,
+        false,
+      );
+    }
+    assert.equal(runtimeCreations, 0);
 
     await host.profileGet("load-default-profile", {
       profileId: resolved!.profileId!,

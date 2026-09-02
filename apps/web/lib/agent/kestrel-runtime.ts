@@ -3,7 +3,8 @@ import "server-only";
 import { readRequestCorrelation } from "@kestrel-agents/next";
 import type { KestrelAgent, RunnerActorMetadata } from "@kestrel-agents/sdk";
 import {
-  WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+  HOSTED_WORKSPACE_PROFILE_CONTRACT_V1,
+  validateHostedWorkspaceProfileContractV1,
   type RunnerPreparedApprovalCleanupV1,
   type RunnerTurnAttachment,
 } from "@kestrel-agents/protocol";
@@ -80,8 +81,6 @@ import {
 
 const DEFAULT_PROFILE_ID = "kestrel";
 const DEFAULT_HOSTED_AGENT_ID = "kestrel-one";
-const HOSTED_WORKSPACE_POLICY_ID = "kestrel";
-const HOSTED_WORKSPACE_POLICY_VERSION = 5;
 const HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
   "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
@@ -853,25 +852,8 @@ export async function resolveHostedKestrelExecutionProfile(input: {
 export function assertHostedWorkspaceProfileCompatibility(
   resolution: Awaited<ReturnType<HostedKestrelExecutionProfileResolver["resolveExecutionProfile"]>>,
 ): void {
-  const finalProducerSupported =
-    resolution.environmentPreset.version ===
-      WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION &&
-    resolution.hostedApprovalProducerProtocol === "v4";
-  const policyIdentitySupported =
-    resolution.policy.id === HOSTED_WORKSPACE_POLICY_ID &&
-    resolution.policy.version === HOSTED_WORKSPACE_POLICY_VERSION &&
-    resolution.resolvedProfile.approvalPolicyPackId === "hosted_workspace";
-  const expectedProfileId =
-    `kestrel:workspace_hosted:${resolution.fingerprint}`;
-  const profileIdentitySupported =
-    resolution.profileId === expectedProfileId &&
-    resolution.resolvedProfile.id === expectedProfileId;
-  if (
-    resolution.environmentPreset.id !== "workspace_hosted" ||
-    !finalProducerSupported ||
-    !policyIdentitySupported ||
-    !profileIdentitySupported
-  ) {
+  const validation = validateHostedWorkspaceProfileContractV1(resolution);
+  if (validation.ok === false) {
     throw Object.assign(
       new Error("The runner does not support the current hosted approval contract."),
       {
@@ -881,11 +863,16 @@ export function assertHostedWorkspaceProfileCompatibility(
           approvalPolicyPackId:
             resolution.resolvedProfile.approvalPolicyPackId ?? null,
           profileId: resolution.profileId,
-          requiredPresetVersion: WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION,
+          requiredContract: HOSTED_WORKSPACE_PROFILE_CONTRACT_V1,
+          mismatches: validation.mismatches,
+          requiredPresetVersion:
+            HOSTED_WORKSPACE_PROFILE_CONTRACT_V1.environmentPreset.version,
           policy: resolution.policy,
           hostedApprovalProducerProtocol:
             resolution.hostedApprovalProducerProtocol ?? null,
-          acceptedPresetVersions: [WORKSPACE_HOSTED_APPROVAL_PRESET_VERSION],
+          acceptedPresetVersions: [
+            HOSTED_WORKSPACE_PROFILE_CONTRACT_V1.environmentPreset.version,
+          ],
         },
       },
     );
@@ -900,9 +887,11 @@ export function assertHostedWorkspaceExactToolPreflight(
     return;
   }
   assertHostedWorkspaceProfileCompatibility(resolution);
+  const validation = validateHostedWorkspaceProfileContractV1(resolution, {
+    [requiredTool]: { available: true },
+  });
   if (
-    resolution.resolvedProfile.approvalPolicyPackId !== "hosted_workspace" ||
-    resolution.exactToolDecisions?.[requiredTool]?.available !== true
+    validation.ok === false
   ) {
     throw Object.assign(
       new Error(
@@ -916,6 +905,7 @@ export function assertHostedWorkspaceExactToolPreflight(
             resolution.resolvedProfile.approvalPolicyPackId ?? null,
           exactToolDecision:
             resolution.exactToolDecisions?.[requiredTool] ?? null,
+          mismatches: validation.mismatches,
         },
       },
     );
