@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { EnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import {
+  configureHostedBrowserServiceResolver,
   handleHostedBrowserControl,
   HOSTED_BROWSER_CONTROL_MAX_REQUEST_BYTES,
 } from "./control-route";
@@ -62,4 +63,39 @@ test("Browser control counts the actual body when Content-Length is absent", asy
   assert.deepEqual(await response.json(), {
     error: { code: "BROWSER_CONTROL_BODY_TOO_LARGE" },
   });
+});
+
+test("Browser control logs a bounded service-resolution stage", async () => {
+  const messages: unknown[][] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => messages.push(args);
+  const dispose = configureHostedBrowserServiceResolver(async () => {
+    throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+  });
+  try {
+    const response = await handleHostedBrowserControl({
+      request: new Request("https://one.example.test/control", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+      action: "accept",
+      ticket,
+      projectId: "project-1",
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(messages, [
+      [
+        "Hosted Browser control unavailable",
+        {
+          code: "BROWSER_SERVICE_UNAVAILABLE",
+          action: "accept",
+          failureStage: "control.service_resolution",
+        },
+      ],
+    ]);
+  } finally {
+    dispose();
+    console.error = original;
+  }
 });

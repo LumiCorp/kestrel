@@ -38,8 +38,10 @@ export async function handleHostedBrowserControl(input: {
   ticket: EnvironmentExecutionTicket;
   projectId: string;
 }) {
+  let failureStage = "control.body";
   try {
     const body = await readBoundedControlJson(input.request);
+    failureStage = "control.service_resolution";
     const resolver =
       serviceResolver ??
       (await import("./composition")).resolveHostedBrowserService;
@@ -47,6 +49,7 @@ export async function handleHostedBrowserControl(input: {
       ticket: input.ticket,
       projectId: input.projectId,
     });
+    failureStage = `control.${input.action}`;
     switch (input.action) {
       case "policy":
         return NextResponse.json(await service.resolvePolicy(parsePolicyRequest(body)));
@@ -151,6 +154,19 @@ export async function handleHostedBrowserControl(input: {
   } catch (error) {
     const code = readBrowserCode(error);
     const details = readBrowserDetails(error);
+    if (code === "BROWSER_SERVICE_UNAVAILABLE") {
+      console.error("Hosted Browser control unavailable", {
+        code,
+        action: input.action,
+        failureStage:
+          typeof details?.failureStage === "string"
+            ? details.failureStage
+            : failureStage,
+        ...(Array.isArray(details?.authorityMismatches)
+          ? { authorityMismatches: details.authorityMismatches }
+          : {}),
+      });
+    }
     return NextResponse.json(
       { error: { code, ...(details ? { details } : {}) } },
       { status: readBrowserStatus(error, code) },
