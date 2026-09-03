@@ -51,7 +51,7 @@ test("default turn executor delegates threaded payload preparation to runtime se
   assert.match(threadedExecutorSource, /payload:\s*runtimeTurn\.payload/u);
 });
 
-test("default turn executor scopes tools for execution authorization without an MCP grant", async () => {
+test("default turn executor scopes tools by turn identity after ephemeral authorization is stripped", async () => {
   const source = await readFile(RUNTIME_SOURCE, "utf8");
   const executorBody = sectionBetween(
     source,
@@ -59,7 +59,8 @@ test("default turn executor scopes tools for execution authorization without an 
     "\nexport function resolveDevShellServiceForProfile(",
   );
 
-  assert.match(
+  assert.match(executorBody, /input !== undefined/u);
+  assert.doesNotMatch(
     executorBody,
     /input\?\.mcpContext !== undefined \|\| input\?\.mcpAuthorization !== undefined/u,
   );
