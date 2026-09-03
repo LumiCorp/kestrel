@@ -42,6 +42,9 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Hosted Workspace turns now continue retrying temporary execution-
+  authorization renewal failures until the existing ticket expires, instead
+  of stopping after a single timed retry.
 - Workspace Runtime now rehydrates an exact prepared built-in after an approval
   pause, process restart, and trusted managed-worktree provisioning. Changed
   authority and untrusted leases remain fail-closed.

@@ -8,6 +8,23 @@ type RenewalResponse = {
   renewAfter: string;
 };
 
+export type ExecutionAuthorizationRenewalDiagnostic = {
+  type: "execution.authorization.renewal";
+  attempt: number;
+  remainingMs: number;
+  outcome:
+    | "renewed"
+    | "transport_failure"
+    | "http_failure"
+    | "denied"
+    | "invalid_response"
+    | "expired";
+  runId?: string | undefined;
+  httpStatus?: number | undefined;
+};
+
+const RENEWAL_RETRY_DELAY_MS = 15_000;
+
 export class ExecutionAuthorizationProvider {
   private ticket: string;
   private expiresAt: number;
@@ -16,11 +33,14 @@ export class ExecutionAuthorizationProvider {
   private timer: NodeJS.Timeout | undefined;
   private closed = false;
   private terminalFailure: RuntimeFailure | undefined;
+  private attempt = 0;
 
   constructor(private readonly input: {
     authorization: HostedMcpAuthorization;
     fetchImpl?: typeof fetch | undefined;
+    runId?: string | undefined;
     onRenew?(ticket: string): Promise<void> | void;
+    onDiagnostic?(event: ExecutionAuthorizationRenewalDiagnostic): void;
   }) {
     this.ticket = input.authorization.executionTicket;
     this.expiresAt = readTicketExpiry(this.ticket);
@@ -41,18 +61,15 @@ export class ExecutionAuthorizationProvider {
         { recoverable: false },
       );
     }
+    if (this.renewalInFlight) return this.renewalInFlight;
+    if (Date.now() >= this.expiresAt) {
+      throw this.expire();
+    }
     if (
       options.forceRenew === true ||
       (this.input.authorization.renewal !== undefined && Date.now() >= this.renewAfter)
     ) {
       return this.renew();
-    }
-    if (Date.now() >= this.expiresAt) {
-      throw createRuntimeFailure(
-        "EXECUTION_AUTH_RENEWAL_UNAVAILABLE",
-        "Execution authorization expired before it could be renewed.",
-        { recoverable: false },
-      );
     }
     return this.ticket;
   }
@@ -64,7 +81,13 @@ export class ExecutionAuthorizationProvider {
   }
 
   private renew(): Promise<string> {
+    if (this.terminalFailure !== undefined) {
+      return Promise.reject(this.terminalFailure);
+    }
     if (this.renewalInFlight) return this.renewalInFlight;
+    if (Date.now() >= this.expiresAt) {
+      return Promise.reject(this.expire());
+    }
     const renewal = this.input.authorization.renewal;
     if (!renewal) {
       return Promise.reject(createRuntimeFailure(
@@ -73,6 +96,8 @@ export class ExecutionAuthorizationProvider {
         { recoverable: false },
       ));
     }
+    const attempt = this.attempt + 1;
+    this.attempt = attempt;
     this.renewalInFlight = (async () => {
       let response: Response;
       try {
@@ -86,6 +111,7 @@ export class ExecutionAuthorizationProvider {
           body: JSON.stringify({ executionTicket: this.ticket }),
         });
       } catch {
+        this.emitDiagnostic({ attempt, outcome: "transport_failure" });
         throw createRuntimeFailure(
           "EXECUTION_AUTH_RENEWAL_UNAVAILABLE",
           "The execution authorization service is unavailable.",
@@ -98,6 +124,13 @@ export class ExecutionAuthorizationProvider {
         const code = error?.code === "EXECUTION_AUTH_RENEWAL_DENIED"
           ? "EXECUTION_AUTH_RENEWAL_DENIED"
           : "EXECUTION_AUTH_RENEWAL_UNAVAILABLE";
+        this.emitDiagnostic({
+          attempt,
+          outcome: code === "EXECUTION_AUTH_RENEWAL_DENIED"
+            ? "denied"
+            : "http_failure",
+          httpStatus: response.status,
+        });
         throw createRuntimeFailure(
           code,
           code === "EXECUTION_AUTH_RENEWAL_DENIED"
@@ -106,7 +139,13 @@ export class ExecutionAuthorizationProvider {
           { recoverable: code !== "EXECUTION_AUTH_RENEWAL_DENIED" && Date.now() < this.expiresAt },
         );
       }
-      const parsed = parseRenewalResponse(body);
+      let parsed: RenewalResponse;
+      try {
+        parsed = parseRenewalResponse(body);
+      } catch (error) {
+        this.emitDiagnostic({ attempt, outcome: "invalid_response" });
+        throw error;
+      }
       if (this.closed) {
         throw createRuntimeFailure(
           "EXECUTION_AUTH_RENEWAL_DENIED",
@@ -118,15 +157,22 @@ export class ExecutionAuthorizationProvider {
       this.expiresAt = Date.parse(parsed.expiresAt);
       this.renewAfter = Date.parse(parsed.renewAfter);
       await this.input.onRenew?.(this.ticket);
+      this.emitDiagnostic({ attempt, outcome: "renewed" });
+      this.attempt = 0;
       this.schedule();
       return this.ticket;
     })().catch((error: unknown) => {
-      if (
-        error instanceof RuntimeFailure &&
-        (error.code === "EXECUTION_AUTH_RENEWAL_DENIED" ||
-          Date.now() >= this.expiresAt)
-      ) {
-        this.terminalFailure = error;
+      if (error instanceof RuntimeFailure) {
+        const recoverable = error.details?.recoverable === true &&
+          Date.now() < this.expiresAt;
+        if (recoverable) {
+          this.scheduleRetry();
+        } else {
+          this.terminalFailure = error;
+          if (this.timer) clearTimeout(this.timer);
+          this.timer = undefined;
+        }
+      } else {
         if (this.timer) clearTimeout(this.timer);
         this.timer = undefined;
       }
@@ -139,16 +185,68 @@ export class ExecutionAuthorizationProvider {
 
   private schedule() {
     if (this.closed || this.input.authorization.renewal === undefined) return;
+    this.scheduleAfter(Math.max(1, this.renewAfter - Date.now()));
+  }
+
+  private scheduleRetry() {
+    if (this.closed || Date.now() >= this.expiresAt) return;
+    this.scheduleAfter(Math.min(
+      RENEWAL_RETRY_DELAY_MS,
+      Math.max(1, this.expiresAt - Date.now()),
+    ));
+  }
+
+  private scheduleAfter(delayMs: number) {
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
-      void this.renew().catch(() => {
-        if (!this.closed && Date.now() < this.expiresAt) {
-          this.timer = setTimeout(() => void this.renew().catch(() => {}), 15_000);
-          this.timer.unref();
-        }
-      });
-    }, Math.max(1, this.renewAfter - Date.now()));
+      this.timer = undefined;
+      void this.renew().catch(() => {});
+    }, delayMs);
     this.timer.unref();
+  }
+
+  private expire() {
+    if (this.terminalFailure !== undefined) return this.terminalFailure;
+    const failure = createRuntimeFailure(
+      "EXECUTION_AUTH_RENEWAL_UNAVAILABLE",
+      "Execution authorization expired before it could be renewed.",
+      { recoverable: false },
+    );
+    this.terminalFailure = failure;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    this.emitDiagnostic({
+      attempt: this.attempt,
+      outcome: "expired",
+    });
+    return failure;
+  }
+
+  private emitDiagnostic(
+    event: Pick<
+      ExecutionAuthorizationRenewalDiagnostic,
+      "attempt" | "outcome" | "httpStatus"
+    >,
+  ) {
+    const diagnostic: ExecutionAuthorizationRenewalDiagnostic = {
+      type: "execution.authorization.renewal",
+      attempt: event.attempt,
+      remainingMs: Math.max(0, this.expiresAt - Date.now()),
+      outcome: event.outcome,
+      ...(this.input.runId !== undefined ? { runId: this.input.runId } : {}),
+      ...(event.httpStatus !== undefined
+        ? { httpStatus: event.httpStatus }
+        : {}),
+    };
+    try {
+      if (this.input.onDiagnostic) {
+        this.input.onDiagnostic(diagnostic);
+      } else {
+        process.stdout.write(`${JSON.stringify(diagnostic)}\n`);
+      }
+    } catch {
+      // Diagnostics must never affect authorization behavior.
+    }
   }
 }
 
