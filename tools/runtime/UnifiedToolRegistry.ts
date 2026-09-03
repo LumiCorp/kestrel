@@ -364,6 +364,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         const provider = new ExecutionAuthorizationProvider({
           authorization,
           fetchImpl: this.fetchImpl,
+          runId: input.runId,
           onRenew: async (ticket) => {
             this.registerSensitiveExecutionAuthorization(
               input.runId!,
