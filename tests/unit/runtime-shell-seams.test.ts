@@ -51,6 +51,25 @@ test("default turn executor delegates threaded payload preparation to runtime se
   assert.match(threadedExecutorSource, /payload:\s*runtimeTurn\.payload/u);
 });
 
+test("default turn executor scopes tools for execution authorization without an MCP grant", async () => {
+  const source = await readFile(RUNTIME_SOURCE, "utf8");
+  const executorBody = sectionBetween(
+    source,
+    "function createDefaultRuntime(",
+    "\nexport function resolveDevShellServiceForProfile(",
+  );
+
+  assert.match(
+    executorBody,
+    /input\?\.mcpContext !== undefined \|\| input\?\.mcpAuthorization !== undefined/u,
+  );
+  assert.match(executorBody, /toolRegistry\.refreshForRuntimeTurn\(input\)/u);
+  assert.match(
+    executorBody,
+    /toolRegistry\.resolveAvailableAllowlistForRuntimeTurn/u,
+  );
+});
+
 test("runtime cleanup leaves developer-shell process lifetime to the supervisor", async () => {
   const source = await readFile(RUNTIME_SOURCE, "utf8");
   const runtimeFactoryBody = sectionBetween(

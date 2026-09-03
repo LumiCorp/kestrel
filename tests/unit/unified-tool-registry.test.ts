@@ -174,6 +174,57 @@ function unsignedExecutionTicket(expiresAt: number, nonce: string) {
   ].join(".");
 }
 
+test("authorization-only hosted turns expose Browser tools only to their scoped run", async () => {
+  const runId = "browser-run";
+  const sessionId = "browser-session";
+  const executionTicket = [
+    "header",
+    Buffer.from(JSON.stringify({ runId }), "utf8").toString("base64url"),
+    "signature",
+  ].join(".");
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.open"],
+    context: {
+      kestrelOne: {
+        appRelayUrl: "https://relay.example.test",
+        appRelayToken: "relay-token",
+      },
+    },
+  });
+  const turn = {
+    runId,
+    sessionId,
+    mcpAuthorization: { executionTicket },
+  };
+
+  try {
+    assert.deepEqual(registry.resolveAvailableAllowlist(["browser.open"]), []);
+
+    await registry.refreshForRuntimeTurn(turn);
+
+    assert.deepEqual(
+      registry.resolveAvailableAllowlistForRuntimeTurn(
+        ["browser.open"],
+        turn,
+        { includeGrantedMcpTools: false },
+      ),
+      ["browser.open"],
+    );
+    assert.deepEqual(
+      registry.resolveAvailableAllowlistForRuntimeTurn(
+        ["browser.open"],
+        { runId: "unauthorized-run", sessionId: "unauthorized-session" },
+        { includeGrantedMcpTools: false },
+      ),
+      [],
+    );
+    assert.deepEqual(registry.resolveAvailableAllowlist(["browser.open"]), []);
+  } finally {
+    registry.clearRuntimeTurnAuthorization(runId, sessionId);
+    await registry.close();
+  }
+});
+
 async function validateToolInput(
   registry: UnifiedToolRegistry,
   toolName: string,
