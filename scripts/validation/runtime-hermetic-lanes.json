@@ -345,6 +345,7 @@
         "tests/unit/exec-command-approval-presentation.test.ts",
         "tests/unit/exec-command-budget.test.ts",
         "tests/unit/exec-command-tool.test.ts",
+        "tests/unit/execution-authorization-provider.test.ts",
         "tests/unit/filesystem-resume-budget.test.ts",
         "tests/unit/gateway-credential-broker.test.ts",
         "tests/unit/gmail-paging.test.ts",
