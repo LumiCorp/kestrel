@@ -81,6 +81,52 @@ test("Browser lifecycle reconciliation is environment-scoped, race-safe, and met
       userId,
     },
   );
+  await sql`UPDATE "environment_run_executions" SET "runtime_run_id" = NULL WHERE "id" = ${id("run", "a")}`;
+  assert.deepEqual(
+    await store.resolveOrigin({
+      runId: id("runtime-run", "a"),
+      expectedExecutionId: id("run", "a"),
+      threadId: id("thread", "a"),
+      expectedOrganizationId: organizationId,
+      expectedEnvironmentId: id("env", "a"),
+      expectedProjectId: id("project", "a"),
+      expectedUserId: userId,
+    }),
+    {
+      organizationId,
+      environmentId: id("env", "a"),
+      projectId: id("project", "a"),
+      threadId: id("thread", "a"),
+      runId: id("run", "a"),
+      turnId: id("turn", "a"),
+      userId,
+    },
+  );
+  await assert.rejects(
+    store.resolveOrigin({
+      runId: id("runtime-run", "a"),
+      expectedExecutionId: id("run", "b"),
+      threadId: id("thread", "a"),
+      expectedOrganizationId: organizationId,
+      expectedEnvironmentId: id("env", "a"),
+      expectedProjectId: id("project", "a"),
+      expectedUserId: userId,
+    }),
+    /BROWSER_SERVICE_UNAVAILABLE/u,
+  );
+  await sql`UPDATE "environment_run_executions" SET "runtime_run_id" = ${id("runtime-run", "a")} WHERE "id" = ${id("run", "a")}`;
+  await assert.rejects(
+    store.resolveOrigin({
+      runId: id("runtime-run", "b"),
+      expectedExecutionId: id("run", "a"),
+      threadId: id("thread", "a"),
+      expectedOrganizationId: organizationId,
+      expectedEnvironmentId: id("env", "a"),
+      expectedProjectId: id("project", "a"),
+      expectedUserId: userId,
+    }),
+    /BROWSER_SERVICE_UNAVAILABLE/u,
+  );
   await sql`INSERT INTO "browser_sessions" ("session_id", "thread_id", "mode", "state", "engine_revision", "generation", "effective_allowlist_revision", "created_at", "updated_at", "last_activity_at", "idle_expires_at", "hard_expires_at") VALUES (${id("session", "c")}, ${id("thread", "b")}, 'operator', 'opening', 'engine-1', 1, 'revision-1', ${fixtureNow}, ${fixtureNow}, ${fixtureNow}, ${new Date("2026-08-30T12:30:00Z")}, ${new Date("2026-08-30T20:00:00Z")})`;
   const attachment = (machineId: string) =>
     store.attachMachine({
