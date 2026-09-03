@@ -172,6 +172,27 @@ test("startup failure confirms cleanup only after terminal intent and deletion",
   assert.equal(fixture.cleanupConfirmed, 1);
 });
 
+test("hosted acceptance reports the safe failure stage for unavailable origin authority", async () => {
+  const fixture = serviceFixture("opening", "allow", {
+    originFailure: true,
+  });
+  await assert.rejects(
+    fixture.service.acceptOperation(preparedOpen(), {
+      threadId: "thread-1",
+      projectId: "project-1",
+    }),
+    (error: unknown) =>
+      readCode(error) === "BROWSER_SERVICE_UNAVAILABLE" &&
+      Boolean(
+        error &&
+        typeof error === "object" &&
+        "details" in error &&
+        (error.details as { failureStage?: unknown })?.failureStage ===
+          "accept.origin",
+      ),
+  );
+});
+
 test("viewer termination commits the exact terminal generation before machine cleanup", async () => {
   const fixture = serviceFixture("ready", "allow", {
     machineDeleteFailure: true,
@@ -743,6 +764,7 @@ function serviceFixture(
   state: "opening" | "ready",
   decision: "allow" | "deny",
   options: {
+    originFailure?: boolean;
     terminalRaceOnReady?: boolean;
     startupWaitFailure?: boolean;
     terminalOnRead?: boolean;
@@ -804,7 +826,12 @@ function serviceFixture(
   const downloadBytes = Buffer.from("hosted-download");
   const service = new HostedBrowserService({
     store: {
-      async resolveOrigin() { return origin; },
+      async resolveOrigin() {
+        if (options.originFailure) {
+          throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+        }
+        return origin;
+      },
       async createOpening() {},
       async attachMachine() {},
       async read() {
