@@ -486,17 +486,23 @@ export class HostedBrowserService implements BrowserServicePort {
   ): Promise<HostedBrowserRelayInstructionV1> {
     const operation = prepared.activation.descriptor.toolId;
     if (!isBrowserToolName(operation)) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
-    const origin = await this.#resolvePreparedOrigin({
-      runId: prepared.runId,
-      threadId: authority.threadId,
-      stableAuthority: prepared.stableAuthority,
-      hostProjectId: authority.projectId,
-    });
-    const policy = await this.options.policy.resolve({
-      origin,
-      effectiveInput: prepared.effectiveInput,
-      operation,
-    });
+    const origin = await this.#withUnavailableStage(
+      "accept.origin",
+      () => this.#resolvePreparedOrigin({
+        runId: prepared.runId,
+        threadId: authority.threadId,
+        stableAuthority: prepared.stableAuthority,
+        hostProjectId: authority.projectId,
+      }),
+    );
+    const policy = await this.#withUnavailableStage(
+      "accept.policy",
+      () => this.options.policy.resolve({
+        origin,
+        effectiveInput: prepared.effectiveInput,
+        operation,
+      }),
+    );
     if (policy.resolution.decision !== "allow") {
       throw this.#failure(
         policy.resolution.decision === "deny"
@@ -504,10 +510,12 @@ export class HostedBrowserService implements BrowserServicePort {
           : "BROWSER_GRANT_DENIED",
       );
     }
-    const active =
-      operation === "browser.open"
-        ? await this.#open(prepared, origin, policy.authority)
-        : await this.#requireActive(prepared, origin, policy.authority);
+    const active = await this.#withUnavailableStage(
+      "accept.session",
+      () => operation === "browser.open"
+        ? this.#open(prepared, origin, policy.authority)
+        : this.#requireActive(prepared, origin, policy.authority),
+    );
     const capability = this.#issueCapability({
       origin,
       session: operation === "browser.request_grant"
@@ -1698,26 +1706,46 @@ export class HostedBrowserService implements BrowserServicePort {
     hostProjectId?: string | undefined;
   }): Promise<HostedBrowserOriginAuthority> {
     const stable = input.stableAuthority;
-    if (
-      !input.hostProjectId ||
-      (stable !== undefined &&
-        (stable.actor.actorType === "service" ||
-          stable.threadId !== input.threadId ||
-          stable.projectId !== input.hostProjectId ||
-          stable.organizationId !==
-            this.options.requestAuthority.organizationId ||
-          stable.environmentId !==
-            this.options.requestAuthority.environmentId ||
-          stable.actor.actorId !== this.options.requestAuthority.userId))
-    ) {
-      throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
+    const hostProjectId = input.hostProjectId;
+    const mismatches: string[] = [];
+    if (!hostProjectId) mismatches.push("host_project_missing");
+    if (stable?.actor.actorType === "service") {
+      mismatches.push("service_actor");
     }
+    if (stable && stable.threadId !== input.threadId) {
+      mismatches.push("thread");
+    }
+    if (stable && stable.projectId !== hostProjectId) {
+      mismatches.push("project");
+    }
+    if (
+      stable &&
+      stable.organizationId !== this.options.requestAuthority.organizationId
+    ) {
+      mismatches.push("organization");
+    }
+    if (
+      stable &&
+      stable.environmentId !== this.options.requestAuthority.environmentId
+    ) {
+      mismatches.push("environment");
+    }
+    if (stable && stable.actor.actorId !== this.options.requestAuthority.userId) {
+      mismatches.push("actor");
+    }
+    if (mismatches.length > 0) {
+      throw this.#failure("BROWSER_SERVICE_UNAVAILABLE", {
+        failureStage: "origin.stable_authority",
+        authorityMismatches: mismatches,
+      });
+    }
+    if (!hostProjectId) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
     return this.options.store.resolveOrigin({
       runId: input.runId,
       threadId: input.threadId,
       expectedOrganizationId: this.options.requestAuthority.organizationId,
       expectedEnvironmentId: this.options.requestAuthority.environmentId,
-      expectedProjectId: input.hostProjectId,
+      expectedProjectId: hostProjectId,
       expectedUserId: this.options.requestAuthority.userId,
     });
   }
@@ -1748,13 +1776,54 @@ export class HostedBrowserService implements BrowserServicePort {
     });
   }
 
-  #failure(code: Parameters<typeof browserFailure>[0]) {
-    return browserFailure(code, code, { browserOutcomeKnown: true });
+  async #withUnavailableStage<T>(
+    stage: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (readFailureCode(error) === "BROWSER_SERVICE_UNAVAILABLE") {
+        const details = readFailureDetails(error);
+        throw this.#failure("BROWSER_SERVICE_UNAVAILABLE", {
+          failureStage: details.failureStage ?? stage,
+          ...details,
+        });
+      }
+      throw error;
+    }
+  }
+
+  #failure(
+    code: Parameters<typeof browserFailure>[0],
+    details: Record<string, unknown> = {},
+  ) {
+    return browserFailure(code, code, {
+      browserOutcomeKnown: true,
+      ...details,
+    });
   }
 
   #now(): Date {
     return this.options.now?.() ?? new Date();
   }
+}
+
+function readFailureCode(error: unknown): string | undefined {
+  if (error && typeof error === "object" && "code" in error) {
+    return typeof error.code === "string" ? error.code : undefined;
+  }
+  return error instanceof Error ? error.message : undefined;
+}
+
+function readFailureDetails(error: unknown): Record<string, unknown> {
+  if (error && typeof error === "object" && "details" in error) {
+    const details = error.details;
+    if (details && typeof details === "object" && !Array.isArray(details)) {
+      return details as Record<string, unknown>;
+    }
+  }
+  return {};
 }
 
 function isBrowserOutcomeUnknownFailure(error: unknown): boolean {
