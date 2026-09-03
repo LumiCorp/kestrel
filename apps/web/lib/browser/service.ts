@@ -72,6 +72,7 @@ const TERMINAL_STATES = new Set(["closed", "expired", "lost", "failed"]);
 export interface HostedBrowserSessionStorePort {
   resolveOrigin(input: {
     runId: string;
+    expectedExecutionId?: string | undefined;
     threadId: string;
     expectedOrganizationId: string;
     expectedEnvironmentId: string;
@@ -206,6 +207,7 @@ export class HostedBrowserService implements BrowserServicePort {
         organizationId: string;
         environmentId: string;
         userId: string;
+        executionId?: string | undefined;
       };
       appName: string;
       gatewayMachineId: string;
@@ -1109,6 +1111,7 @@ export class HostedBrowserService implements BrowserServicePort {
     );
     const currentOrigin = await this.options.store.resolveOrigin({
       runId: input.runId,
+      expectedExecutionId: this.options.requestAuthority.executionId,
       threadId: input.threadId,
       expectedOrganizationId: this.options.requestAuthority.organizationId,
       expectedEnvironmentId: this.options.requestAuthority.environmentId,
@@ -1207,6 +1210,7 @@ export class HostedBrowserService implements BrowserServicePort {
     );
     const origin = await this.options.store.resolveOrigin({
       runId: input.runId,
+      expectedExecutionId: this.options.requestAuthority.executionId,
       threadId: input.threadId,
       expectedOrganizationId: this.options.requestAuthority.organizationId,
       expectedEnvironmentId: this.options.requestAuthority.environmentId,
@@ -1742,6 +1746,7 @@ export class HostedBrowserService implements BrowserServicePort {
     if (!hostProjectId) throw this.#failure("BROWSER_SERVICE_UNAVAILABLE");
     return this.options.store.resolveOrigin({
       runId: input.runId,
+      expectedExecutionId: this.options.requestAuthority.executionId,
       threadId: input.threadId,
       expectedOrganizationId: this.options.requestAuthority.organizationId,
       expectedEnvironmentId: this.options.requestAuthority.environmentId,

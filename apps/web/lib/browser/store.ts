@@ -40,6 +40,7 @@ export class HostedBrowserStore {
 
   async resolveOrigin(input: {
     runId: string;
+    expectedExecutionId?: string | undefined;
     threadId: string;
     expectedOrganizationId: string;
     expectedEnvironmentId: string;
@@ -50,7 +51,15 @@ export class HostedBrowserStore {
       await this.database.query.environmentRunExecutions.findFirst({
         where: (table, { and: all, eq: equals }) =>
           all(
-            equals(table.runtimeRunId, input.runId),
+            ...(input.expectedExecutionId
+              ? [
+                  equals(table.id, input.expectedExecutionId),
+                  or(
+                    isNull(table.runtimeRunId),
+                    equals(table.runtimeRunId, input.runId),
+                  ),
+                ]
+              : [equals(table.runtimeRunId, input.runId)]),
             equals(table.threadId, input.threadId),
             equals(table.organizationId, input.expectedOrganizationId),
             equals(table.environmentId, input.expectedEnvironmentId),
