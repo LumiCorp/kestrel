@@ -165,6 +165,9 @@ export async function handleHostedBrowserControl(input: {
         ...(Array.isArray(details?.authorityMismatches)
           ? { authorityMismatches: details.authorityMismatches }
           : {}),
+        ...(Array.isArray(details?.originMismatches)
+          ? { originMismatches: details.originMismatches }
+          : {}),
       });
     }
     return NextResponse.json(

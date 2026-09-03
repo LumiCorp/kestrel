@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
+  browserFailure,
   parseBrowserSessionV1,
   type BrowserFailureCode,
   type BrowserSessionV1,
@@ -49,25 +50,12 @@ export class HostedBrowserStore {
   }): Promise<HostedBrowserOriginAuthority> {
     const execution =
       await this.database.query.environmentRunExecutions.findFirst({
-        where: (table, { and: all, eq: equals }) =>
-          all(
-            ...(input.expectedExecutionId
-              ? [
-                  equals(table.id, input.expectedExecutionId),
-                  or(
-                    isNull(table.runtimeRunId),
-                    equals(table.runtimeRunId, input.runId),
-                  ),
-                ]
-              : [equals(table.runtimeRunId, input.runId)]),
-            equals(table.threadId, input.threadId),
-            equals(table.organizationId, input.expectedOrganizationId),
-            equals(table.environmentId, input.expectedEnvironmentId),
-            equals(table.projectId, input.expectedProjectId),
-            equals(table.actorId, input.expectedUserId),
-          ),
+        where: (table, { eq: equals }) => input.expectedExecutionId
+          ? equals(table.id, input.expectedExecutionId)
+          : equals(table.runtimeRunId, input.runId),
         columns: {
           id: true,
+          runtimeRunId: true,
           organizationId: true,
           environmentId: true,
           projectId: true,
@@ -75,21 +63,57 @@ export class HostedBrowserStore {
           actorId: true,
         },
       });
-    if (!execution?.projectId) {
-      throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+    if (!execution) {
+      throw originUnavailable("execution_missing");
+    }
+    const executionMismatches: string[] = [];
+    if (execution.runtimeRunId && execution.runtimeRunId !== input.runId) {
+      executionMismatches.push("execution_runtime_run");
+    }
+    if (execution.threadId !== input.threadId) {
+      executionMismatches.push("execution_thread");
+    }
+    if (execution.organizationId !== input.expectedOrganizationId) {
+      executionMismatches.push("execution_organization");
+    }
+    if (execution.environmentId !== input.expectedEnvironmentId) {
+      executionMismatches.push("execution_environment");
+    }
+    if (execution.projectId !== input.expectedProjectId) {
+      executionMismatches.push("execution_project");
+    }
+    if (execution.actorId !== input.expectedUserId) {
+      executionMismatches.push("execution_actor");
+    }
+    if (executionMismatches.length > 0) {
+      throw originUnavailable(...executionMismatches);
     }
     const turn = await this.database.query.threadTurns.findFirst({
-      where: (table, { and: all, eq: equals }) =>
-        all(
-          equals(table.threadId, input.threadId),
-          equals(table.organizationId, input.expectedOrganizationId),
-          equals(table.environmentExecutionId, execution.id),
-          equals(table.authorUserId, input.expectedUserId),
-        ),
-      columns: { id: true },
+      where: (table, { eq: equals }) =>
+        equals(table.environmentExecutionId, execution.id),
+      columns: {
+        id: true,
+        threadId: true,
+        organizationId: true,
+        authorUserId: true,
+      },
       orderBy: (table, { desc }) => [desc(table.createdAt)],
     });
-    if (!turn) throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+    if (!turn) throw originUnavailable("turn_binding_missing");
+    const turnMismatches: string[] = [];
+    if (turn.threadId !== input.threadId) {
+      turnMismatches.push("turn_thread");
+    }
+    if (turn.organizationId !== input.expectedOrganizationId) {
+      turnMismatches.push("turn_organization");
+    }
+    if (turn.authorUserId !== input.expectedUserId) {
+      turnMismatches.push("turn_actor");
+    }
+    if (turnMismatches.length > 0) {
+      throw originUnavailable(...turnMismatches);
+    }
+    if (!execution.projectId) throw originUnavailable("execution_project");
     return {
       organizationId: execution.organizationId,
       environmentId: execution.environmentId,
@@ -733,6 +757,18 @@ export class HostedBrowserStore {
     if (!value) throw new Error("BROWSER_SESSION_LOST");
     return value;
   }
+}
+
+function originUnavailable(...originMismatches: string[]) {
+  return browserFailure(
+    "BROWSER_SERVICE_UNAVAILABLE",
+    "BROWSER_SERVICE_UNAVAILABLE",
+    {
+      browserOutcomeKnown: true,
+      failureStage: "origin.store",
+      originMismatches,
+    },
+  );
 }
 
 function toSessionRow(session: BrowserSessionV1) {
