@@ -272,6 +272,11 @@ test("runtime hermetic lane manifest is explicit, complete, and independently ru
   assert.equal(assigned.length, 391);
   assert.equal(new Set(assigned).size, 391);
   assert.ok(
+    runtimeHermeticLaneManifest.lanes["provider-tool-contracts"]?.files.includes(
+      "tests/unit/execution-authorization-provider.test.ts",
+    ),
+  );
+  assert.ok(
     runtimeHermeticLaneManifest.lanes["cli-command-mode"]?.files.includes(
       "tests/unit/approval-policy-pack-digest.test.ts",
     ),
