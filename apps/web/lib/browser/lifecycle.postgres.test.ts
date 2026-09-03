@@ -52,7 +52,7 @@ test("Browser lifecycle reconciliation is environment-scoped, race-safe, and met
       await tx`INSERT INTO "project_members" ("project_id", "organization_member_id", "role") VALUES (${id("project", environment)}, ${id("member")}, 'owner')`;
       await tx`INSERT INTO "threads" ("id", "title", "created_by_user_id", "organization_id", "project_id") VALUES (${id("thread", environment)}, ${`Thread ${environment}`}, ${userId}, ${organizationId}, ${id("project", environment)})`;
       await tx`INSERT INTO "environment_workspaces" ("id", "organization_id", "environment_id", "project_id", "created_by_user_id", "name", "kind", "status", "runtime_image") VALUES (${id("workspace", environment)}, ${organizationId}, ${id("env", environment)}, ${id("project", environment)}, ${userId}, ${`Workspace ${environment}`}, 'project', 'ready', 'registry.example/workspace@sha256:test')`;
-      await tx`INSERT INTO "environment_run_executions" ("id", "organization_id", "environment_id", "workspace_id", "thread_id", "project_id", "actor_id", "runtime_image", "effective_capabilities", "status", "created_at", "updated_at") VALUES (${id("run", environment)}, ${organizationId}, ${id("env", environment)}, ${id("workspace", environment)}, ${id("thread", environment)}, ${id("project", environment)}, ${userId}, 'registry.example/runner@sha256:test', ${tx.json([])}, 'running', ${fixtureNow}, ${fixtureNow})`;
+      await tx`INSERT INTO "environment_run_executions" ("id", "organization_id", "environment_id", "workspace_id", "thread_id", "project_id", "actor_id", "runtime_image", "effective_capabilities", "runtime_run_id", "status", "created_at", "updated_at") VALUES (${id("run", environment)}, ${organizationId}, ${id("env", environment)}, ${id("workspace", environment)}, ${id("thread", environment)}, ${id("project", environment)}, ${userId}, 'registry.example/runner@sha256:test', ${tx.json([])}, ${id("runtime-run", environment)}, 'running', ${fixtureNow}, ${fixtureNow})`;
       await tx`INSERT INTO "thread_turns" ("id", "organization_id", "thread_id", "author_user_id", "environment_execution_id", "requested_environment_id", "approval_id", "approval_approved", "idempotency_key", "sequence", "queue_ordinal", "status", "created_at", "updated_at") VALUES (${id("turn", environment)}, ${organizationId}, ${id("thread", environment)}, ${userId}, ${id("run", environment)}, ${id("env", environment)}, ${`browser-approval-${environment}-${suffix}`}, true, ${`browser-turn-${environment}-${suffix}`}, 1, 1, 'running', ${fixtureNow}, ${fixtureNow})`;
     }
     await tx`INSERT INTO "browser_sessions" ("session_id", "thread_id", "mode", "state", "engine_revision", "generation", "effective_allowlist_revision", "created_at", "updated_at", "last_activity_at", "idle_expires_at", "hard_expires_at") VALUES (${id("session", "a")}, ${id("thread", "a")}, 'operator', 'opening', 'engine-1', 1, 'revision-1', ${fixtureNow}, ${fixtureNow}, ${fixtureNow}, ${new Date("2026-08-30T12:30:00Z")}, ${new Date("2026-08-30T20:00:00Z")})`;
@@ -62,6 +62,25 @@ test("Browser lifecycle reconciliation is environment-scoped, race-safe, and met
   });
 
   const store = new HostedBrowserStore();
+  assert.deepEqual(
+    await store.resolveOrigin({
+      runId: id("runtime-run", "a"),
+      threadId: id("thread", "a"),
+      expectedOrganizationId: organizationId,
+      expectedEnvironmentId: id("env", "a"),
+      expectedProjectId: id("project", "a"),
+      expectedUserId: userId,
+    }),
+    {
+      organizationId,
+      environmentId: id("env", "a"),
+      projectId: id("project", "a"),
+      threadId: id("thread", "a"),
+      runId: id("run", "a"),
+      turnId: id("turn", "a"),
+      userId,
+    },
+  );
   await sql`INSERT INTO "browser_sessions" ("session_id", "thread_id", "mode", "state", "engine_revision", "generation", "effective_allowlist_revision", "created_at", "updated_at", "last_activity_at", "idle_expires_at", "hard_expires_at") VALUES (${id("session", "c")}, ${id("thread", "b")}, 'operator', 'opening', 'engine-1', 1, 'revision-1', ${fixtureNow}, ${fixtureNow}, ${fixtureNow}, ${new Date("2026-08-30T12:30:00Z")}, ${new Date("2026-08-30T20:00:00Z")})`;
   const attachment = (machineId: string) =>
     store.attachMachine({

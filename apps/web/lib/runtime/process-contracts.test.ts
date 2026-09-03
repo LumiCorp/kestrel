@@ -76,10 +76,16 @@ function runPodWorkerEnvironment() {
 
 function webEnvironment() {
   const control = controlWorkerEnvironment();
+  const browserKeys = generateKeyPairSync("ed25519");
   return {
     POSTGRES_URL: control.POSTGRES_URL,
     CRON_SECRET: "cron",
     FLY_API_TOKEN: control.FLY_API_TOKEN,
+    KESTREL_BROWSER_CAPABILITY_PRIVATE_KEY: browserKeys.privateKey
+      .export({ type: "pkcs8", format: "pem" })
+      .toString(),
+    KESTREL_BROWSER_WORKER_IMAGE:
+      `registry.fly.io/kestrel-one-browser-worker@sha256:${"a".repeat(64)}`,
     KESTREL_ENVIRONMENTS_ENABLED: control.KESTREL_ENVIRONMENTS_ENABLED,
     KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:
       control.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY,
@@ -115,6 +121,35 @@ test("web production configuration rejects legacy image authority", () => {
         KESTREL_WORKSPACE_RUNTIME_IMAGE: "legacy-image",
       }),
     /forbidden values: KESTREL_WORKSPACE_RUNTIME_IMAGE/u,
+  );
+});
+
+test("web production configuration requires immutable Browser authority", () => {
+  const valid = webEnvironment();
+  for (const name of [
+    "KESTREL_BROWSER_CAPABILITY_PRIVATE_KEY",
+    "KESTREL_BROWSER_WORKER_IMAGE",
+  ] as const) {
+    assert.throws(
+      () => assertWebProcessConfiguration({ ...valid, [name]: undefined }),
+      new RegExp(name, "u"),
+    );
+  }
+  assert.throws(
+    () =>
+      assertWebProcessConfiguration({
+        ...valid,
+        KESTREL_BROWSER_CAPABILITY_PRIVATE_KEY: "not-a-private-key",
+      }),
+    /must be an Ed25519 private key/u,
+  );
+  assert.throws(
+    () =>
+      assertWebProcessConfiguration({
+        ...valid,
+        KESTREL_BROWSER_WORKER_IMAGE: "registry.fly.io/browser:latest",
+      }),
+    /immutable digest/u,
   );
 });
 

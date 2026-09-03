@@ -1,4 +1,5 @@
 import { createPrivateKey, createPublicKey } from "node:crypto";
+import { requireImmutableHostedBrowserWorkerImage } from "../../../../src/browser/runtimeReleaseManifest.js";
 
 export type ProcessRole =
   | "web"
@@ -47,6 +48,8 @@ export const WEB_PROCESS_CONTRACT = {
   role: "web",
   required: [
     "CRON_SECRET",
+    "KESTREL_BROWSER_CAPABILITY_PRIVATE_KEY",
+    "KESTREL_BROWSER_WORKER_IMAGE",
     "KESTREL_ENVIRONMENTS_ENABLED",
     "KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY",
     "KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY",
@@ -243,6 +246,23 @@ export function assertWebProcessConfiguration(
   env: Record<string, string | undefined> = process.env,
 ) {
   assertProcessConfiguration(WEB_PROCESS_CONTRACT, env);
+  assertBrowserConfiguration(env);
+}
+
+function assertBrowserConfiguration(env: Record<string, string | undefined>) {
+  try {
+    const privateKey = createPrivateKey(
+      env.KESTREL_BROWSER_CAPABILITY_PRIVATE_KEY ?? "",
+    );
+    if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("invalid");
+  } catch {
+    throw new Error(
+      "KESTREL_BROWSER_CAPABILITY_PRIVATE_KEY must be an Ed25519 private key.",
+    );
+  }
+  requireImmutableHostedBrowserWorkerImage(
+    env.KESTREL_BROWSER_WORKER_IMAGE ?? "",
+  );
 }
 
 export function assertTurnWorkerProcessConfiguration(
