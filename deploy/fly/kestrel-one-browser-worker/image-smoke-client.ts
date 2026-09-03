@@ -28,7 +28,7 @@ const IDENTITY = Object.freeze({
   projectId: "browser-image-smoke-project",
   userId: "browser-image-smoke-user",
   threadId: "browser-image-smoke-thread",
-  sessionId: "browser-image-smoke-session",
+  sessionId: `browser-${"a".repeat(64)}`,
   generation: 1,
 });
 const RUN_ID = "browser-image-smoke-run";

@@ -13,6 +13,7 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { resolveHostedBrowserServiceForAuthority } from "./composition";
 import { adoptHostedBrowserPersonalDomainRevisionWithDependencies } from "./personal-domain-adoption-core";
 import { HostedBrowserStore, type HostedBrowserResourceRecord } from "./store";
+import { deleteConfirmedBrowserMachine } from "./machine-cleanup";
 
 const INSTALL_TIMEOUT_MS = 12_000;
 const TERMINAL_STATES = new Set(["closed", "expired", "lost", "failed"]);
@@ -161,28 +162,12 @@ async function destroyExactSession(input: {
       now: new Date(),
     });
   }
-  const machine = await input.machines.getMachine({
+  await deleteConfirmedBrowserMachine({
+    machines: input.machines,
     appName: input.appName,
     machineId: input.record.resource.machineId,
+  }).catch(() => {
+    throw new Error("BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED");
   });
-  if (machine) {
-    await input.machines.deleteMachine({
-      appName: input.appName,
-      machineId: input.record.resource.machineId,
-    });
-    await input.machines.waitForMachine({
-      appName: input.appName,
-      machineId: input.record.resource.machineId,
-      state: "destroyed",
-      timeoutSeconds: 30,
-    });
-    if (
-      await input.machines.getMachine({
-        appName: input.appName,
-        machineId: input.record.resource.machineId,
-      })
-    )
-      throw new Error("BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED");
-  }
   await input.store.confirmCleanup(input.record.session.sessionId);
 }

@@ -9,7 +9,7 @@ depends_on:
   - ../deploy/fly/image-catalog.json
   - ../apps/preview-edge/ROLLOUT.md
   - ../deploy/fly/kestrel-one-control-worker/ROLLOUT.md
-  - ../deploy/fly/kestrel-one-runner/ROLLOUT.md
+  - ../deploy/fly/environment-runtime/ROLLOUT.md
   - ../deploy/fly/kestrel-one-runpod-worker/ROLLOUT.md
   - ../deploy/fly/kestrel-one-browser-worker/ROLLOUT.md
   - ../deploy/fly/kestrel-one-turn-worker/ROLLOUT.md
@@ -34,8 +34,8 @@ derive image identity from Git.
 - Managed RunPod worker and profile changes are separate manual operations.
 - Every tenant Environment is changed manually. No command widens the rollout.
 
-Hosted approval V4 uses a compatibility-first, activation, drain, and cleanup
-sequence. Follow the dedicated
+Hosted approval V4 uses a Web-first, final-image-only rollout. Keep turn
+workers stopped while producer images are mixed. Follow the dedicated
 [hosted approval V4 guided rollout](operations/hosted-approval-v3-rollout-runbook.md)
 in addition to this runbook.
 
@@ -53,7 +53,7 @@ scope:
 | `control-worker` | Published image, then one Fly Machine update; follow its [role rollout](../deploy/fly/kestrel-one-control-worker/ROLLOUT.md) |
 | `runpod-worker` | Published image, then one Fly Machine update; follow its [role rollout](../deploy/fly/kestrel-one-runpod-worker/ROLLOUT.md) |
 | `browser-worker` | Published image, then one session-scoped live canary; follow its [role rollout](../deploy/fly/kestrel-one-browser-worker/ROLLOUT.md) |
-| Router and Workspace Runtime | Two published images, then one Environment update; follow the [paired runtime rollout](../deploy/fly/kestrel-one-runner/ROLLOUT.md) |
+| Router and Workspace Runtime | Two published images, then one Environment update; follow the [paired runtime rollout](../deploy/fly/environment-runtime/ROLLOUT.md) |
 | Managed RunPod profile | Separate manual profile operation; never implied by a worker image |
 
 Confirm the local checkout contains the intended code and run the repository

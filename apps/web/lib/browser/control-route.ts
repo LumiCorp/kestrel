@@ -9,6 +9,7 @@ import {
 } from "../../../../src/browser/contracts.js";
 import { parsePreparedToolCallV1 } from "../../../../src/kestrel/contracts/tool-invocation.js";
 import type { HostedBrowserService } from "./service";
+import type { HostedBrowserRelayInstructionV1 } from "./worker-contract";
 
 export const HOSTED_BROWSER_CONTROL_MAX_REQUEST_BYTES = 20 * 1024 * 1024;
 
@@ -79,6 +80,18 @@ export async function handleHostedBrowserControl(input: {
             parseHostAuthority(record.authority),
           ),
         );
+      }
+      case "startup-failed": {
+        const record = requireRecord(body);
+        const prepared = parsePreparedToolCallV1(record.prepared);
+        return NextResponse.json({
+          cleaned: await service.failOpeningOperation(
+            prepared,
+            parseHostAuthority(record.authority),
+            parseStartupFailureInstruction(record.instruction),
+          ),
+          operationId: prepared.callId,
+        });
       }
       case "invoke": {
         const record = requireRecord(body);
@@ -262,6 +275,33 @@ function parseHostAuthority(value: unknown) {
     throw new Error("BROWSER_SERVICE_UNAVAILABLE");
   }
   return { threadId: record.threadId, projectId: record.projectId };
+}
+
+function parseStartupFailureInstruction(
+  value: unknown,
+): HostedBrowserRelayInstructionV1 {
+  const record = requireRecord(value);
+  const machine = requireRecord(record.machine);
+  if (
+    record.version !== "hosted_browser_relay_instruction_v1" ||
+    record.phase !== "accept" ||
+    record.operation !== "browser.open" ||
+    typeof record.operationId !== "string" ||
+    typeof record.sessionId !== "string" ||
+    !Number.isInteger(record.generation) ||
+    typeof record.capability !== "string" ||
+    typeof machine.appName !== "string" ||
+    typeof machine.machineId !== "string" ||
+    !record.authority ||
+    typeof record.authority !== "object" ||
+    Array.isArray(record.authority) ||
+    !record.prepared ||
+    typeof record.prepared !== "object" ||
+    Array.isArray(record.prepared)
+  ) {
+    throw new Error("BROWSER_SERVICE_UNAVAILABLE");
+  }
+  return record as unknown as HostedBrowserRelayInstructionV1;
 }
 
 function parsePolicyRequest(value: unknown) {

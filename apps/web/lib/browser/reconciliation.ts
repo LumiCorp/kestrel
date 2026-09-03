@@ -5,6 +5,7 @@ import type {
 } from "@/lib/environments/providers/contracts";
 import type { HostedBrowserResourceRecord } from "./store";
 import { BROWSER_RUNTIME_RELEASE_MANIFEST } from "../../../../src/browser/runtimeReleaseManifest.js";
+import { deleteConfirmedBrowserMachine } from "./machine-cleanup";
 
 const TERMINAL_STATES = new Set<BrowserSessionV1["state"]>([
   "closed",
@@ -353,14 +354,5 @@ async function deleteConfirmedMachine(
   appName: string,
   machineId: string,
 ) {
-  await machines.deleteMachine({ appName, machineId });
-  await machines.waitForMachine({
-    appName,
-    machineId,
-    state: "destroyed",
-    timeoutSeconds: 30,
-  });
-  if (await machines.getMachine({ appName, machineId })) {
-    throw new Error("BROWSER_ENGINE_FAILURE");
-  }
+  await deleteConfirmedBrowserMachine({ machines, appName, machineId });
 }

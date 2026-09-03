@@ -8162,14 +8162,21 @@ function requireGeneration(value: unknown): number {
   return value as number;
 }
 
+function desktopBrowserSocketRoot(): string {
+  const uid = process.getuid?.() ?? 0;
+  return path.join("/tmp", `b${uid.toString(36)}`);
+}
+
 function desktopBrowserSocketPath(sessionId: string): string {
   requireDesktopBrowserSessionId(sessionId, "Browser session ID");
-  const uid = process.getuid?.() ?? 0;
+  // Preserve the existing 64-bit session namespace, encoded compactly so the
+  // full hosted session ID plus .sock fits agent-browser's 103-byte ceiling.
   const sessionHash = createHash("sha256")
     .update(sessionId)
-    .digest("hex")
-    .slice(0, 16);
-  return path.join("/tmp", `kestrel-browser-${uid}`, sessionHash);
+    .digest()
+    .subarray(0, 8)
+    .toString("base64url");
+  return path.join(desktopBrowserSocketRoot(), sessionHash);
 }
 
 interface DesktopBrowserOwnedPaths {
@@ -8202,10 +8209,7 @@ function desktopBrowserOwnedPaths(
       "BROWSER_ENGINE_FAILURE: Browser runtime path escaped its owned root.",
     );
   }
-  const socketRoot = path.resolve(
-    "/tmp",
-    `kestrel-browser-${process.getuid?.() ?? 0}`,
-  );
+  const socketRoot = path.resolve(desktopBrowserSocketRoot());
   const socketPath = path.resolve(desktopBrowserSocketPath(sessionId));
   if (path.dirname(socketPath) !== socketRoot) {
     throw new Error(

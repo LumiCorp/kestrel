@@ -9,8 +9,11 @@ import type {
 
 export const MAX_APP_RELAY_SERIALIZED_BYTES = 20 * 1024 * 1024;
 const BROWSER_RECEIPT_TTL_MS = 35_000;
+const BROWSER_WORKER_READINESS_RETRY_MS = 250;
+const BROWSER_STARTUP_FAILURE_NOTIFY_TIMEOUT_MS = 3_000;
 const MAX_BROWSER_RECEIPTS = 128;
 export const APP_RELAY_REQUEST_TIMEOUT_MS = 30_000;
+export const BROWSER_ACCEPT_REQUEST_TIMEOUT_MS = 60_000;
 const APP_RELAY_PATH = /^\/internal\/apps\/([^/]+)(\/api\/.*)$/u;
 const LEGACY_APP_PATHS = new Set([
   "/api/kestrel/tools/email/get-attachment",
@@ -154,13 +157,15 @@ export async function handleAppRelay(input: {
     }
   }
 
+  const browserAction = browserControlAction(upstreamPath);
   const relayAbort = createRelayAbort(
     input.request,
     input.response,
-    input.requestTimeoutMs ?? APP_RELAY_REQUEST_TIMEOUT_MS,
+    input.requestTimeoutMs ?? (browserAction === "accept"
+      ? BROWSER_ACCEPT_REQUEST_TIMEOUT_MS
+      : APP_RELAY_REQUEST_TIMEOUT_MS),
   );
   try {
-    const browserAction = browserControlAction(upstreamPath);
     if (browserAction === "accept") {
       await handleBrowserAcceptRelay({
         request: input.request,
@@ -402,7 +407,7 @@ function createRelayAbort(
   request.once("aborted", onAborted);
   response.once("close", onClose);
   const timer = setTimeout(
-    () => abort(new Error("App Relay request timed out.")),
+    () => abort(new DOMException("App Relay request timed out.", "TimeoutError")),
     timeoutMs,
   );
   timer.unref();
@@ -554,7 +559,7 @@ async function handleBrowserAcceptRelay(input: {
     const instruction = parseBrowserPrivateInstruction(await upstream.json(), "accept");
     receiptId = randomUUID();
     retained = {
-      expiresAt: Date.now() + BROWSER_RECEIPT_TTL_MS,
+      expiresAt: Date.now() + BROWSER_ACCEPT_REQUEST_TIMEOUT_MS,
       runId: input.runId,
       workspaceId: input.workspaceId,
       identity: {
@@ -573,33 +578,42 @@ async function handleBrowserAcceptRelay(input: {
     gatewayProxy = await gatewayProxyForAccept(input.browserEgress, instruction);
   } catch {
     browserRelayReceipts.delete(receiptId);
+    await failBrowserOpening(input, instruction);
     writeError(input.response, 503, "BROWSER_SERVICE_UNAVAILABLE");
     return;
   }
+  const workerBody = {
+    capability: instruction.capability,
+    prepared: instruction.prepared,
+    authority: instruction.authority,
+    session: instruction.session,
+    ...(gatewayProxy ? { gatewayProxy } : {}),
+  };
   let workerResponse: Response;
   try {
-    workerResponse = await callPrivateBrowserWorker({
-      instruction,
-      action: "accept",
-      body: {
-        capability: instruction.capability,
-        prepared: instruction.prepared,
-        authority: instruction.authority,
-        session: instruction.session,
-        ...(gatewayProxy ? { gatewayProxy } : {}),
-      },
-      signal: input.signal,
-      fetchImpl: input.workerFetchImpl,
-    });
+    workerResponse = instruction.operation === "browser.open"
+      ? await callPrivateBrowserWorkerWhenReady({
+          instruction,
+          body: workerBody,
+          signal: input.signal,
+          fetchImpl: input.workerFetchImpl,
+        })
+      : await callPrivateBrowserWorker({
+          instruction,
+          action: "accept",
+          body: workerBody,
+          signal: input.signal,
+          fetchImpl: input.workerFetchImpl,
+        });
   } catch {
+    browserRelayReceipts.delete(receiptId);
+    await failBrowserOpening(input, instruction);
     writeError(input.response, 503, "BROWSER_SERVICE_UNAVAILABLE");
     return;
   }
   if (!workerResponse.ok) {
     browserRelayReceipts.delete(receiptId);
-    if (instruction.operation === "browser.open") {
-      await input.browserEgress?.close(instruction.sessionId).catch(() => {});
-    }
+    await failBrowserOpening(input, instruction);
     if (await isKnownBrowserOutcomeResponse(workerResponse)) {
       return writeFetchResponse(input.response, workerResponse);
     }
@@ -610,6 +624,8 @@ async function handleBrowserAcceptRelay(input: {
   try {
     worker = requireRecord(await readBoundedWorkerJson(workerResponse));
   } catch {
+    browserRelayReceipts.delete(receiptId);
+    await failBrowserOpening(input, instruction);
     writeError(input.response, 503, "BROWSER_SERVICE_UNAVAILABLE");
     return;
   }
@@ -618,6 +634,8 @@ async function handleBrowserAcceptRelay(input: {
     try {
       output = assertWorkerCompletionBeforeDispatch(worker, instruction);
     } catch {
+      browserRelayReceipts.delete(receiptId);
+      await failBrowserOpening(input, instruction);
       writeError(input.response, 503, "BROWSER_SERVICE_UNAVAILABLE");
       return;
     }
@@ -683,6 +701,8 @@ async function handleBrowserAcceptRelay(input: {
   try {
     assertWorkerAcceptance(worker, instruction);
   } catch {
+    browserRelayReceipts.delete(receiptId);
+    await failBrowserOpening(input, instruction);
     writeError(input.response, 503, "BROWSER_SERVICE_UNAVAILABLE");
     return;
   }
@@ -1130,22 +1150,165 @@ function callPrivateBrowserWorker(input: {
   signal: AbortSignal;
   fetchImpl?: typeof fetch | undefined;
 }) {
-  const { appName, machineId } = input.instruction.machine;
-  if (!/^[a-z0-9][a-z0-9-]{0,62}$/u.test(appName) ||
-      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(machineId)) {
-    throw new Error("Browser worker locator is invalid.");
-  }
   return fetchWithAbort(
     input.fetchImpl ?? fetch,
-    new URL(`http://${machineId}.vm.${appName}.internal:43105/v1/operations/${input.action}`),
+    privateBrowserWorkerUrl(input.instruction, input.action),
     {
       method: "POST",
+      redirect: "manual",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input.body),
       signal: input.signal,
     },
     input.signal,
   );
+}
+
+function privateBrowserWorkerUrl(
+  instruction: BrowserPrivateInstruction,
+  action: "accept" | "invoke" | "commit" | "cancel" | "revision",
+): URL {
+  const { appName, machineId } = instruction.machine;
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/u.test(appName) ||
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(machineId)) {
+    throw new Error("Browser worker locator is invalid.");
+  }
+  return new URL(`http://${machineId}.vm.${appName}.internal:43105/v1/operations/${action}`);
+}
+
+async function callPrivateBrowserWorkerWhenReady(input: {
+  instruction: BrowserPrivateInstruction;
+  body: unknown;
+  signal: AbortSignal;
+  fetchImpl?: typeof fetch | undefined;
+}): Promise<Response> {
+  const startedAt = Date.now();
+  const capabilityExpiresAt = readBrowserCapabilityExpiry(
+    input.instruction.capability,
+  );
+  // The enclosing relay owns the total 60-second budget, including Web
+  // provisioning. Validate and serialize once, outside transport retries.
+  const url = privateBrowserWorkerUrl(input.instruction, "accept");
+  const body = JSON.stringify(input.body);
+  const deadline = capabilityExpiresAt;
+  let attempts = 0;
+  try {
+   while (true) {
+    input.signal.throwIfAborted();
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error("Browser worker readiness deadline expired.");
+    }
+    const attemptSignal = AbortSignal.any([
+      input.signal,
+      AbortSignal.timeout(remainingMs),
+    ]);
+    attempts += 1;
+    try {
+      const response = await fetchWithAbort(input.fetchImpl ?? fetch, url, {
+        method: "POST",
+        redirect: "manual",
+        headers: { "content-type": "application/json" },
+        body,
+        signal: attemptSignal,
+      }, attemptSignal);
+      logBrowserReadiness(input.instruction, attempts, startedAt, "response");
+      return response;
+    } catch (error) {
+      if (input.signal.aborted || Date.now() >= deadline) throw error;
+      await waitForBrowserReadinessRetry(
+        Math.min(BROWSER_WORKER_READINESS_RETRY_MS, deadline - Date.now()),
+        input.signal,
+      );
+    }
+   }
+  } catch (error) {
+    logBrowserReadiness(input.instruction, attempts, startedAt,
+      Date.now() >= capabilityExpiresAt ? "capability_expired"
+        : input.signal.reason?.name === "TimeoutError" ? "deadline" : "cancelled");
+    throw error;
+  }
+}
+
+function logBrowserReadiness(
+  instruction: BrowserPrivateInstruction,
+  attempts: number,
+  startedAt: number,
+  terminal: "response" | "cancelled" | "deadline" | "capability_expired",
+) {
+  logRelay("environment.browser_worker.readiness", {
+    machineId: instruction.machine.machineId,
+    sessionGeneration: instruction.generation,
+    attempts,
+    elapsedMs: Date.now() - startedAt,
+    terminal,
+  });
+}
+
+function readBrowserCapabilityExpiry(capability: string): number {
+  try {
+    const [payload, signature, extra] = capability.split(".");
+    if (!(payload && signature) || extra !== undefined) {
+      throw new Error("Browser capability expiry is invalid.");
+    }
+    const claims = requireRecord(
+      JSON.parse(Buffer.from(payload, "base64url").toString("utf8")),
+    );
+    if (typeof claims.expiresAt !== "string") throw new Error("Invalid expiry.");
+    const expiresAt = new Date(claims.expiresAt).getTime();
+    if (!Number.isFinite(expiresAt)) throw new Error("Invalid expiry.");
+    return expiresAt;
+  } catch {
+    throw new Error("Browser capability expiry is invalid.");
+  }
+}
+
+function waitForBrowserReadinessRetry(
+  delayMs: number,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, Math.max(1, delayMs));
+    timer.unref();
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function failBrowserOpening(
+  input: Parameters<typeof handleBrowserAcceptRelay>[0],
+  instruction: BrowserPrivateInstruction,
+): Promise<void> {
+  if (instruction.operation !== "browser.open") return;
+  await input.browserEgress?.closeExact({
+    sessionId: instruction.sessionId,
+    generation: instruction.generation,
+  }).catch(() => {});
+  try {
+    const publicBody = parseBufferedJson(input.body);
+    await requestControlPlane({
+      request: input.request,
+      controlPlaneUrl: input.controlPlaneUrl,
+      upstreamPath: input.upstreamPath.replace(/\/accept$/u, "/startup-failed"),
+      executionTicket: input.executionTicket,
+      body: Buffer.from(JSON.stringify({
+        ...publicBody,
+        instruction,
+      })),
+      signal: AbortSignal.timeout(BROWSER_STARTUP_FAILURE_NOTIFY_TIMEOUT_MS),
+      fetchImpl: input.fetchImpl,
+    });
+  } catch {
+    // Web reconciliation remains the backstop when the cleanup notification
+    // cannot be delivered after a pre-dispatch startup failure.
+  }
 }
 
 function parseBrowserRevisionInstruction(value: unknown) {

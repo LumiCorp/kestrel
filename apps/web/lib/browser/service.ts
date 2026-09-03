@@ -57,6 +57,7 @@ import {
 import { hashCanonical } from "../../../../src/kestrel/contracts/tool-contract.js";
 import type { HostedBrowserUploadWorkerPort } from "./upload-worker-client";
 import type { HostedBrowserDownloadWorkerPort } from "./download-worker-client";
+import { deleteConfirmedBrowserMachine } from "./machine-cleanup";
 import {
   HOSTED_BROWSER_DOWNLOAD_PREPARATION_CAPABILITY_VERSION,
   HOSTED_BROWSER_DOWNLOAD_RELEASE_CAPABILITY_VERSION,
@@ -115,6 +116,7 @@ export interface HostedBrowserSessionStorePort {
     sessionId: string;
     expectedGeneration?: number | undefined;
     expectedMachineId?: string | undefined;
+    expectedState?: "opening" | undefined;
     state: "closed" | "expired" | "lost" | "failed";
     reason: BrowserSessionV1["terminalReason"] & string;
     now: Date;
@@ -547,6 +549,35 @@ export class HostedBrowserService implements BrowserServicePort {
     };
   }
 
+  async failOpeningOperation(
+    prepared: PreparedToolCallV1,
+    authority: BrowserOperationLifecycleV1["authority"],
+    instruction: HostedBrowserRelayInstructionV1,
+  ): Promise<boolean> {
+    if (
+      prepared.activation.descriptor.toolId !== "browser.open" ||
+      instruction.version !== "hosted_browser_relay_instruction_v1" ||
+      instruction.phase !== "accept" ||
+      instruction.operation !== "browser.open" ||
+      instruction.operationId !== prepared.callId ||
+      !instruction.prepared ||
+      hashCanonical(instruction.prepared) !== hashCanonical(prepared)
+    ) {
+      return false;
+    }
+    const origin = await this.#resolvePreparedOrigin({
+      runId: prepared.runId,
+      threadId: authority.threadId,
+      stableAuthority: prepared.stableAuthority,
+      hostProjectId: authority.projectId,
+    });
+    return this.#terminateOpening(
+      origin,
+      instruction,
+      "BROWSER_ENGINE_FAILURE",
+    );
+  }
+
   async dispatchAcceptedOperation(
     prepared: PreparedToolCallV1,
     authority: BrowserOperationLifecycleV1["authority"],
@@ -611,7 +642,11 @@ export class HostedBrowserService implements BrowserServicePort {
     }
     if (!policyRevalidationAccepted) {
       if (operation === "browser.open") {
-        await this.#terminateRejectedOpening(origin, acceptedInstruction);
+        await this.#terminateOpening(
+          origin,
+          acceptedInstruction,
+          "BROWSER_DESTINATION_BLOCKED",
+        );
       }
       throw this.#failure("BROWSER_DESTINATION_BLOCKED");
     }
@@ -1490,7 +1525,7 @@ export class HostedBrowserService implements BrowserServicePort {
         appName: this.options.appName,
         machineId,
         state: "started",
-        timeoutSeconds: 20,
+        timeoutSeconds: 30,
       });
       const startedMachine = await this.options.machines.getMachine({
         appName: this.options.appName,
@@ -1624,23 +1659,26 @@ export class HostedBrowserService implements BrowserServicePort {
     return terminal;
   }
 
-  async #terminateRejectedOpening(
+  async #terminateOpening(
     origin: HostedBrowserOriginAuthority,
     instruction: HostedBrowserRelayInstructionV1,
-  ): Promise<void> {
+    reason: "BROWSER_DESTINATION_BLOCKED" | "BROWSER_ENGINE_FAILURE",
+  ): Promise<boolean> {
     const record = await this.options.store.read(instruction.sessionId);
     if (
       !record?.resource ||
       record.session.state !== "opening" ||
       record.session.generation !== instruction.generation ||
+      instruction.authority?.effectiveAllowlistRevision !==
+        record.session.effectiveAllowlistRevision ||
       instruction.machine.appName !== this.options.appName ||
       instruction.machine.machineId !== record.resource.machineId
     )
-      return;
+      return false;
     const storedOrigin = await this.options.store.resolveCurrentOrigin(
       instruction.sessionId,
     );
-    if (!sameBrowserIdentity(storedOrigin, origin)) return;
+    if (!sameBrowserIdentity(storedOrigin, origin)) return false;
     try {
       verifyHostedBrowserOperationCapability({
         token: instruction.capability,
@@ -1663,14 +1701,25 @@ export class HostedBrowserService implements BrowserServicePort {
         },
       });
     } catch {
-      return;
+      return false;
     }
-    await this.#terminate(
-      record.session,
-      record.resource,
-      "failed",
-      "BROWSER_DESTINATION_BLOCKED",
-    );
+    let terminal: BrowserSessionV1;
+    try {
+      terminal = await this.options.store.markTerminal({
+        sessionId: record.session.sessionId,
+        expectedGeneration: instruction.generation,
+        expectedMachineId: instruction.machine.machineId,
+        expectedState: "opening",
+        state: "failed",
+        reason,
+        now: this.#now(),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "BROWSER_SESSION_LOST") return false;
+      throw error;
+    }
+    await this.#cleanup(terminal, record.resource);
+    return true;
   }
 
   async #cleanup(
@@ -1686,21 +1735,11 @@ export class HostedBrowserService implements BrowserServicePort {
   }
 
   async #deleteMachine(machineId: string): Promise<void> {
-    await this.options.machines.deleteMachine({
+    await deleteConfirmedBrowserMachine({
+      machines: this.options.machines,
       appName: this.options.appName,
       machineId,
     });
-    await this.options.machines.waitForMachine({
-      appName: this.options.appName,
-      machineId,
-      state: "destroyed",
-      timeoutSeconds: 30,
-    });
-    const remaining = await this.options.machines.getMachine({
-      appName: this.options.appName,
-      machineId,
-    });
-    if (remaining) throw this.#failure("BROWSER_ENGINE_FAILURE");
   }
 
   async #resolvePreparedOrigin(input: {

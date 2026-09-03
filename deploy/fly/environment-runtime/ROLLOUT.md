@@ -2,7 +2,8 @@
 
 When the image changes hosted approval protocol production, also follow the
 [hosted approval V4 guided rollout](../../../docs/operations/hosted-approval-v3-rollout-runbook.md).
-Its compatibility and activation images are separate qualified releases.
+Only final V4 images are supported. Do not publish compatibility images or
+activate intermediate runtime pairs.
 
 Workspace Runtime and Environment Router are separate GHCR images operated as
 one manual pair. Kestrel One deploys that pair into tenant Fly Apps through one
@@ -24,8 +25,8 @@ Before publishing anything:
    `pnpm validate` plus any changed runtime boundary validations.
 3. Verify `vercel whoami`, `fly auth whoami`, `docker info`, and GHCR push
    authority.
-4. Choose one new readable tag for both images. Never overwrite the current or
-   rollback tag and never mix tags within a pair.
+4. Choose a new readable tag for each changed image. Never overwrite a current
+   or rollback tag. Record the pair by exact immutable digests, not tag names.
 5. Record the operator, start time, production revision, Vercel deployments,
    current runtime channel, selected canary Environment, and the current Router
    and Workspace image for every Environment in scope.
@@ -37,6 +38,15 @@ Environment update. The compatible control worker must also be healthy because
 it executes the durable `environment.update` operation.
 
 ## 2. Publish both images
+
+This section describes a release that changes both roles. For an explicitly
+scoped Router-only repair, publish only the Router and retain the recorded
+Workspace digest. Register that exact pair with the existing runtime-channel
+service, request each Environment update by its registered version ID, and
+activate only that version after the canary operation reaches ready. The
+same-tag CLI examples below are not a reason to rebuild or retag an unchanged
+Workspace image. Keep every turn-worker stopped while the fleet uses mixed
+Router pairs, and preserve stopped Workspaces throughout the updates.
 
 Load the production `KESTREL_ONE_APP_URL` and
 `KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY` into the local process environment.

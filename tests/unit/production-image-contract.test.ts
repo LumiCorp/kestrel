@@ -817,8 +817,8 @@ test("every production image role has a live-proof rollout overlay", async () =>
     ),
   );
   const rolloutByRole: Record<string, string> = {
-    "workspace-runtime": "deploy/fly/kestrel-one-runner/ROLLOUT.md",
-    "environment-router": "deploy/fly/kestrel-one-runner/ROLLOUT.md",
+    "workspace-runtime": "deploy/fly/environment-runtime/ROLLOUT.md",
+    "environment-router": "deploy/fly/environment-runtime/ROLLOUT.md",
     "preview-edge": "apps/preview-edge/ROLLOUT.md",
     "turn-worker": "deploy/fly/kestrel-one-turn-worker/ROLLOUT.md",
     "control-worker": "deploy/fly/kestrel-one-control-worker/ROLLOUT.md",

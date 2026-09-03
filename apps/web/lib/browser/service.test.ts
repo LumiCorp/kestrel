@@ -124,6 +124,110 @@ test("hosted dispatch still cleans the exact opening session after its capabilit
   assert.equal(fixture.cleanupConfirmed, 1);
 });
 
+test("Gateway startup failure terminalizes and cleans only the exact opening operation", async () => {
+  const fixture = serviceFixture("opening", "allow");
+  const prepared = preparedOpen();
+  const accepted = acceptedReceipt(prepared.callId, fixture.session.sessionId);
+  const cleaned = await fixture.service.failOpeningOperation(
+    prepared,
+    { threadId: "thread-1", projectId: "project-1" },
+    {
+      ...accepted.instruction,
+      prepared,
+    },
+  );
+  assert.equal(cleaned, true);
+  assert.deepEqual(fixture.terminalReasons, ["BROWSER_ENGINE_FAILURE"]);
+  assert.deepEqual(fixture.deletedMachines, ["machine-1"]);
+  assert.equal(fixture.cleanupConfirmed, 1);
+});
+
+test("Gateway startup failure cannot delete a ready session or an altered opening identity", async () => {
+  const prepared = preparedOpen();
+  const ready = serviceFixture("ready", "allow");
+  const readyInstruction = acceptedReceipt(
+    prepared.callId,
+    ready.session.sessionId,
+  ).instruction;
+  assert.equal(await ready.service.failOpeningOperation(
+    prepared,
+    { threadId: "thread-1", projectId: "project-1" },
+    { ...readyInstruction, prepared },
+  ), false);
+  assert.deepEqual(ready.deletedMachines, []);
+
+  const opening = serviceFixture("opening", "allow");
+  const openingInstruction = acceptedReceipt(
+    prepared.callId,
+    opening.session.sessionId,
+  ).instruction;
+  assert.equal(await opening.service.failOpeningOperation(
+    prepared,
+    { threadId: "thread-1", projectId: "project-1" },
+    {
+      ...openingInstruction,
+      machine: { ...openingInstruction.machine, machineId: "machine-other" },
+      prepared,
+    },
+  ), false);
+  assert.deepEqual(opening.deletedMachines, []);
+});
+
+for (const field of ["organizationId", "environmentId", "projectId", "userId", "threadId", "sessionId", "generation", "operationId", "effectiveAllowlistRevision"] as const) {
+  test(`startup failure rejects a signed capability for a different ${field}`, async () => {
+    const fixture = serviceFixture("opening", "allow");
+    const prepared = preparedOpen();
+    const instruction = acceptedReceipt(prepared.callId, fixture.session.sessionId).instruction;
+    const capability = issueHostedBrowserOperationCapability({
+      privateKeyPem, now,
+      claims: {
+        version: HOSTED_BROWSER_CAPABILITY_VERSION,
+        organizationId: "org-1", environmentId: "env-1", projectId: "project-1",
+        userId: "user-1", threadId: "thread-1", sessionId: fixture.session.sessionId,
+        generation: 1, operationId: prepared.callId, effectiveAllowlistRevision: "revision-1",
+        expiresAt: new Date(now.getTime() + 30_000).toISOString(),
+        [field]: field === "generation" ? 2 : "different",
+      },
+    });
+    assert.equal(await fixture.service.failOpeningOperation(prepared,
+      { threadId: "thread-1", projectId: "project-1" },
+      { ...instruction, prepared, capability }), false);
+    assert.deepEqual(fixture.deletedMachines, []);
+    assert.deepEqual(fixture.terminalReasons, []);
+    assert.equal(fixture.cleanupConfirmed, 0);
+  });
+}
+
+for (const change of ["capability", "session", "generation", "app", "operation", "prepared"] as const) {
+  test(`startup failure rejects altered ${change} instructions`, async () => {
+    const fixture = serviceFixture("opening", "allow");
+    const prepared = preparedOpen();
+    const instruction = { ...acceptedReceipt(prepared.callId, fixture.session.sessionId).instruction, prepared };
+    if (change === "capability") instruction.capability = "forged";
+    if (change === "session") instruction.sessionId = "different";
+    if (change === "generation") instruction.generation = 2;
+    if (change === "app") instruction.machine = { ...instruction.machine, appName: "different" };
+    if (change === "operation") instruction.operationId = "different";
+    if (change === "prepared") instruction.prepared = { ...prepared, callId: "different" };
+    assert.equal(await fixture.service.failOpeningOperation(prepared,
+      { threadId: "thread-1", projectId: "project-1" }, instruction), false);
+    assert.deepEqual(fixture.deletedMachines, []);
+    assert.deepEqual(fixture.terminalReasons, []);
+    assert.equal(fixture.cleanupConfirmed, 0);
+  });
+}
+
+test("startup failure cannot delete a session that becomes ready before terminalization", async () => {
+  const fixture = serviceFixture("opening", "allow", { readyRaceOnTerminal: true });
+  const prepared = preparedOpen();
+  const instruction = acceptedReceipt(prepared.callId, fixture.session.sessionId).instruction;
+  assert.equal(await fixture.service.failOpeningOperation(prepared,
+    { threadId: "thread-1", projectId: "project-1" }, { ...instruction, prepared }), false);
+  assert.equal(fixture.session.state, "ready");
+  assert.deepEqual(fixture.deletedMachines, []);
+  assert.equal(fixture.cleanupConfirmed, 0);
+});
+
 test("hosted worker acceptance leaves an opening session opening", async () => {
   const fixture = serviceFixture("opening", "allow");
   const prepared = preparedOpen();
@@ -170,6 +274,15 @@ test("startup failure confirms cleanup only after terminal intent and deletion",
   assert.deepEqual(fixture.terminalReasons, ["BROWSER_ENGINE_FAILURE"]);
   assert.deepEqual(fixture.deletedMachines, ["machine-1"]);
   assert.equal(fixture.cleanupConfirmed, 1);
+});
+
+test("hosted Browser provisioning waits up to 30 seconds for Machine start", async () => {
+  const fixture = serviceFixture("opening", "allow");
+  await fixture.service.acceptOperation(preparedOpen(), {
+    threadId: "thread-1",
+    projectId: "project-1",
+  });
+  assert.deepEqual(fixture.startedTimeouts, [30]);
 });
 
 test("hosted acceptance reports the safe failure stage for unavailable origin authority", async () => {
@@ -767,6 +880,7 @@ function serviceFixture(
     originFailure?: boolean;
     terminalRaceOnReady?: boolean;
     startupWaitFailure?: boolean;
+    readyRaceOnTerminal?: boolean;
     terminalOnRead?: boolean;
     machineDeleteFailure?: boolean;
     downloadCommitFailure?: boolean;
@@ -803,6 +917,7 @@ function serviceFixture(
   };
   const terminalReasons: string[] = [];
   const deletedMachines: string[] = [];
+  const startedTimeouts: number[] = [];
   let cleanupConfirmed = 0;
   let touches = 0;
   const stateTransitions: string[] = [];
@@ -834,7 +949,8 @@ function serviceFixture(
       },
       async createOpening() {},
       async attachMachine() {},
-      async read() {
+      async read(sessionId) {
+        if (sessionId !== session.sessionId) return null;
         if (
           options.terminalOnRead &&
           !["closed", "expired", "lost", "failed"].includes(session.state)
@@ -870,6 +986,10 @@ function serviceFixture(
       },
       async adoptRevision() {},
       async markTerminal(input) {
+        if (options.readyRaceOnTerminal) session = parseBrowserSessionV1({ ...session, state: "ready" });
+        if (input.expectedState !== undefined && session.state !== input.expectedState) {
+          throw new Error("BROWSER_SESSION_LOST");
+        }
         terminalMarks.push({
           expectedGeneration: input.expectedGeneration,
           expectedMachineId: input.expectedMachineId,
@@ -906,7 +1026,19 @@ function serviceFixture(
     machines: {
       async createBrowserMachine() { throw new Error("not used"); },
       async listBrowserMachines() { return []; },
-      async getMachine() { return null; },
+      async getMachine(input) {
+        if (deletedMachines.includes(input.machineId)) return null;
+        return {
+          id: input.machineId,
+          name: input.machineId,
+          state: "started",
+          region: "iad",
+          resolvedImageDigest: imageDigest.split("@").at(-1),
+          mounts: [],
+          browserSessionId: session.sessionId,
+          browserGeneration: session.generation,
+        };
+      },
       async deleteMachine(input) {
         deletedMachines.push(input.machineId);
         if (options.machineDeleteFailure) {
@@ -914,6 +1046,9 @@ function serviceFixture(
         }
       },
       async waitForMachine(input) {
+        if (input.state === "started") {
+          startedTimeouts.push(input.timeoutSeconds ?? 0);
+        }
         if (options.startupWaitFailure && input.state === "started") {
           throw new Error("startup failed");
         }
@@ -1116,6 +1251,7 @@ function serviceFixture(
     committedDownloads,
     stateTransitions,
     terminalMarks,
+    startedTimeouts,
   };
 }
 
@@ -1280,6 +1416,7 @@ function acceptedReceipt(
       generation: 1,
       capability,
       machine: { appName: "kestrel-env-test", machineId: "machine-1" },
+      authority,
     },
     worker: {
       accepted: true,
