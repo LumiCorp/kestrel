@@ -485,7 +485,7 @@ test("strict Web fails closed for legacy or ambiguous hosted profiles", async ()
   }
 });
 
-test("hosted approval rollout orders the deployed baseline through compatibility and activation", async () => {
+test("hosted approval rollout enforces Web-first V4 steady state without compatibility artifacts", async () => {
   const runbook = await readFile(
     new URL(
       "../../../../docs/operations/hosted-approval-v3-rollout-runbook.md",
@@ -493,39 +493,33 @@ test("hosted approval rollout orders the deployed baseline through compatibility
     ),
     "utf8",
   );
-  const baselineInventory = runbook.indexOf(
-    "Stage 0 — inventory the deployed preset-2 baseline",
+  const inventory = runbook.indexOf("Stage 0 — inventory and qualify");
+  const webFirst = runbook.indexOf(
+    "Stage 1 — protected promotion and Web-first deployment",
   );
-  const bridge = runbook.indexOf(
-    "Stage 1 — deploy the bridge against the unmarked preset-2 baseline",
+  const settle = runbook.indexOf("Stage 2 — settle and stop producers");
+  const publish = runbook.indexOf("Stage 3 — publish final images");
+  const environments = runbook.indexOf(
+    "Stage 5 — update Environments and activate the runtime pair",
   );
-  const compatibility = runbook.indexOf(
-    "Stage 2 — build, prove, and roll preset-4/V2 compatibility images",
-  );
-  const activation = runbook.indexOf(
-    "Stage 4 — activate V4 on controlled targets",
-  );
+  const acceptance = runbook.indexOf("Stage 8 — production acceptance");
 
-  assert.ok(baselineInventory >= 0);
-  assert.ok(baselineInventory < bridge);
-  assert.ok(bridge < compatibility);
-  assert.ok(compatibility < activation);
-  assert.match(runbook, /baseline `1760c3769`/u);
-  assert.match(
-    runbook,
-    /producer marker or contradictory policy metadata/u,
-  );
-  assert.match(
-    runbook,
-    /Never roll back to pre-bridge Web after any preset-4 producer is active/u,
-  );
-  assert.match(
-    runbook,
-    /restore each exact turn-worker Machine to its recorded image/u,
-  );
-  assert.match(runbook, /temporary unmarked preset-2 Web allowance/u);
-  assert.doesNotMatch(runbook, /uniform preset-3 fleet/u);
-  assert.doesNotMatch(runbook, /preset-3 Web bridge/u);
+  assert.ok(inventory >= 0);
+  assert.ok(inventory < webFirst);
+  assert.ok(webFirst < settle);
+  assert.ok(settle < publish);
+  assert.ok(publish < environments);
+  assert.ok(environments < acceptance);
+  assert.match(runbook, /workspace_hosted@4/u);
+  assert.match(runbook, /producer protocol `v4`/u);
+  assert.match(runbook, /policy `kestrel@5`/u);
+  assert.match(runbook, /Keep every turn-worker stopped/u);
+  assert.match(runbook, /environment\.update\.ready/u);
+  assert.match(runbook, /Do not roll Web back by itself/u);
+  assert.match(runbook, /Never publish a V2 producer image/u);
+  assert.doesNotMatch(runbook, /--approval-protocol v2/u);
+  assert.doesNotMatch(runbook, /kestrel@4/u);
+  assert.doesNotMatch(runbook, /preset-4\/V2/u);
 });
 
 test("the command canary requests and validates exact shell availability without model execution", async () => {

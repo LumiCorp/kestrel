@@ -501,7 +501,18 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     options: { includeGrantedMcpTools: boolean },
   ): string[] {
     const snapshot = this.resolveMcpSnapshotFromTurnInput(input);
-    const available = new Set(this.listAvailableToolNames(snapshot));
+    const scopedContext =
+      input.runId !== undefined && input.sessionId !== undefined
+        ? this.resolveScopedContext({
+            runId: input.runId,
+            sessionId: input.sessionId,
+            payload: input,
+            sessionState: {},
+          }).builtInContext
+        : this.builtInContext;
+    const available = new Set(
+      this.listAvailableToolNames(snapshot, scopedContext),
+    );
     const requested = options.includeGrantedMcpTools
       ? [...names, ...snapshot.tools.map((tool) => tool.namespacedToolName)]
       : names;
@@ -1685,7 +1696,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   resolveAvailableAllowlist(names: string[]): string[] {
-    const available = new Set(this.listAvailableToolNames(this.mcpStatus));
+    const available = new Set(
+      this.listAvailableToolNames(this.mcpStatus, this.builtInContext),
+    );
     return [...new Set(names)].filter(
       (name) => available.has(name) || this.isRuntimeBuiltInToolName(name),
     );
@@ -2201,7 +2214,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     return isRuntimeBuiltInTool(name, this.builtInCapabilities);
   }
 
-  private listAvailableToolNames(mcpStatus: McpStatusSnapshot): string[] {
+  private listAvailableToolNames(
+    mcpStatus: McpStatusSnapshot,
+    builtInContext: SharedToolContext,
+  ): string[] {
     const available = new Set<string>();
     for (const [name] of this.builtInToolSpecs) {
       if (
@@ -2210,7 +2226,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       ) {
         continue;
       }
-      if (isBuiltInToolDisabledByContext(name, this.builtInContext)) {
+      if (isBuiltInToolDisabledByContext(name, builtInContext)) {
         continue;
       }
       available.add(name);
