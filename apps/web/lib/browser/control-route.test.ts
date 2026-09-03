@@ -99,3 +99,45 @@ test("Browser control logs a bounded service-resolution stage", async () => {
     console.error = original;
   }
 });
+
+test("Browser control logs only bounded origin mismatch codes", async () => {
+  const messages: unknown[][] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => messages.push(args);
+  const dispose = configureHostedBrowserServiceResolver(async () => {
+    throw Object.assign(new Error("BROWSER_SERVICE_UNAVAILABLE"), {
+      code: "BROWSER_SERVICE_UNAVAILABLE",
+      details: {
+        failureStage: "origin.store",
+        originMismatches: ["turn_binding_missing"],
+      },
+    });
+  });
+  try {
+    const response = await handleHostedBrowserControl({
+      request: new Request("https://one.example.test/control", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+      action: "accept",
+      ticket,
+      projectId: "project-1",
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(messages, [
+      [
+        "Hosted Browser control unavailable",
+        {
+          code: "BROWSER_SERVICE_UNAVAILABLE",
+          action: "accept",
+          failureStage: "origin.store",
+          originMismatches: ["turn_binding_missing"],
+        },
+      ],
+    ]);
+  } finally {
+    dispose();
+    console.error = original;
+  }
+});
