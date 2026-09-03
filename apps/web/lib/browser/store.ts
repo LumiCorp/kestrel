@@ -50,7 +50,7 @@ export class HostedBrowserStore {
       await this.database.query.environmentRunExecutions.findFirst({
         where: (table, { and: all, eq: equals }) =>
           all(
-            equals(table.id, input.runId),
+            equals(table.runtimeRunId, input.runId),
             equals(table.threadId, input.threadId),
             equals(table.organizationId, input.expectedOrganizationId),
             equals(table.environmentId, input.expectedEnvironmentId),
@@ -74,7 +74,7 @@ export class HostedBrowserStore {
         all(
           equals(table.threadId, input.threadId),
           equals(table.organizationId, input.expectedOrganizationId),
-          equals(table.environmentExecutionId, input.runId),
+          equals(table.environmentExecutionId, execution.id),
           equals(table.authorUserId, input.expectedUserId),
         ),
       columns: { id: true },
@@ -245,7 +245,10 @@ export class HostedBrowserStore {
     });
     if (!turn?.environmentExecutionId) throw new Error("BROWSER_SESSION_LOST");
     return this.resolveOrigin({
-      runId: turn.environmentExecutionId,
+      runId: await this.requireExecutionField(
+        turn.environmentExecutionId,
+        "runtimeRunId",
+      ),
       threadId: turn.threadId,
       expectedOrganizationId: turn.organizationId,
       expectedEnvironmentId: await this.requireExecutionField(
@@ -710,12 +713,12 @@ export class HostedBrowserStore {
 
   private async requireExecutionField(
     runId: string,
-    field: "environmentId" | "projectId",
+    field: "environmentId" | "projectId" | "runtimeRunId",
   ): Promise<string> {
     const execution =
       await this.database.query.environmentRunExecutions.findFirst({
         where: (table, { eq: equals }) => equals(table.id, runId),
-        columns: { environmentId: true, projectId: true },
+        columns: { environmentId: true, projectId: true, runtimeRunId: true },
       });
     const value = execution?.[field];
     if (!value) throw new Error("BROWSER_SESSION_LOST");
