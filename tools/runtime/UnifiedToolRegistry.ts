@@ -2183,6 +2183,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             payload: {
               actor: stable.actor,
               hostedApprovalAuthority: {
+                version: "runner_hosted_approval_authority_v1",
                 organizationId: stable.organizationId,
                 environmentId: stable.environmentId,
                 projectId: stable.projectId,
@@ -2839,6 +2840,9 @@ function resolveRuntimeToolRunContext(
   const threadId =
     asNonEmptyString(orchestration?.threadId) ??
     asNonEmptyString(metadata?.threadId);
+  const hostedApprovalAuthority = resolveHostedApprovalAuthority(
+    payloadRecord?.hostedApprovalAuthority,
+  );
   const turnId = asNonEmptyString(metadata?.turnId);
   const activeTurnId = asNonEmptyString(metadata?.activeTurnId);
   const activeTurnAttachments =
@@ -2866,12 +2870,39 @@ function resolveRuntimeToolRunContext(
     ...(projectId !== undefined ? { projectId } : {}),
     ...(approvalId !== undefined ? { approvalId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
+    ...(hostedApprovalAuthority !== undefined
+      ? { hostedApprovalAuthority }
+      : {}),
     ...(turnId !== undefined && activeTurnId === turnId ? { turnId } : {}),
     ...(activeTurnAttachments === undefined ? {} : { activeTurnAttachments }),
     ...(activeTaskId !== undefined ? { activeTaskId } : {}),
     ...(delegationId !== undefined ? { delegationId } : {}),
     ...(delegationDepth !== undefined ? { delegationDepth } : {}),
     ...(rootDelegationId !== undefined ? { rootDelegationId } : {}),
+  };
+}
+
+function resolveHostedApprovalAuthority(value: unknown) {
+  const authority = asRecord(value);
+  const organizationId = asNonEmptyString(authority?.organizationId);
+  const environmentId = asNonEmptyString(authority?.environmentId);
+  const projectId = asNonEmptyString(authority?.projectId);
+  const threadId = asNonEmptyString(authority?.threadId);
+  if (
+    authority?.version !== "runner_hosted_approval_authority_v1" ||
+    organizationId === undefined ||
+    environmentId === undefined ||
+    projectId === undefined ||
+    threadId === undefined
+  ) {
+    return;
+  }
+  return {
+    version: "runner_hosted_approval_authority_v1" as const,
+    organizationId,
+    environmentId,
+    projectId,
+    threadId,
   };
 }
 

@@ -54,13 +54,24 @@ function resolveBrowserHostAuthority(
     workspaceRoot === undefined || appRoot === undefined
       ? undefined
       : resolveWorkspaceAppCwd(path.resolve(workspaceRoot), appRoot);
+  const projectId = resolveBrowserProjectId(runtime);
   return {
-    threadId: runtime.threadId ?? runtime.sessionId,
-    ...(runtime.projectId === undefined
-      ? {}
-      : { projectId: runtime.projectId }),
+    threadId: resolveBrowserThreadId(runtime),
+    ...(projectId === undefined ? {} : { projectId }),
     ...(projectRoot === undefined ? {} : { projectRoot }),
   };
+}
+
+function resolveBrowserThreadId(runtime: RuntimeToolRunContext): string {
+  return runtime.hostedApprovalAuthority?.threadId ??
+    runtime.threadId ??
+    runtime.sessionId;
+}
+
+function resolveBrowserProjectId(
+  runtime: RuntimeToolRunContext,
+): string | undefined {
+  return runtime.hostedApprovalAuthority?.projectId ?? runtime.projectId;
 }
 
 function resolveExactEffects(
@@ -180,13 +191,14 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
       }
       const runtime = context.runtime;
       if (contract.toolId === "browser.download") {
-        if (runtime?.threadId === undefined) {
+        if (runtime === undefined) {
           throw browserFailure(
             "BROWSER_SERVICE_UNAVAILABLE",
             "Browser download promotion requires trusted Thread authority.",
             { recoverable: false, operation: contract.toolId },
           );
         }
+        const browserThreadId = resolveBrowserThreadId(runtime);
         const service = requireBrowserServicePort(context.browserService);
         if (typeof service.prepareDownload !== "function") {
           throw browserFailure(
@@ -199,13 +211,13 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           await service.prepareDownload({
             version: BROWSER_DOWNLOAD_PREPARATION_VERSION,
             runId: runtime.runId,
-            threadId: runtime.threadId,
+            threadId: browserThreadId,
             effectiveInput: input,
             authority: resolveBrowserHostAuthority(context, runtime),
           }),
         );
         if (
-          preparedEffect.threadId !== runtime.threadId ||
+          preparedEffect.threadId !== browserThreadId ||
           preparedEffect.sessionId !== input.sessionId ||
           preparedEffect.generation !== input.generation ||
           preparedEffect.pendingDownloadId !== input.pendingDownloadId
@@ -223,7 +235,6 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
       }
       if (
         runtime?.turnId === undefined ||
-        runtime.threadId === undefined ||
         runtime.activeTurnAttachments === undefined
       ) {
         throw browserFailure(
@@ -232,6 +243,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
           { recoverable: false, operation: contract.toolId },
         );
       }
+      const browserThreadId = resolveBrowserThreadId(runtime);
       const attachmentId = typeof input.attachmentId === "string"
         ? input.attachmentId
         : "";
@@ -258,7 +270,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
         await service.prepareUpload({
           version: BROWSER_UPLOAD_PREPARATION_VERSION,
           runId: runtime.runId,
-          threadId: runtime.threadId,
+          threadId: browserThreadId,
           turnId: runtime.turnId,
           effectiveInput: input,
           attachment: {
@@ -274,7 +286,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
       );
       if (
         preparedEffect.turnId !== runtime.turnId ||
-        preparedEffect.threadId !== runtime.threadId ||
+        preparedEffect.threadId !== browserThreadId ||
         preparedEffect.attachmentId !== attachment.attachmentId ||
         preparedEffect.filename !== attachment.filename ||
         preparedEffect.declaredMediaType !== attachment.declaredMediaType ||
@@ -309,7 +321,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
             }
             const runtime = context.runtime;
             const stableAuthority = prepared.stableAuthority;
-            const authority = runtime?.threadId
+            const authority = runtime
               ? resolveBrowserHostAuthority(context, runtime)
               : stableAuthority === undefined
                 ? undefined
@@ -342,7 +354,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
                 ).resolvePolicy({
                   version: BROWSER_POLICY_RESOLUTION_VERSION,
                   runId: runtime.runId,
-                  threadId: runtime.threadId ?? runtime.sessionId,
+                  threadId: resolveBrowserThreadId(runtime),
                   operation: contract.toolId,
                   effectiveInput: input,
                   authority: resolveBrowserHostAuthority(context, runtime),
@@ -405,7 +417,7 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
             prepared.effectiveInput,
           ) === "external_side_effect";
         const runtime = context.runtime;
-        const threadId = runtime?.threadId ?? runtime?.sessionId;
+        const threadId = runtime && resolveBrowserThreadId(runtime);
         if (
           runtime === undefined ||
           threadId === undefined ||

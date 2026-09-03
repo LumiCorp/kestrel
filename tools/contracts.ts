@@ -1,3 +1,5 @@
+import type { RunnerHostedApprovalAuthorityV1 } from "@kestrel-agents/protocol";
+
 import type {
   CodeExecutionServicePort,
   CodeModeProfileConfig,
@@ -134,6 +136,8 @@ export interface RuntimeToolRunContext {
   projectId?: string | undefined;
   approvalId?: string | undefined;
   threadId?: string | undefined;
+  /** Canonical hosted product authority, distinct from an orchestration child Thread. */
+  hostedApprovalAuthority?: RunnerHostedApprovalAuthorityV1 | undefined;
   /** Trusted active durable turn identity; never populated from tool input. */
   turnId?: string | undefined;
   /** Metadata-only attachment authority for the active turn. */
