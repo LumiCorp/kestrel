@@ -30,9 +30,8 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The ordinary App relay limit is now 20 MiB. Browser attachment transfers use
   their separate 100 MiB limit.
-- Kestrel One hosted approvals now carry an explicit V2/V3 producer setting so
-  compatible readers can deploy and be proven before V3 is activated on exact
-  runtime and worker targets.
+- Hosted production uses only the final V4 producer contract. Web deploys
+  first, and V2/V3 interaction readers remain available for persisted history.
 
 ### Security
 
@@ -42,6 +41,13 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Kestrel One Browser startup now waits for exact engine qualification and
+  retries pre-dispatch transport failures within its acceptance deadline.
+  Failed openings clean up their exact session without affecting a ready
+  session; Fly auto-destroyed workers no longer leave cleanup unconfirmed.
+- Browser socket directories now keep full-length hosted session identifiers
+  within the engine's Unix socket path limit, preserving private ownership
+  and exact session cleanup. Image qualification uses production-length IDs.
 - Hosted Workspace turns now continue retrying temporary execution-
   authorization renewal failures until the existing ticket expires, instead
   of stopping after a single timed retry.

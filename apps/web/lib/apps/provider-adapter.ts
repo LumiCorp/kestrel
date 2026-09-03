@@ -273,7 +273,7 @@ const browserAdapter: AppProviderAdapter = {
           ? new Set(["policy", "accept", "invoke", "commit", "complete", "unknown", "adopt", "adopt-complete"])
           : input.capability === "capture" || input.capability === "download"
             ? new Set(["accept", "invoke", "commit", "complete", "unknown", "artifact"])
-            : new Set(["accept", "invoke", "commit", "complete", "unknown"]);
+            : new Set(["accept", "invoke", "commit", "complete", "unknown", ...(input.capability === "open" ? ["startup-failed"] : [])]);
       if (
         input.method !== "POST" ||
         input.path.length !== 2 ||

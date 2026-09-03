@@ -7,8 +7,8 @@ test("hosted Environment images carry the production build identity", async () =
     workspaceDockerfile,
     routerDockerfile,
     previewEdgeDockerfile,
-    workspaceFlyConfig,
-    routerFlyConfig,
+    imageCatalogSource,
+    imagePublisher,
     previewEdgeServiceConfig,
     rollout,
     previewEdgeRollout,
@@ -28,11 +28,11 @@ test("hosted Environment images carry the production build identity", async () =
       "utf8",
     ),
     readFile(
-      new URL("../../../workspace-runtime/fly.build.toml", import.meta.url),
+      new URL("../../../../deploy/fly/image-catalog.json", import.meta.url),
       "utf8",
     ),
     readFile(
-      new URL("../../../environment-router/fly.build.toml", import.meta.url),
+      new URL("../../../../scripts/publish-production-image.ts", import.meta.url),
       "utf8",
     ),
     readFile(
@@ -41,7 +41,7 @@ test("hosted Environment images carry the production build identity", async () =
     ),
     readFile(
       new URL(
-        "../../../../deploy/fly/kestrel-one-runner/ROLLOUT.md",
+        "../../../../deploy/fly/environment-runtime/ROLLOUT.md",
         import.meta.url,
       ),
       "utf8",
@@ -87,9 +87,14 @@ test("hosted Environment images carry the production build identity", async () =
     workspaceDockerfile,
     /COPY packages\/mcp-security packages\/mcp-security/u,
   );
-  for (const flyConfig of [workspaceFlyConfig, routerFlyConfig]) {
-    assert.match(flyConfig, /dockerfile = "Dockerfile"/u);
+  const imageCatalog = JSON.parse(imageCatalogSource);
+  for (const role of ["workspace-runtime", "environment-router"]) {
+    const image = imageCatalog.images.find((entry: { role: string }) => entry.role === role);
+    assert.equal(image?.publisher, "ghcr");
+    assert.equal(image?.dockerfile, `apps/${role}/Dockerfile`);
+    assert.equal(image?.app, undefined);
   }
+  assert.match(imagePublisher, /KESTREL_BUILD_ID=\$\{input\.tag\}/u);
   assert.match(rollout, /--role workspace-runtime[\\\s]+--tag <tag>/u);
   assert.match(rollout, /--role environment-router[\\\s]+--tag <tag>/u);
   assert.match(rollout, /runtime:update/u);

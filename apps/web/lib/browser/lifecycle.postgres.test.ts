@@ -62,6 +62,21 @@ test("Browser lifecycle reconciliation is environment-scoped, race-safe, and met
   });
 
   const store = new HostedBrowserStore();
+  // A delayed startup failure must recheck opening under the row lock, not
+  // rely on the earlier service read. Neither ready nor terminal may be lost.
+  for (const state of ["ready", "opening"] as const) {
+    await sql`UPDATE browser_sessions SET state = ${state} WHERE session_id = ${id("session", "a")}`;
+    if (state === "ready") {
+      await assert.rejects(store.markTerminal({
+        sessionId: id("session", "a"), expectedGeneration: 1,
+        expectedMachineId: id("machine", "a"), expectedState: "opening",
+        state: "failed", reason: "BROWSER_ENGINE_FAILURE", now: fixtureNow,
+      }), /BROWSER_SESSION_LOST/u);
+      const retained = await store.read(id("session", "a"));
+      assert.equal(retained?.session.state, "ready");
+      assert.equal(retained?.resource?.cleanupRequestedAt, null);
+    }
+  }
   assert.deepEqual(
     await store.resolveOrigin({
       runId: id("runtime-run", "a"),

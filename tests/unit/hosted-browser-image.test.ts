@@ -189,7 +189,7 @@ test("hosted Browser image smoke drives exact open and close control operations"
         now: new Date("2026-08-30T12:00:00.000Z"),
       });
       assert.equal(claims.operationId, prepared.callId);
-      assert.equal(claims.sessionId, "browser-image-smoke-session");
+      assert.equal(claims.sessionId, `browser-${"a".repeat(64)}`);
       assert.equal(claims.generation, 1);
       assert.equal(claims.organizationId, "browser-image-smoke-org");
       assert.equal(claims.environmentId, authority.environmentId);
@@ -222,7 +222,7 @@ test("hosted Browser image smoke drives exact open and close control operations"
       return Response.json({
         version: "browser_tool_result_v1",
         operation: "browser.close",
-        sessionId: "browser-image-smoke-session",
+        sessionId: `browser-${"a".repeat(64)}`,
         state: "closed",
       });
     }

@@ -24,13 +24,17 @@ export const flyImageCatalogSchema = z.object({
           ]),
           publisher: z.enum(["fly", "ghcr"]),
           repository: z.string().trim().min(1),
-          app: z.string().trim().min(1),
+          app: z.string().trim().min(1).optional(),
           dockerfile: z.string().trim().min(1),
           prepare: z.string().trim().min(1).optional(),
           smoke: z.string().trim().min(1),
           rollout: z.enum(["environment", "global-app", "session"]),
         })
         .superRefine((image, context) => {
+          if ((image.publisher === "fly" && !image.app) ||
+              (image.publisher === "ghcr" && image.app !== undefined)) {
+            context.addIssue({ code: "custom", message: "Only Fly-published images require a platform app.", path: ["app"] });
+          }
           const expectedRepository =
             image.publisher === "fly"
               ? `registry.fly.io/${image.app}`

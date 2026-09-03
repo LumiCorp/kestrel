@@ -6,7 +6,7 @@ owner: kestrel-one
 last_verified_at: 2026-09-02
 depends_on:
   - ../production-delivery-channels.md
-  - ../../deploy/fly/kestrel-one-runner/ROLLOUT.md
+  - ../../deploy/fly/environment-runtime/ROLLOUT.md
   - ../../deploy/fly/kestrel-one-turn-worker/ROLLOUT.md
 ---
 

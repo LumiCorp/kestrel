@@ -28,7 +28,9 @@ Before publishing anything:
    `deploy/fly/kestrel-one-browser-worker/Dockerfile` for `linux/amd64` and run
    `deploy/fly/kestrel-one-browser-worker/smoke.sh` against that exact local
    image. The image smoke must prove the pinned engine and Chrome revisions,
-   nonroot/read-only operation, exact control operations, and clean close. The
+   wait for the actual worker listener for up to the 60-second cold-start
+   ceiling, print container logs if readiness fails, and prove nonroot/read-only
+   operation, exact control operations, and clean close. The
    smoke runs the worker on an otherwise routed network and must also prove
    that its namespace firewall denies steady-state DNS, direct public and
    private traffic, and another port on the exact Gateway Machine while
@@ -91,8 +93,8 @@ origin. The canary must:
 1. create exactly one Browser Session and one labeled, no-volume Fly Machine;
 2. record the candidate repository digest in `browser_session_resources` and
    observe the same resolved image identity from Fly;
-3. become ready only after the worker self-measures agent-browser `v0.35.0-kestrel.1` and
-   Chrome for Testing `152.0.7977.54`;
+3. become ready within 60 seconds and only after the worker self-measures
+   agent-browser `v0.35.0-kestrel.1` and Chrome for Testing `152.0.7977.54`;
 4. prove the worker booted its default-drop input and output nftables ceiling
    on Fly, resolved and pinned the exact current Gateway Machine as both its
    control peer and egress peer, dropped to uid/gid 10001 with no effective
@@ -104,7 +106,8 @@ origin. The canary must:
    and close through the ordinary Browser App path;
 6. preserve the exact session ID and generation through capability and worker
    evidence without exposing the worker address or credential; and
-7. reach a terminal session state, confirm the labeled Machine is absent, and
+7. reach a terminal session state, confirm the labeled Machine is absent even
+   when Fly removed it before cleanup began, record `cleanupConfirmedAt`, and
    confirm cleanup of profile, proxy authority, and capabilities.
 
 Record this unified release-evidence canary as `browser-worker-session` with

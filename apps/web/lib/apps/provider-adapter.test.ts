@@ -5,6 +5,16 @@ import {
   listAppProviderAdapters,
 } from "./provider-adapter";
 
+test("Browser startup failure is a private open-only lifecycle target", () => {
+  const runtime = getAppProviderAdapter("built_in.browser")?.runtime;
+  assert.ok(runtime);
+  assert.doesNotThrow(() => runtime.assertTarget({ capability: "open", method: "POST", path: ["control", "startup-failed"] }));
+  for (const capability of runtime.capabilityKeys.filter((key) => key !== "open")) {
+    assert.throws(() => runtime.assertTarget({ capability, method: "POST", path: ["control", "startup-failed"] }));
+  }
+  assert.throws(() => runtime.assertTarget({ capability: "open", method: "GET", path: ["control", "startup-failed"] }));
+});
+
 test(
   "provider adapter registry exposes managed API Apps through the shared contract",
   () => {

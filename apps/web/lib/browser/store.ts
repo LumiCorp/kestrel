@@ -419,6 +419,7 @@ export class HostedBrowserStore {
     sessionId: string;
     expectedGeneration?: number | undefined;
     expectedMachineId?: string | undefined;
+    expectedState?: "opening" | undefined;
     state: "closed" | "expired" | "lost" | "failed";
     reason: BrowserFailureCode | "closed_by_user";
     now: Date;
@@ -432,6 +433,7 @@ export class HostedBrowserStore {
         .for("update");
       if (
         !row ||
+        (input.expectedState !== undefined && row.state !== input.expectedState) ||
         (input.expectedGeneration !== undefined &&
           row.generation !== input.expectedGeneration)
       ) {

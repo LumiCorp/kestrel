@@ -90,7 +90,7 @@ export async function deployProductionFlyMachine(
     JSON.parse(await readFile("deploy/fly/image-catalog.json", "utf8")),
   );
   const role = catalog.images.find((entry) => entry.role === parsed.role);
-  if (!role || role.rollout !== "global-app") {
+  if (!role || role.rollout !== "global-app" || !role.app) {
     throw new Error(`No direct Fly Machine target exists for ${parsed.role}.`);
   }
   const image = `${role.repository}:${parsed.tag}`;

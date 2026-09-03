@@ -801,8 +801,12 @@ test("hosted worker measures exact installed engine and Chrome revisions", async
   const measured = await measureHostedBrowserWorkerRuntime({
     engineExecutablePath: "/runtime/agent-browser",
     chromeExecutablePath: "/runtime/chrome",
-    async probe(executablePath, args) {
+    async probe(executablePath, args, options) {
       calls.push({ executablePath, args });
+      assert.deepEqual(options, {
+        timeoutMs: 15_000,
+        maxBufferBytes: 16 * 1024,
+      });
       return executablePath.endsWith("agent-browser")
         ? { stdout: "agent-browser 0.35.0-kestrel.1\n", stderr: "" }
         : {
@@ -821,6 +825,25 @@ test("hosted worker measures exact installed engine and Chrome revisions", async
   ]);
 });
 
+test("hosted worker accepts delayed exact Chrome measurement within the fixed probe budget", async () => {
+  const measured = await measureHostedBrowserWorkerRuntime({
+    engineExecutablePath: "/runtime/agent-browser",
+    chromeExecutablePath: "/runtime/chrome",
+    async probe(executablePath, _args, options) {
+      assert.equal(options.timeoutMs, 15_000);
+      if (executablePath.endsWith("chrome")) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return {
+          stdout: "Google Chrome for Testing 152.0.7977.54\n",
+          stderr: "",
+        };
+      }
+      return { stdout: "agent-browser 0.35.0-kestrel.1\n", stderr: "" };
+    },
+  });
+  assert.equal(measured.chromeRevision, "152.0.7977.54");
+});
+
 test("hosted worker fails closed before startup on an installed runtime mismatch", async () => {
   await assert.rejects(
     measureHostedBrowserWorkerRuntime({
@@ -835,7 +858,7 @@ test("hosted worker fails closed before startup on an installed runtime mismatch
             };
       },
     }),
-    /does not match the pinned release manifest/u,
+    /engine version output does not match the pinned release manifest/u,
   );
   await assert.rejects(
     measureHostedBrowserWorkerRuntime({
@@ -845,7 +868,53 @@ test("hosted worker fails closed before startup on an installed runtime mismatch
         throw new Error("exec failed");
       },
     }),
-    /runtime measurement failed/u,
+    /engine version probe failed/u,
+  );
+});
+
+test("hosted worker rejects labeled stderr output before startup", async () => {
+  await assert.rejects(
+    measureHostedBrowserWorkerRuntime({
+      engineExecutablePath: "/runtime/agent-browser",
+      chromeExecutablePath: "/runtime/chrome",
+      async probe(executablePath) {
+        return executablePath.endsWith("agent-browser")
+          ? { stdout: "agent-browser 0.35.0-kestrel.1\n", stderr: "" }
+          : {
+              stdout: "Google Chrome for Testing 152.0.7977.54\n",
+              stderr: "private warning",
+            };
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Chrome version output/u);
+      assert.doesNotMatch(error.message, /private warning|\/runtime/u);
+      return true;
+    },
+  );
+});
+
+test("hosted worker runtime measurement identifies the failed probe without exposing its path", async () => {
+  await assert.rejects(
+    measureHostedBrowserWorkerRuntime({
+      engineExecutablePath: "/secret/runtime/agent-browser",
+      chromeExecutablePath: "/secret/runtime/chrome",
+      async probe(executablePath) {
+        if (executablePath.endsWith("chrome")) {
+          throw Object.assign(new Error("private provider detail"), {
+            killed: true,
+          });
+        }
+        return { stdout: "agent-browser 0.35.0-kestrel.1\n", stderr: "" };
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Chrome version probe timed out after 15000ms/u);
+      assert.doesNotMatch(error.message, /secret|provider detail/u);
+      return true;
+    },
   );
 });
 
