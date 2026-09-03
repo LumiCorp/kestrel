@@ -1181,6 +1181,100 @@ test("scoped Browser policy and execution carry the canonical Desktop app root",
   assert.deepEqual(executionAuthority, expectedAuthority);
 });
 
+test("hosted Browser authority keeps the product Thread distinct from orchestration", async () => {
+  const expectedAuthority = {
+    threadId: "hosted-thread-1",
+    projectId: "hosted-project-1",
+  };
+  let policyAuthority: unknown;
+  let executionAuthority: unknown;
+  const port: BrowserServicePort = {
+    ...passiveBrowserPort(),
+    async resolvePolicy(input) {
+      policyAuthority = input.authority;
+      return {
+        version: "browser_policy_resolution_v1",
+        decision: "allow",
+        policyRevision: "hosted-policy-1",
+        sessionMode: "operator",
+      };
+    },
+    async execute(_prepared, lifecycle) {
+      executionAuthority = lifecycle.authority;
+      await lifecycle.acknowledgeDispatch();
+      return validOutputs["browser.request_grant"];
+    },
+  };
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.request_grant"],
+    context: { browserService: port },
+  });
+  const runContext = {
+    runId: "hosted-authority-run",
+    sessionId: "hosted-thread-1",
+    payload: {
+      actor: { actorId: "user-1", actorType: "end_user" },
+      hostedApprovalAuthority: {
+        version: "runner_hosted_approval_authority_v1",
+        organizationId: "organization-1",
+        environmentId: "environment-1",
+        projectId: "hosted-project-1",
+        threadId: "hosted-thread-1",
+      },
+      orchestration: {
+        threadId: "thread-main:hosted-thread-1",
+      },
+      metadata: {
+        threadId: "thread-main:hosted-thread-1",
+      },
+      projectContext: {
+        projectId: "orchestration-project-1",
+      },
+    },
+    sessionState: {},
+  };
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    runContext,
+    toolNames: ["browser.request_grant"],
+  });
+  const activation = snapshot.tools[0]!;
+  const origin = {
+    kind: "model" as const,
+    snapshotId: snapshot.snapshotId,
+    modelToolCallId: "hosted-grant-call",
+  };
+  const rawInput = {
+    sessionId: "browser-session-1",
+    generation: 1,
+    destination: "https://example.com",
+  };
+  const inspection = await registry.inspectToolCall(
+    { activation, origin, rawInput },
+    { runContext },
+  );
+  assert.deepEqual(policyAuthority, expectedAuthority);
+  assert.ok(inspection.policy);
+
+  const prepared = await registry.prepareToolCall(
+    {
+      runId: runContext.runId,
+      sessionId: runContext.sessionId,
+      callId: "hosted-grant-call",
+      activation,
+      origin,
+      rawInput,
+      policy: inspection.policy,
+    },
+    { runContext },
+  );
+  const result = await registry.executePreparedToolCall(prepared, {
+    runContext,
+  });
+
+  assert.equal(result.outcome.kind, "success");
+  assert.deepEqual(executionAuthority, expectedAuthority);
+});
+
 test("QA Browser policy cannot produce a personal-domain approval", async () => {
   const registry = new UnifiedToolRegistry({
     allowlist: ["browser.request_grant"],
