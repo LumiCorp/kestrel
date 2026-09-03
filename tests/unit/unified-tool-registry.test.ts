@@ -174,7 +174,7 @@ function unsignedExecutionTicket(expiresAt: number, nonce: string) {
   ].join(".");
 }
 
-test("authorization-only hosted turns expose Browser tools only to their scoped run", async () => {
+test("authorization-only hosted turns expose Browser tools after authorization is stripped", async () => {
   const runId = "browser-run";
   const sessionId = "browser-session";
   const executionTicket = [
@@ -191,21 +191,25 @@ test("authorization-only hosted turns expose Browser tools only to their scoped 
       },
     },
   });
-  const turn = {
+  const authorizedTurn = {
     runId,
     sessionId,
     mcpAuthorization: { executionTicket },
+  };
+  const persistedTurn = {
+    runId: "browser-engine-run",
+    sessionId,
   };
 
   try {
     assert.deepEqual(registry.resolveAvailableAllowlist(["browser.open"]), []);
 
-    await registry.refreshForRuntimeTurn(turn);
+    await registry.refreshForRuntimeTurn(authorizedTurn);
 
     assert.deepEqual(
       registry.resolveAvailableAllowlistForRuntimeTurn(
         ["browser.open"],
-        turn,
+        persistedTurn,
         { includeGrantedMcpTools: false },
       ),
       ["browser.open"],

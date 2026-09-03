@@ -3849,11 +3849,11 @@ function createRuntimeWithStore(
     getSession: (sessionId) => kestrel.getSession(sessionId),
     runKernel: (event, runOptions) => kestrel.run(event, runOptions),
     refreshToolRuntime: (input) =>
-      input?.mcpContext !== undefined || input?.mcpAuthorization !== undefined
+      input !== undefined
         ? toolRegistry.refreshForRuntimeTurn(input)
         : toolRegistry.refreshRuntime(),
     resolveAvailableToolAllowlist: (allowlist, input, options) =>
-      input?.mcpContext !== undefined || input?.mcpAuthorization !== undefined
+      input !== undefined
         ? toolRegistry.resolveAvailableAllowlistForRuntimeTurn(
             allowlist,
             input,
