@@ -22,6 +22,7 @@ export async function resolveHostedBrowserService(input: {
     organizationId: input.ticket.organizationId,
     environmentId: input.ticket.environmentId,
     userId: input.ticket.actorId,
+    executionId: input.ticket.runId,
   });
 }
 
@@ -29,6 +30,7 @@ export async function resolveHostedBrowserServiceForAuthority(input: {
   organizationId: string;
   environmentId: string;
   userId: string;
+  executionId?: string | undefined;
 }): Promise<HostedBrowserService> {
   const environment = await knowledgeDb.query.environments.findFirst({
     where: and(
@@ -75,6 +77,7 @@ export async function resolveHostedBrowserServiceForAuthority(input: {
       organizationId: input.organizationId,
       environmentId: input.environmentId,
       userId: input.userId,
+      ...(input.executionId ? { executionId: input.executionId } : {}),
     },
     appName: environment.flyAppName,
     gatewayMachineId: environment.flyGatewayMachineId,
