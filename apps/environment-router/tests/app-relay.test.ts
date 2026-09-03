@@ -8,6 +8,8 @@ import {
   handleAppRelay,
   isAllowedAppRequest,
   MAX_APP_RELAY_SERIALIZED_BYTES,
+  APP_RELAY_REQUEST_TIMEOUT_MS,
+  BROWSER_ACCEPT_REQUEST_TIMEOUT_MS,
 } from "../src/app-relay.js";
 import {
   HostedBrowserEgressRegistry,
@@ -16,8 +18,15 @@ import {
 } from "../src/browser-egress.js";
 import { EnvironmentGatewayConfigClient } from "../src/gateway-config.js";
 
+// The Gateway reads only expiry; the worker owns signature validation.
+function readinessCapability(expiresAt = new Date(Date.now() + 60_000).toISOString()) {
+  return `${Buffer.from(JSON.stringify({ expiresAt })).toString("base64url")}.fixture-signature`;
+}
+
 test("ordinary App relay uses the settled 20 MiB serialized payload ceiling", () => {
   assert.equal(MAX_APP_RELAY_SERIALIZED_BYTES, 20 * 1024 * 1024);
+  assert.equal(APP_RELAY_REQUEST_TIMEOUT_MS, 30_000);
+  assert.equal(BROWSER_ACCEPT_REQUEST_TIMEOUT_MS, 60_000);
 });
 
 test("app relay refreshes expired execution tickets and enforces workspace and path scope", async () => {
@@ -680,7 +689,7 @@ test("Browser download staging cancels only a proven known pre-effect failure", 
   }
 });
 
-test("Browser relay retries a lost accept response with the same private instruction", async () => {
+test("Browser relay retries a transient worker transport failure inside one open acceptance", async () => {
   const fixture = await createRelayFixture();
   let controlAccepts = 0;
   const workerBodies: string[] = [];
@@ -688,10 +697,10 @@ test("Browser relay retries a lost accept response with the same private instruc
     version: "hosted_browser_relay_instruction_v1",
     phase: "accept",
     operationId: "call-retry",
-    operation: "browser.navigate",
+    operation: "browser.open",
     sessionId: "browser-session-retry",
     generation: 1,
-    capability: "private-capability-retry",
+    capability: readinessCapability(),
     machine: { appName: "kestrel-env-test", machineId: "machine-browser-retry" },
     prepared: { callId: "call-retry" },
     authority: { effectiveAllowlistRevision: "revision-1" },
@@ -705,6 +714,7 @@ test("Browser relay retries a lost accept response with the same private instruc
     }) as typeof fetch,
     browserWorkerFetchImpl: (async (_url, init) => {
       workerAccepts += 1;
+      assert.equal(init?.redirect, "manual", "private authority must not follow redirects");
       workerBodies.push(String(init?.body));
       if (workerAccepts === 1) throw new Error("worker response lost");
       return Response.json({
@@ -726,7 +736,7 @@ test("Browser relay retries a lost accept response with the same private instruc
   await once(relay, "listening");
   const address = relay.address();
   assert.ok(address && typeof address !== "string");
-  const url = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/navigate/auto/control/accept`;
+  const url = `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/open/auto/control/accept`;
   const request = () => fetch(url, {
     method: "POST",
     headers: {
@@ -736,7 +746,6 @@ test("Browser relay retries a lost accept response with the same private instruc
     body: JSON.stringify({ prepared: { callId: "call-retry" } }),
   });
   try {
-    assert.equal((await request()).status, 503);
     assert.equal((await request()).status, 200);
     assert.equal(controlAccepts, 1);
     assert.equal(workerAccepts, 2);
@@ -746,6 +755,217 @@ test("Browser relay retries a lost accept response with the same private instruc
     fixture.config.stop();
   }
 });
+
+for (const status of [301, 307, 400, 409, 503]) {
+test(`Browser open does not retry a worker HTTP ${status} response`, async () => {
+  const fixture = await createRelayFixture();
+  const egress = new RecordingBrowserEgressRegistry();
+  let workerAccepts = 0;
+  let startupFailures = 0;
+  const instruction = {
+    version: "hosted_browser_relay_instruction_v1",
+    phase: "accept",
+    operationId: "call-http-failure",
+    operation: "browser.open",
+    sessionId: "browser-session-http-failure",
+    generation: 4,
+    capability: readinessCapability(),
+    machine: { appName: "kestrel-env-test", machineId: "machine-http-failure" },
+    prepared: { callId: "call-http-failure" },
+    authority: { effectiveAllowlistRevision: "revision-1" },
+  };
+  const relay = createServer((request, response) => void handleAppRelay({
+    request,
+    response,
+    config: fixture.config,
+    browserEgress: egress,
+    fetchImpl: (async (url) => {
+      if (new URL(String(url)).pathname.endsWith("/startup-failed")) {
+        startupFailures += 1;
+        return Response.json({ cleaned: true });
+      }
+      return Response.json(instruction);
+    }) as typeof fetch,
+    browserWorkerFetchImpl: (async (_url, init) => {
+      workerAccepts += 1;
+      assert.equal(init?.redirect, "manual");
+      return Response.json(
+        { error: { code: "BROWSER_ENGINE_FAILURE" } },
+        { status },
+      );
+    }) as typeof fetch,
+  }));
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const address = relay.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/open/auto/control/accept`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${fixture.workspaceToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ prepared: { callId: "call-http-failure" } }),
+      },
+    );
+    // Unknown worker outcomes stay fail-closed; no HTTP response is retried.
+    assert.equal(response.status, 503);
+    assert.equal(workerAccepts, 1);
+    assert.equal(startupFailures, 1);
+    assert.deepEqual(egress.closed, [{
+      sessionId: "browser-session-http-failure",
+      generation: 4,
+    }]);
+  } finally {
+    relay.close();
+    await egress.closeAll();
+    fixture.config.stop();
+  }
+});
+
+}
+
+test("Browser open deadline closes provisional egress and notifies startup failure once", async () => {
+  const fixture = await createRelayFixture();
+  const egress = new RecordingBrowserEgressRegistry();
+  let workerAccepts = 0;
+  let startupFailures = 0;
+  const instruction = {
+    version: "hosted_browser_relay_instruction_v1",
+    phase: "accept",
+    operationId: "call-cancelled",
+    operation: "browser.open",
+    sessionId: "browser-session-cancelled",
+    generation: 7,
+    capability: readinessCapability(),
+    machine: { appName: "kestrel-env-test", machineId: "machine-cancelled" },
+    prepared: { callId: "call-cancelled" },
+    authority: { effectiveAllowlistRevision: "revision-1" },
+  };
+  const relay = createServer((request, response) => void handleAppRelay({
+    request,
+    response,
+    config: fixture.config,
+    requestTimeoutMs: 10,
+    browserEgress: egress,
+    fetchImpl: (async (url) => {
+      if (new URL(String(url)).pathname.endsWith("/startup-failed")) {
+        startupFailures += 1;
+        return Response.json({ cleaned: true });
+      }
+      return Response.json(instruction);
+    }) as typeof fetch,
+    browserWorkerFetchImpl: (async () => {
+      workerAccepts += 1;
+      throw new Error("worker unavailable");
+    }) as typeof fetch,
+  }));
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const address = relay.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/open/auto/control/accept`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${fixture.workspaceToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ prepared: { callId: "call-cancelled" } }),
+      },
+    );
+    assert.equal(response.status, 503);
+    assert.equal(workerAccepts, 1);
+    assert.equal(startupFailures, 1);
+    assert.deepEqual(egress.closed, [{
+      sessionId: "browser-session-cancelled",
+      generation: 7,
+    }]);
+  } finally {
+    relay.close();
+    await egress.closeAll();
+    fixture.config.stop();
+  }
+});
+
+for (const scenario of ["malformed capability", "expired capability", "invalid Machine", "capability expiry", "client cancellation"] as const) {
+  test(`Browser open fails closed on ${scenario}`, { timeout: 3000 }, async () => {
+    const fixture = await createRelayFixture();
+    const egress = new RecordingBrowserEgressRegistry();
+    const client = new AbortController();
+    let workerAccepts = 0;
+    let controlAccepts = 0;
+    let startupFailures = 0;
+    let notifyCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => { notifyCleanup = resolve; });
+    const instruction = {
+      version: "hosted_browser_relay_instruction_v1",
+      phase: "accept",
+      operationId: "call-unavailable",
+      operation: "browser.open",
+      sessionId: "browser-session-unavailable",
+      generation: 8,
+      capability: readinessCapability(),
+      machine: { appName: "kestrel-env-test", machineId: "machine-unavailable" },
+      prepared: { callId: "call-unavailable" },
+      authority: { effectiveAllowlistRevision: "revision-1" },
+    };
+    const relay = createServer((request, response) => void handleAppRelay({
+      request, response, config: fixture.config, browserEgress: egress,
+      fetchImpl: (async (url, init) => {
+        if (new URL(String(url)).pathname.endsWith("/startup-failed")) {
+          startupFailures += 1;
+          assert.equal(init?.signal?.aborted, false, "cleanup uses an independent signal");
+          assert.deepEqual(JSON.parse(String(init?.body)).instruction, instruction);
+          notifyCleanup();
+          return Response.json({ cleaned: true });
+        }
+        controlAccepts += 1;
+        if (scenario === "malformed capability") instruction.capability = "malformed";
+        if (scenario === "expired capability") instruction.capability = readinessCapability(new Date(0).toISOString());
+        if (scenario === "invalid Machine") instruction.machine.machineId = "invalid/locator";
+        if (scenario === "capability expiry") instruction.capability = readinessCapability(new Date(Date.now() + 50).toISOString());
+        return Response.json(instruction);
+      }) as typeof fetch,
+      browserWorkerFetchImpl: (async (_url, init) => {
+        workerAccepts += 1;
+        if (scenario === "client cancellation") client.abort();
+        // A stalled transport must obey cancellation/expiry, without a response.
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        });
+      }) as typeof fetch,
+    }));
+    relay.listen(0, "127.0.0.1");
+    await once(relay, "listening");
+    const address = relay.address();
+    assert.ok(address && typeof address !== "string");
+    try {
+      const response = fetch(`http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/apps/built_in.browser/open/auto/control/accept`, {
+        method: "POST", signal: client.signal,
+        headers: { authorization: `Bearer ${fixture.workspaceToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ prepared: instruction.prepared }),
+      });
+      if (scenario === "client cancellation") await assert.rejects(response, { name: "AbortError" });
+      else assert.equal((await response).status, 503);
+      await cleanup;
+      assert.equal(controlAccepts, 1);
+      assert.equal(workerAccepts, scenario === "capability expiry" || scenario === "client cancellation" ? 1 : 0);
+      assert.equal(startupFailures, 1);
+      assert.deepEqual(egress.closed, [{ sessionId: instruction.sessionId, generation: instruction.generation }]);
+    } finally {
+      relay.closeAllConnections();
+      relay.close();
+      await egress.closeAll();
+      fixture.config.stop();
+    }
+  });
+}
 
 test("Browser relay returns a validated pre-dispatch result without invoking the worker", async () => {
   const fixture = await createRelayFixture();

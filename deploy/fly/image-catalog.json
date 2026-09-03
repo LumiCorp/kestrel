@@ -5,7 +5,6 @@
       "role": "workspace-runtime",
       "publisher": "ghcr",
       "repository": "ghcr.io/lumicorp/kestrel-workspace-runtime",
-      "app": "kestrel-one-runner",
       "dockerfile": "apps/workspace-runtime/Dockerfile",
       "smoke": "apps/workspace-runtime/scripts/image-smoke.sh",
       "rollout": "environment"
@@ -14,7 +13,6 @@
       "role": "environment-router",
       "publisher": "ghcr",
       "repository": "ghcr.io/lumicorp/kestrel-environment-router",
-      "app": "kestrel-one-runner",
       "dockerfile": "apps/environment-router/Dockerfile",
       "smoke": "apps/environment-router/scripts/image-smoke.sh",
       "rollout": "environment"

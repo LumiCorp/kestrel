@@ -61,13 +61,6 @@ const nodeTestGroupRunner = readFileSync(
   new URL("../../scripts/validation/run-node-test-group.mjs", import.meta.url),
   "utf8",
 );
-const runnerDockerIgnore = readFileSync(
-  new URL(
-    "../../deploy/fly/kestrel-one-runner/Dockerfile.dockerignore",
-    import.meta.url,
-  ),
-  "utf8",
-);
 const workflow = readFileSync(
   new URL("../../.github/workflows/ci.yml", import.meta.url),
   "utf8",
@@ -723,8 +716,6 @@ test("root builds prepare every shared workspace artifact before compilation", (
     rootPackage.scripts?.["web:prepare"] ?? "",
     /--filter @kestrel-agents\/workspace-skills build/u,
   );
-  assert.match(runnerDockerIgnore, /^tests\/\*$/mu);
-  assert.doesNotMatch(runnerDockerIgnore, /tests\/helpers/u);
 });
 
 test("workspace type analysis does not repeat shared package build coverage", () => {

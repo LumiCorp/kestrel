@@ -3012,21 +3012,23 @@ test("engine launch failure before a PID binding terminalizes and removes openin
   assert.equal(ledger.sessions[0]?.state, "failed");
 });
 
-test("Desktop Browser derives a short private socket path and removes it on cleanup", async () => {
-  const sessionSuffix = "123e4567-e89b-12d3-a456-426614174000";
-  const fixture = await createFixture({ randomId: () => sessionSuffix });
-  await openSession(fixture.service);
-  const invocation = fixture.engine.opened[0]!;
-  const socketFile = path.join(
-    invocation.socketPath,
-    `${invocation.sessionId}.sock`,
-  );
-  assert.equal(Buffer.byteLength(socketFile, "utf8") <= 103, true, socketFile);
-  assert.equal((await stat(invocation.socketPath)).mode & 0o777, 0o700);
-  assert.equal(invocation.socketPath.startsWith("/tmp/kestrel-browser-"), true);
-  await fixture.service.close();
-  await assert.rejects(stat(invocation.socketPath), { code: "ENOENT" });
-});
+for (const sessionSuffix of ["123e4567-e89b-12d3-a456-426614174000", "a".repeat(64)]) {
+  test(`Desktop Browser derives a short private socket path for ${sessionSuffix.length}-character IDs and removes it on cleanup`, async () => {
+    const fixture = await createFixture({ randomId: () => sessionSuffix });
+    await openSession(fixture.service);
+    const invocation = fixture.engine.opened[0]!;
+    const socketFile = path.join(
+      invocation.socketPath,
+      `${invocation.sessionId}.sock`,
+    );
+    assert.equal(Buffer.byteLength(socketFile, "utf8") <= 103, true, socketFile);
+    assert.equal((await stat(invocation.socketPath)).mode & 0o777, 0o700);
+    assert.equal(path.dirname(invocation.socketPath), `/tmp/b${(process.getuid?.() ?? 0).toString(36)}`);
+    assert.equal(Buffer.byteLength(path.join(`/tmp/b${(4294967295).toString(36)}`, path.basename(invocation.socketPath), `${invocation.sessionId}.sock`)) <= 103, true);
+    await fixture.service.close();
+    await assert.rejects(stat(invocation.socketPath), { code: "ENOENT" });
+  });
+}
 
 test("approved active-turn upload revalidates exact metadata and target before owned staging and dispatch", async () => {
   const bytes = Buffer.from("approved attachment bytes");
@@ -4715,8 +4717,8 @@ test("hosted/default agent-browser launch stays headless while packaged Desktop 
   assert.equal(
     Buffer.byteLength(
       path.join(
-        "/tmp/kestrel-browser-4294967295",
-        "0123456789abcdef",
+        `/tmp/b${(4294967295).toString(36)}`,
+        "ASNFZ4mrze8",
         "org.chromium.Chromium.123456",
         "SingletonSocket",
       ),

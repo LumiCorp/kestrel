@@ -127,6 +127,7 @@ if [[ ! "$preview_address" =~ ^[0-9]+(\.[0-9]+){3}$ ||
   printf 'hosted Browser image smoke fixture addresses are invalid\n' >&2
   exit 1
 fi
+cold_start_deadline=$((SECONDS + 60))
 worker_container="$(docker run --detach \
   --platform linux/amd64 \
   --name "$worker_name" \
@@ -135,7 +136,7 @@ worker_container="$(docker run --detach \
   --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=512m \
   --shm-size 256m \
-  --env KESTREL_BROWSER_SESSION_ID=browser-image-smoke-session \
+  --env KESTREL_BROWSER_SESSION_ID=browser-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   --env KESTREL_BROWSER_GENERATION=1 \
   --env KESTREL_BROWSER_ORGANIZATION_ID=browser-image-smoke-org \
   --env KESTREL_BROWSER_ENVIRONMENT_ID=browser-image-smoke-environment \
@@ -156,7 +157,7 @@ worker_container="$(docker run --detach \
 # The entrypoint installs the namespace firewall before dropping every
 # capability and starting the fixed nonroot worker process.
 worker_ready=false
-for _attempt in {1..50}; do
+while (( SECONDS < cold_start_deadline )); do
   if [[ "$(docker container inspect --format '{{.State.Running}}' "$worker_container")" != "true" ]]; then
     break
   fi
@@ -181,6 +182,25 @@ docker exec "$worker_container" node --input-type=module --eval '
     throw new Error("hosted Browser worker did not drop to the fixed unprivileged runtime");
   }
 '
+
+# PID 1 transitions before the worker completes its exact executable
+# qualification. Wait for the actual listener under the production cold-start
+# ceiling so the smoke cannot pass while Chrome is still being measured.
+if ! docker exec --env "KESTREL_SMOKE_READY_BUDGET_MS=$(((cold_start_deadline - SECONDS) * 1000))" "$worker_container" node --input-type=module --eval '
+  const deadline = Date.now() + Number(process.env.KESTREL_SMOKE_READY_BUDGET_MS);
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch("http://127.0.0.1:43105/", { signal: AbortSignal.timeout(Math.max(1, Math.min(500, deadline - Date.now()))) });
+      if (response.status > 0) process.exit(0);
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("hosted Browser worker listener did not start within 60 seconds");
+'; then
+  docker logs "$worker_container" >&2 || true
+  printf 'hosted Browser worker listener qualification failed\n' >&2
+  exit 1
+fi
 
 # A non-Chrome process cannot reach the public Internet, another Machine, or
 # the Gateway without the exact proxy credential.
@@ -235,20 +255,6 @@ docker exec --user 10001:10001 "$worker_container" bash -ceu '
   set -e
   [[ "$public_status" == "124" ]]
   [[ -z "$public_output" || "$public_output" == *"ERR_"* ]]
-'
-
-# The worker listener remains reachable from loopback. Authorized Browser
-# navigation is proved below and can reach the preview only through the
-# authenticated Gateway proxy.
-docker exec "$worker_container" node --input-type=module --eval '
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    try {
-      const response = await fetch("http://127.0.0.1:43105/");
-      if (response.status > 0) process.exit(0);
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error("hosted Browser image loopback fixture did not start");
 '
 
 # A compromised unprivileged worker can open another listener, but the
@@ -342,7 +348,7 @@ docker exec "$worker_container" node --input-type=module --eval '
 docker exec "$worker_container" node --input-type=module --eval '
   import { existsSync } from "node:fs";
   import { execFileSync } from "node:child_process";
-  const runtimePath = "/tmp/kb/browser/runtime/browser-image-smoke-session";
+  const runtimePath = `/tmp/kb/browser/runtime/${process.env.KESTREL_BROWSER_SESSION_ID}`;
   if (existsSync(runtimePath)) {
     throw new Error("hosted Browser close retained its owned runtime/profile");
   }

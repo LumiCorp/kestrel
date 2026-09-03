@@ -54,7 +54,6 @@ test("marks expiry durably before deleting and confirming cleanup", async () => 
   assert.deepEqual(fixture.events, [
     "terminal:expired",
     "delete:machine-1",
-    "wait:machine-1",
     "confirm",
   ]);
 });
@@ -69,7 +68,6 @@ test("expires a resource-less opening and deletes its exact labeled worker", asy
   assert.deepEqual(fixture.events, [
     "terminal:expired",
     "delete:machine-1",
-    "wait:machine-1",
   ]);
 });
 
@@ -87,7 +85,6 @@ test("retries terminal cleanup after a deletion failure", async () => {
   assert.equal(second.cleanedSessions, 1);
   assert.deepEqual(fixture.events, [
     "delete:machine-1",
-    "wait:machine-1",
     "confirm",
   ]);
 });
@@ -102,7 +99,6 @@ test("fails a wrong worker closed before deletion", async () => {
   assert.deepEqual(fixture.events, [
     "terminal:lost",
     "delete:machine-1",
-    "wait:machine-1",
     "confirm",
   ]);
 });
@@ -117,7 +113,7 @@ test("fails an attached worker from an obsolete configured release", async () =>
   assert.deepEqual(fixture.events.slice(0, 3), [
     "terminal:lost",
     "delete:machine-1",
-    "wait:machine-1",
+    "confirm",
   ]);
 });
 
@@ -125,7 +121,7 @@ test("deletes Browser-labeled machines not owned by a scoped durable record", as
   const fixture = makeFixture([], [machine({ id: "orphan-1" })]);
   const result = await fixture.reconcile();
   assert.equal(result.orphanMachinesDeleted, 1);
-  assert.deepEqual(fixture.events, ["delete:orphan-1", "wait:orphan-1"]);
+  assert.deepEqual(fixture.events, ["delete:orphan-1"]);
 });
 
 test("does not orphan a durable worker outside the bounded session batch", async () => {
