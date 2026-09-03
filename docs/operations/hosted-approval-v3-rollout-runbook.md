@@ -120,9 +120,9 @@ without an explained, exact operation, stop.
 Publish only the final images required by the source delta:
 
 ```bash
-pnpm production:image:publish --role workspace-runtime --tag <release-tag> --approval-protocol v4
+pnpm production:image:publish --role workspace-runtime --tag <release-tag>
 pnpm production:image:publish --role environment-router --tag <release-tag>
-pnpm production:image:publish --role turn-worker --tag <release-tag> --approval-protocol v4
+pnpm production:image:publish --role turn-worker --tag <release-tag>
 pnpm production:image:publish --role control-worker --tag <release-tag>
 pnpm production:image:publish --role browser-worker --tag <release-tag>
 ```
@@ -130,9 +130,11 @@ pnpm production:image:publish --role browser-worker --tag <release-tag>
 Omit unaffected roles only when the source delta and qualification evidence
 prove they are unaffected. Record the immutable repository digest printed by
 every publisher. Workspace Runtime and turn-worker images must report producer
-protocol V4 in their runtime environment and OCI label. Never publish a V2 producer image,
-reuse an intermediate tag, or convert an existing image by
-retagging it.
+protocol V4 in their resolved hosted profile. The publisher intentionally has
+no operator-selectable approval-protocol argument: the producer protocol is
+derived from the shared immutable hosted-profile contract.
+Never publish a V2 producer image, reuse an intermediate tag, or convert an
+existing image by retagging it.
 
 Run the disposable worker and runtime-pair canaries required by the linked
 rollout documents before changing production targets.

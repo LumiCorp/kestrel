@@ -517,7 +517,11 @@ test("hosted approval rollout enforces Web-first V4 steady state without compati
   assert.match(runbook, /environment\.update\.ready/u);
   assert.match(runbook, /Do not roll Web back by itself/u);
   assert.match(runbook, /Never publish a V2 producer image/u);
-  assert.doesNotMatch(runbook, /--approval-protocol v2/u);
+  assert.match(
+    runbook,
+    /publisher intentionally has\s+no operator-selectable approval-protocol argument/iu,
+  );
+  assert.doesNotMatch(runbook, /--approval-protocol/u);
   assert.doesNotMatch(runbook, /kestrel@4/u);
   assert.doesNotMatch(runbook, /preset-4\/V2/u);
 });
