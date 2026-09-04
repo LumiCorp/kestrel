@@ -12,6 +12,8 @@ import { parseWorkspaceCanaryRevision } from "./lib/workspace-canary-revision";
 import {
   assertExecCommandNoSpendPreflight,
   isCurrentExecCommandApprovalActionable,
+  matchesExactExecCommandApprovalScope,
+  createExecCommandCanaryApprovalResponse,
 } from "./lib/workspace-command-approval-canary";
 
 type EnvironmentState = {
@@ -322,23 +324,22 @@ async function waitForActivation(initial: EnvironmentState) {
 async function runAgentCommandCanary(marker: string) {
   const messageId = crypto.randomUUID();
   const command = `printf '%s' ${shellQuote(marker)}`;
-  const created = await requestJson<{ turn?: { id?: string; status?: string } }>(
-    `/api/threads/${threadId}/turns`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": messageId,
-      },
-      body: JSON.stringify(
-        createWorkspaceCanaryTurnBody({
-          messageId,
-          modelId: canaryModel.id,
-          command,
-        }),
-      ),
+  const created = await requestJson<{
+    turn?: { id?: string; status?: string };
+  }>(`/api/threads/${threadId}/turns`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": messageId,
     },
-  );
+    body: JSON.stringify(
+      createWorkspaceCanaryTurnBody({
+        messageId,
+        modelId: canaryModel.id,
+        command,
+      }),
+    ),
+  });
   const turnId = created.turn?.id;
   assert(Boolean(turnId), "The build-mode command canary turn was not queued.");
 
@@ -377,17 +378,13 @@ async function runAgentCommandCanary(marker: string) {
   const approvalResponse = await request(`/api/threads/${threadId}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      interactionResponse: {
+    body: JSON.stringify(
+      createExecCommandCanaryApprovalResponse({
         requestId: approval.requestId,
-        eventType: "user.approval",
         turnId: approval.turnId,
-        message: "Approve once",
-        decision: "approve_once",
-        reason: "Kestrel post-cutover exec_command canary",
         messageId: approvalMessageId,
-      },
-    }),
+      }),
+    ),
   });
   await assertOk(
     approvalResponse,
@@ -433,31 +430,6 @@ function findExactExecCommandApproval(input: {
   turnId: string;
   command: string;
 }): ExactExecCommandApproval | null {
-  const toolCalls = new Set<string>();
-  for (const message of input.snapshot.messages ?? []) {
-    if (
-      message.role !== "assistant" ||
-      message.metadata?.kestrelTurnId !== input.turnId ||
-      !Array.isArray(message.parts)
-    ) {
-      continue;
-    }
-    for (const part of message.parts) {
-      const partRecord = asRecord(part);
-      const data = asRecord(partRecord?.data);
-      const toolInput = asRecord(data?.input);
-      if (
-        partRecord?.type === "data-kestrel-tool" &&
-        data?.phase === "started" &&
-        data.toolName === "exec_command" &&
-        typeof data.toolCallId === "string" &&
-        toolInput?.command === input.command
-      ) {
-        toolCalls.add(data.toolCallId);
-      }
-    }
-  }
-
   for (const interaction of input.snapshot.interactions ?? []) {
     if (
       interaction.source !== "runtime" ||
@@ -484,7 +456,10 @@ function findExactExecCommandApproval(input: {
     if (
       request.requestId === interaction.requestId &&
       request.approval.toolName === "exec_command" &&
-      toolCalls.has(request.approval.preparedInvocationId) &&
+      matchesExactExecCommandApprovalScope(
+        request.approval.rememberedApprovalScope,
+        input.command,
+      ) &&
       decisions.length === 3 &&
       decisions[0] === "decline" &&
       decisions[1] === "approve_once" &&
@@ -515,13 +490,15 @@ function hasApproveOnceTerminal(
   const interaction = interactions.find(
     (candidate) => candidate.id === approval.interactionId,
   );
-  return interaction?.requestId === approval.requestId &&
+  return (
+    interaction?.requestId === approval.requestId &&
     interaction.turnId === approval.turnId &&
     interaction.status === "resolved" &&
     interaction.responseEnvelope?.decision === "approve_once" &&
     interaction.approvalOutcome?.decision === "approved" &&
     interaction.approvalOutcome.authorizationState === "accepted" &&
-    interaction.approvalOutcome.effectState === "committed";
+    interaction.approvalOutcome.effectState === "committed"
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -660,7 +637,7 @@ async function waitForApplicationProxy(id: string) {
   const deadline = Date.now() + APPLICATION_TIMEOUT_MS;
   let lastStatus = 0;
   while (Date.now() < deadline) {
-    const response = await workspaceRequest(`apps/${id}/proxy/`);
+    const response = await workspaceRequest(`apps/${id}/proxy`);
     lastStatus = response.status;
     if (response.ok && (await response.text()) === APP_RESPONSE) return;
     await sleep(250);

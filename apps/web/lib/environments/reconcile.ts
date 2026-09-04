@@ -183,6 +183,7 @@ async function reconcileOrganizationEnvironments(input: {
   const browser = {
     scannedSessions: 0,
     healthySessions: 0,
+    pendingSessions: 0,
     expiredSessions: 0,
     lostSessions: 0,
     cleanedSessions: 0,
@@ -222,6 +223,7 @@ async function reconcileOrganizationEnvironments(input: {
       });
       browser.scannedSessions += result.scannedSessions;
       browser.healthySessions += result.healthySessions;
+      browser.pendingSessions += result.pendingSessions;
       browser.expiredSessions += result.expiredSessions;
       browser.lostSessions += result.lostSessions;
       browser.cleanedSessions += result.cleanedSessions;
