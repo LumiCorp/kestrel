@@ -2269,7 +2269,16 @@ export class DesktopBrowserService implements BrowserServicePort {
           this.#terminate(runtime, "lost", "BROWSER_SESSION_LOST"),
         );
       }
-      throw error;
+      if (!isBrowserToolName(operation)) throw error;
+      throw normalizeBrowserHostFailure(error, {
+        toolName: operation,
+        dispatchAcknowledged: true,
+        effectful:
+          resolveBrowserToolExecutionClass(
+            operation,
+            prepared.effectiveInput,
+          ) === "external_side_effect",
+      });
     } finally {
       this.#engine.releaseOperation(acceptedOperation);
     }

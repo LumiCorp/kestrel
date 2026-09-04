@@ -1922,6 +1922,42 @@ test("tab loss after an acknowledged effect is unknown while read-only tab loss 
   await fixture.service.close();
 });
 
+test("read-only engine failure is known and leaves the Browser Session usable", async () => {
+  const engine = new FakeEngine();
+  const fixture = await createFixture({ engine });
+  const sessionId = await openSession(fixture.service);
+
+  engine.failNextCommand = new Error("transient snapshot failure");
+  const lifecycle = createLifecycle();
+  await assert.rejects(
+    fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      lifecycle,
+    ),
+    (error: unknown) => {
+      if (!(error instanceof Error)) return false;
+      const record = error as Error & {
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+      return record.code === "BROWSER_ENGINE_FAILURE" &&
+        record.details?.browserOutcomeKnown === true;
+    },
+  );
+  assert.deepEqual(lifecycle.events, ["ack"]);
+  assert.equal(engine.closed.length, 0);
+
+  const recovered = asRecord(
+    await fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      createLifecycle(),
+    ),
+  );
+  assert.equal(recovered.operation, "browser.snapshot");
+  assert.equal(engine.closed.length, 0);
+  await fixture.service.close();
+});
+
 test("interaction rechecks the current document revision before its effect", async () => {
   const engine = new FakeEngine();
   const fixture = await createFixture({ engine });
@@ -4667,7 +4703,7 @@ test("Browser metrics cover safety outcomes and contain metadata only", async ()
       }),
       createLifecycle(),
     ),
-    /private page body/u,
+    hasCode("BROWSER_ENGINE_FAILURE"),
   );
   assert.equal(
     metrics.filter((metric) => metric.name === "browser_unknown_outcome")
@@ -4686,7 +4722,7 @@ test("Browser metrics cover safety outcomes and contain metadata only", async ()
       }),
       createLifecycle(),
     ),
-    /private screenshot failure/u,
+    hasCode("BROWSER_ACTION_OUTCOME_UNKNOWN"),
   );
   await fixture.service.close();
 
