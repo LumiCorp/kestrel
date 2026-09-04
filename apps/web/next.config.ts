@@ -64,6 +64,9 @@ const nextConfig: NextConfig = {
   },
 
   serverExternalPackages: [
+    // Preserve ws optional-native loading and its JavaScript fallback. Bundling
+    // an absent bufferutil as an empty module breaks masked viewer messages.
+    "ws",
     "@kestrel-agents/files",
     "pdf-parse",
     "pdfjs-dist",

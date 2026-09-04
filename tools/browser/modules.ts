@@ -141,10 +141,13 @@ function createBrowserToolModule(toolName: BrowserToolName): SharedToolModule {
         ...(contract.executionClass === "external_side_effect"
           ? {
               approvalCapabilities:
-                contract.approval === "always_approval" ||
-                contract.approval === "dynamic_personal_grant"
+                contract.approval === "always_approval"
                   ? (["external.confirm"] as const)
-                  : (["network.call"] as const),
+                  : contract.approval === "dynamic_personal_grant"
+                    // Automatic App policy removes the confirmation marker;
+                    // a later personal-grant decision still needs real authority.
+                    ? (["network.call", "external.confirm"] as const)
+                    : (["network.call"] as const),
             }
           : {}),
         ...(contract.approval === "always_approval"
