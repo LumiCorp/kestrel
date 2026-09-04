@@ -7,6 +7,10 @@ import type { HostedBrowserResourceRecord } from "./store";
 import { BROWSER_RUNTIME_RELEASE_MANIFEST } from "../../../../src/browser/runtimeReleaseManifest.js";
 import { deleteConfirmedBrowserMachine } from "./machine-cleanup";
 
+// The approved Browser accept budget, measured from durable opening creation.
+// Reconciliation observes this deadline; it never extends worker acceptance.
+export const HOSTED_BROWSER_OPENING_TIMEOUT_MS = 60_000;
+
 const TERMINAL_STATES = new Set<BrowserSessionV1["state"]>([
   "closed",
   "expired",
@@ -20,6 +24,7 @@ export type HostedBrowserReconciliationRecord = {
 };
 
 export interface HostedBrowserReconciliationStore {
+  read(sessionId: string): Promise<HostedBrowserReconciliationRecord | null>;
   listForReconciliation(input: {
     organizationId: string;
     environmentId: string;
@@ -36,6 +41,8 @@ export interface HostedBrowserReconciliationStore {
   markTerminal(input: {
     sessionId: string;
     expectedGeneration?: number | undefined;
+    expectedState?: BrowserSessionV1["state"] | undefined;
+    expectedMachineId?: string | null | undefined;
     state: "closed" | "expired" | "lost" | "failed";
     reason: BrowserSessionV1["terminalReason"] & string;
     now: Date;
@@ -46,6 +53,7 @@ export interface HostedBrowserReconciliationStore {
 export type HostedBrowserReconciliationResult = {
   scannedSessions: number;
   healthySessions: number;
+  pendingSessions: number;
   expiredSessions: number;
   lostSessions: number;
   cleanedSessions: number;
@@ -62,7 +70,9 @@ export async function reconcileHostedBrowserSessionsForEnvironment(input: {
   store: HostedBrowserReconciliationStore;
   machines: BrowserMachineInfrastructureProvider;
   now?: Date | undefined;
-  onFailure?: ((error: unknown, metadata: Record<string, string>) => void) | undefined;
+  onFailure?:
+    | ((error: unknown, metadata: Record<string, string>) => void)
+    | undefined;
 }): Promise<HostedBrowserReconciliationResult> {
   const now = input.now ?? new Date();
   const records = await input.store.listForReconciliation({
@@ -82,6 +92,7 @@ export async function reconcileHostedBrowserSessionsForEnvironment(input: {
   const result: HostedBrowserReconciliationResult = {
     scannedSessions: records.length,
     healthySessions: 0,
+    pendingSessions: 0,
     expiredSessions: 0,
     lostSessions: 0,
     cleanedSessions: 0,
@@ -91,10 +102,13 @@ export async function reconcileHostedBrowserSessionsForEnvironment(input: {
 
   for (const record of records) {
     try {
+      const current = await input.store.read(record.session.sessionId);
+      if (!current) continue;
+      if (current.resource) handledMachineIds.add(current.resource.machineId);
       await reconcileRecord({
         ...input,
         now,
-        record,
+        record: current,
         machineById,
         handledMachineIds,
         result,
@@ -127,7 +141,7 @@ export async function reconcileHostedBrowserSessionsForEnvironment(input: {
 
   let orphanDeletionAttempts = 0;
   for (const machine of [...machines].sort((left, right) =>
-    left.id.localeCompare(right.id)
+    left.id.localeCompare(right.id),
   )) {
     if (orphanDeletionAttempts >= 100) break;
     if (
@@ -169,14 +183,15 @@ async function reconcileRecord(input: {
   machines: BrowserMachineInfrastructureProvider;
   now: Date;
   record: HostedBrowserReconciliationRecord;
-  machineById: Map<
-    string,
-    EnvironmentProviderMachine
-  >;
+  machineById: Map<string, EnvironmentProviderMachine>;
   handledMachineIds: Set<string>;
   result: HostedBrowserReconciliationResult;
 }) {
   const { session, resource } = input.record;
+  if (session.state === "opening") {
+    await reconcileOpening(input);
+    return;
+  }
   if (!resource) {
     const matchingMachines = [...input.machineById.values()].filter(
       (machine) => machine.browserSessionId === session.sessionId,
@@ -186,16 +201,13 @@ async function reconcileRecord(input: {
       input.now >= new Date(session.idleExpiresAt) ||
       input.now >= new Date(session.hardExpiresAt)
     ) {
-      await input.store.markTerminal({
-        sessionId: session.sessionId,
-        expectedGeneration: session.generation,
+      await markRecordTerminal(input, {
         state: "expired",
         reason: "BROWSER_SESSION_EXPIRED",
-        now: input.now,
       });
       input.result.expiredSessions += 1;
       for (const machine of matchingMachines.filter((candidate) =>
-        hasExactUnattachedIdentity(input, candidate)
+        hasExactUnattachedIdentity(input, candidate),
       )) {
         input.handledMachineIds.add(machine.id);
         await deleteConfirmedMachine(input.machines, input.appName, machine.id);
@@ -203,20 +215,9 @@ async function reconcileRecord(input: {
       }
       return;
     }
-    if (
-      session.state === "opening" &&
-      matchingMachines.length === 1 &&
-      isExpectedUnattachedMachine(input, matchingMachines[0]!)
-    ) {
-      input.result.healthySessions += 1;
-      return;
-    }
-    await input.store.markTerminal({
-      sessionId: session.sessionId,
-      expectedGeneration: session.generation,
+    await markRecordTerminal(input, {
       state: "lost",
       reason: "BROWSER_SESSION_LOST",
-      now: input.now,
     });
     input.result.lostSessions += 1;
     return;
@@ -228,12 +229,9 @@ async function reconcileRecord(input: {
   }
 
   if (session.state === "closing") {
-    await input.store.markTerminal({
-      sessionId: session.sessionId,
-      expectedGeneration: session.generation,
+    await markRecordTerminal(input, {
       state: "closed",
       reason: "closed_by_user",
-      now: input.now,
     });
     await cleanupRecord(input, resource);
     return;
@@ -243,30 +241,23 @@ async function reconcileRecord(input: {
     input.now >= new Date(session.idleExpiresAt) ||
     input.now >= new Date(session.hardExpiresAt)
   ) {
-    await input.store.markTerminal({
-      sessionId: session.sessionId,
-      expectedGeneration: session.generation,
+    await markRecordTerminal(input, {
       state: "expired",
       reason: "BROWSER_SESSION_EXPIRED",
-      now: input.now,
     });
     input.result.expiredSessions += 1;
     await cleanupRecord(input, resource);
     return;
   }
 
-  const machine = input.machineById.get(resource.machineId) ??
-    (await input.machines.getMachine({
-      appName: input.appName,
-      machineId: resource.machineId,
-    }));
+  const machine = await input.machines.getMachine({
+    appName: input.appName,
+    machineId: resource.machineId,
+  });
   if (!machine) {
-    await input.store.markTerminal({
-      sessionId: session.sessionId,
-      expectedGeneration: session.generation,
+    await markRecordTerminal(input, {
       state: "lost",
       reason: "BROWSER_SESSION_LOST",
-      now: input.now,
     });
     input.result.lostSessions += 1;
     await input.store.confirmCleanup(session.sessionId, input.now);
@@ -275,12 +266,9 @@ async function reconcileRecord(input: {
   }
 
   if (!isExpectedMachine(input, machine)) {
-    await input.store.markTerminal({
-      sessionId: session.sessionId,
-      expectedGeneration: session.generation,
+    await markRecordTerminal(input, {
       state: "lost",
       reason: "BROWSER_ENGINE_FAILURE",
-      now: input.now,
     });
     input.result.lostSessions += 1;
     await cleanupRecord(input, resource);
@@ -290,28 +278,105 @@ async function reconcileRecord(input: {
   input.result.healthySessions += 1;
 }
 
-function isExpectedUnattachedMachine(
-  input: Parameters<typeof reconcileRecord>[0],
-  machine: EnvironmentProviderMachine,
-) {
-  return (
-    machine.state === "started" &&
-    hasExactUnattachedIdentity(input, machine)
+async function reconcileOpening(input: Parameters<typeof reconcileRecord>[0]) {
+  const { session, resource } = input.record;
+  const deadline = Math.min(
+    Date.parse(session.createdAt) + HOSTED_BROWSER_OPENING_TIMEOUT_MS,
+    Date.parse(session.idleExpiresAt),
+    Date.parse(session.hardExpiresAt),
   );
+  const candidates = resource
+    ? [
+        await input.machines.getMachine({
+          appName: input.appName,
+          machineId: resource.machineId,
+        }),
+      ]
+    : await input.machines.listBrowserMachines({
+        appName: input.appName,
+        sessionId: session.sessionId,
+      });
+  const machines = candidates.filter(
+    (machine): machine is EnvironmentProviderMachine => machine !== null,
+  );
+  for (const machine of machines) input.handledMachineIds.add(machine.id);
+  const exact =
+    (!resource ||
+      (resource.machineGeneration === session.generation &&
+        resource.workerImageDigest === input.workerImageDigest)) &&
+    machines.length <= 1 &&
+    machines.every(
+      (machine) =>
+        (machine.state === "created" ||
+          machine.state === "starting" ||
+          machine.state === "started") &&
+        hasExactUnattachedIdentity(input, machine, true) &&
+        (!resource || machine.id === resource.machineId),
+    );
+  if (input.now.getTime() < deadline && exact) {
+    // A missing provider record can also be a create/attach visibility race.
+    // Only the opener can acknowledge readiness; a pending session is not ready.
+    input.result.pendingSessions += 1;
+    return;
+  }
+  const expired =
+    input.now >= new Date(session.idleExpiresAt) ||
+    input.now >= new Date(session.hardExpiresAt);
+  await markRecordTerminal(input, {
+    state: expired ? "expired" : "lost",
+    reason: expired ? "BROWSER_SESSION_EXPIRED" : "BROWSER_ENGINE_FAILURE",
+  });
+  if (expired) input.result.expiredSessions += 1;
+  else input.result.lostSessions += 1;
+  if (resource) {
+    await cleanupRecord(input, resource);
+  } else {
+    for (const machine of machines.filter((candidate) =>
+      hasExactUnattachedIdentity(input, candidate, true),
+    )) {
+      await deleteConfirmedMachine(input.machines, input.appName, machine.id);
+      input.result.cleanedSessions += 1;
+    }
+  }
+}
+
+function markRecordTerminal(
+  input: Parameters<typeof reconcileRecord>[0],
+  terminal: Pick<
+    Parameters<HostedBrowserReconciliationStore["markTerminal"]>[0],
+    "state" | "reason"
+  >,
+) {
+  return input.store.markTerminal({
+    sessionId: input.record.session.sessionId,
+    expectedGeneration: input.record.session.generation,
+    expectedState: input.record.session.state,
+    expectedMachineId: input.record.resource?.machineId ?? null,
+    now: input.now,
+    ...terminal,
+  });
 }
 
 function hasExactUnattachedIdentity(
   input: Parameters<typeof reconcileRecord>[0],
   machine: EnvironmentProviderMachine,
+  opening = false,
 ) {
   const { session } = input.record;
   return (
-    session.engineRevision === BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision &&
+    session.engineRevision ===
+      BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision &&
     machine.region === input.region &&
     machine.browserSessionId === session.sessionId &&
     machine.browserGeneration === session.generation &&
-    machine.resolvedImageDigest ===
-      input.workerImageDigest.split("@").at(-1) &&
+    (machine.image === undefined ||
+      machine.image === input.workerImageDigest) &&
+    (machine.resolvedImageDigest ===
+      input.workerImageDigest.split("@").at(-1) ||
+      (opening &&
+        (machine.state === "created" || machine.state === "starting") &&
+        machine.resolvedImageDigest === undefined &&
+        machine.image === input.workerImageDigest)) &&
     (machine.mounts?.length ?? 0) === 0
   );
 }
@@ -323,7 +388,8 @@ function isExpectedMachine(
   const { session, resource } = input.record;
   if (!resource) return false;
   return (
-    session.engineRevision === BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision &&
+    session.engineRevision ===
+      BROWSER_RUNTIME_RELEASE_MANIFEST.engine.revision &&
     resource.workerImageDigest === input.workerImageDigest &&
     machine.state === "started" &&
     machine.region === input.region &&

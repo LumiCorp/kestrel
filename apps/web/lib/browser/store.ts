@@ -418,8 +418,8 @@ export class HostedBrowserStore {
   async markTerminal(input: {
     sessionId: string;
     expectedGeneration?: number | undefined;
-    expectedMachineId?: string | undefined;
-    expectedState?: "opening" | undefined;
+    expectedMachineId?: string | null | undefined;
+    expectedState?: BrowserSessionV1["state"] | undefined;
     state: "closed" | "expired" | "lost" | "failed";
     reason: BrowserFailureCode | "closed_by_user";
     now: Date;
@@ -446,7 +446,7 @@ export class HostedBrowserStore {
               equals(table.sessionId, input.sessionId),
             columns: { machineId: true },
           });
-        if (resource?.machineId !== input.expectedMachineId) {
+        if ((resource?.machineId ?? null) !== input.expectedMachineId) {
           throw new Error("BROWSER_SESSION_LOST");
         }
       }

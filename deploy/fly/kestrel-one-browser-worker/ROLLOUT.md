@@ -86,6 +86,13 @@ through the reviewed Kestrel One production configuration path, retain the
 prior digest for rollback, and complete the resulting Kestrel One deployment.
 Do not set the variable to the publication tag or a bare image ID.
 
+The control-worker reconciler must use the same immutable
+`KESTREL_BROWSER_WORKER_IMAGE` value as Kestrel One. Verify the running process
+configuration, not just staged secrets, and preserve active/standby states
+when updating individual Machines. Browser qualification must run with
+reconciliation active during Machine creation and startup; an isolated worker
+smoke without its lifecycle owner does not prove this race is safe.
+
 Use one designated, bounded Thread to open a Browser Session against either an
 active owned Kestrel Edge preview or an already-approved public HTTPS/443
 origin. The canary must:

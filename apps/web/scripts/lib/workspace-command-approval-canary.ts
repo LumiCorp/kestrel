@@ -14,6 +14,36 @@ type CurrentApprovalPolicy = {
   rememberApprovalEligible?: unknown;
 };
 
+export function createExecCommandCanaryApprovalResponse(input: {
+  requestId: string;
+  turnId: string;
+  messageId: string;
+}) {
+  return {
+    interactionResponse: {
+      ...input,
+      eventType: "user.approval",
+      decision: "approve_once",
+      reason: "Kestrel post-cutover exec_command canary",
+    },
+  } as const;
+}
+
+export function matchesExactExecCommandApprovalScope(
+  scope: unknown,
+  command: string,
+): boolean {
+  const exact = asRecord(scope);
+  return (
+    exact?.kind === "exec_command_exact" &&
+    exact.command === command &&
+    exact.cwd === "." &&
+    exact.envMode === "inherit" &&
+    Array.isArray(exact.envNames) &&
+    exact.envNames.length === 0
+  );
+}
+
 export function assertExecCommandNoSpendPreflight(
   value: unknown,
 ): asserts value is { toolName: "exec_command"; decision: ExactToolDecision } {
@@ -37,13 +67,15 @@ export function assertExecCommandNoSpendPreflight(
 export function isCurrentExecCommandApprovalActionable(
   policy: CurrentApprovalPolicy | undefined,
 ): boolean {
-  return policy !== undefined &&
+  return (
+    policy !== undefined &&
     policy.rememberApprovalEligible === true &&
     policy.environmentApprovalMode !== "deny" &&
     policy.projectApprovalMode !== "deny" &&
     policy.subjectApprovalMode !== "deny" &&
     (policy.environmentApprovalMode === "ask" ||
-      policy.projectApprovalMode === "ask");
+      policy.projectApprovalMode === "ask")
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

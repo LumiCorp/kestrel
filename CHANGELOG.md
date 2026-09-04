@@ -41,6 +41,9 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Hosted Browser cleanup now preserves correctly identified workers during
+  their startup window and rechecks session ownership before deleting them,
+  preventing background reconciliation from interrupting a valid opening.
 - Kestrel One Browser startup now waits for exact engine qualification and
   retries pre-dispatch transport failures within its acceptance deadline.
   Failed openings clean up their exact session without affecting a ready
