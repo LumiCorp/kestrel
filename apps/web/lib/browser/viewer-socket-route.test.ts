@@ -219,6 +219,44 @@ test("authority revalidation remains single-flight while one check is unresolved
   await controller.close(1000, "test complete");
 });
 
+test("an approved grant adoption pauses frames without disconnecting the viewer", async () => {
+  const socket = new FakeSocket();
+  const connection = fakeConnection();
+  const timers = fakeTimers();
+  let adopting = true;
+  connection.revalidate = async () => {
+    if (adopting) throw new Error("BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED");
+  };
+  connection.frame = async () => {
+    if (adopting) throw new Error("BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED");
+    return frameMessage(1);
+  };
+  const controller = attach(socket, async () => connection.value, timers);
+  socket.emitMessage();
+  await waitFor(() => timers.intervalHandlers.length === 2);
+  const sentBeforeAdoption = socket.sent.length;
+  timers.intervalHandlers[0]?.();
+  timers.intervalHandlers[1]?.();
+  await nextTurn();
+  assert.equal(socket.closeCalls, 0);
+  assert.equal(connection.disconnects, 0);
+  assert.equal(socket.sent.length, sentBeforeAdoption);
+
+  adopting = false;
+  timers.intervalHandlers[0]?.();
+  timers.intervalHandlers[1]?.();
+  await waitFor(() => socket.sent.some((raw) => JSON.parse(raw).type === "frame"));
+  assert.equal(socket.closeCalls, 0);
+
+  // This exception is only the existing unconfirmed-adoption signal; actual
+  // authority loss still closes and cleans the connection immediately.
+  connection.revalidate = async () => { throw new Error("BROWSER_SESSION_LOST"); };
+  timers.intervalHandlers[0]?.();
+  await waitFor(() => socket.closeCalls === 1);
+  await controller.whenClosed();
+  assert.equal(connection.disconnects, 1);
+});
+
 test("a silent peer is closed at the explicit authentication deadline without worker work", async () => {
   const socket = new FakeSocket();
   const timers = fakeTimers();

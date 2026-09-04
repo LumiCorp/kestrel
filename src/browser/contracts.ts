@@ -768,18 +768,27 @@ export function projectBrowserAuditOutput(
   }
   const pendingDownload = asRecord(output.pendingDownload);
   if (pendingDownload !== undefined) {
-    projected.pendingDownload = {
-      downloadId: pendingDownload.downloadId,
-      filename: pendingDownload.filename,
-      measuredBytes: pendingDownload.measuredBytes,
-      declaredMediaType: pendingDownload.declaredMediaType,
-      normalizedSourceOrigin: pendingDownload.normalizedSourceOrigin,
-      sha256: pendingDownload.sha256,
-      createdAt: pendingDownload.createdAt,
-      expiresAt: pendingDownload.expiresAt,
-    };
+    projected.pendingDownload = projectPendingDownload(pendingDownload);
+  }
+  if (Array.isArray(output.pendingDownloads)) {
+    projected.pendingDownloads = output.pendingDownloads.map((item) =>
+      projectPendingDownload(requireRecord(item, "pending download")),
+    );
   }
   return projected;
+}
+
+function projectPendingDownload(pendingDownload: Record<string, unknown>) {
+  return {
+    downloadId: pendingDownload.downloadId,
+    filename: pendingDownload.filename,
+    measuredBytes: pendingDownload.measuredBytes,
+    declaredMediaType: pendingDownload.declaredMediaType,
+    normalizedSourceOrigin: pendingDownload.normalizedSourceOrigin,
+    sha256: pendingDownload.sha256,
+    createdAt: pendingDownload.createdAt,
+    expiresAt: pendingDownload.expiresAt,
+  };
 }
 
 export function projectBrowserRunOutcome(
@@ -942,6 +951,15 @@ export function validateBrowserResultSemantics(
     later: "expiresAt",
     label: `${toolName} pendingDownload`,
   });
+  if (Array.isArray(output.pendingDownloads)) {
+    for (const download of output.pendingDownloads) {
+      validateTimestampOrder(download, {
+        earlier: "createdAt",
+        later: "expiresAt",
+        label: `${toolName} pendingDownloads`,
+      });
+    }
+  }
   return normalized;
 }
 

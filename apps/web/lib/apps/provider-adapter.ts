@@ -269,9 +269,13 @@ const browserAdapter: AppProviderAdapter = {
     ],
     assertTarget(input) {
       const allowedActions =
-        input.capability === "request_grant"
+        input.capability === "upload"
+          ? new Set(["accept", "invoke", "commit", "complete", "unknown", "prepare-upload"])
+          : input.capability === "download"
+            ? new Set(["accept", "invoke", "commit", "complete", "unknown", "artifact", "prepare-download", "release-download"])
+          : input.capability === "request_grant"
           ? new Set(["policy", "accept", "invoke", "commit", "complete", "unknown", "adopt", "adopt-complete"])
-          : input.capability === "capture" || input.capability === "download"
+          : input.capability === "capture"
             ? new Set(["accept", "invoke", "commit", "complete", "unknown", "artifact"])
             : new Set(["accept", "invoke", "commit", "complete", "unknown", ...(input.capability === "open" ? ["startup-failed"] : [])]);
       if (

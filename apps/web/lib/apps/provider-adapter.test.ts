@@ -5,6 +5,22 @@ import {
   listAppProviderAdapters,
 } from "./provider-adapter";
 
+for (const [capability, action] of [
+  ["upload", "prepare-upload"],
+  ["download", "prepare-download"],
+  ["download", "release-download"],
+] as const) {
+  test(`Browser client ${capability}/${action} reaches its control handler`, () => {
+    const runtime = getAppProviderAdapter("built_in.browser")?.runtime;
+    assert.ok(runtime);
+    assert.doesNotThrow(() => runtime.assertTarget({ capability, method: "POST", path: ["control", action] }));
+    for (const other of runtime.capabilityKeys.filter(key => key !== capability)) {
+      assert.throws(() => runtime.assertTarget({ capability: other, method: "POST", path: ["control", action] }));
+    }
+    assert.throws(() => runtime.assertTarget({ capability, method: "GET", path: ["control", action] }));
+  });
+}
+
 test("Browser startup failure is a private open-only lifecycle target", () => {
   const runtime = getAppProviderAdapter("built_in.browser")?.runtime;
   assert.ok(runtime);

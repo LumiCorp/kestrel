@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "dom.asynciterable", "esnext"],
+    "incremental": false
+  },
+  "include": ["./*.ts"],
+  "exclude": []
+}

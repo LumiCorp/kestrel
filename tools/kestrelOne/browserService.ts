@@ -43,10 +43,16 @@ type DownloadStagedReceipt = {
 export function createKestrelOneBrowserService(
   context: SharedToolContext,
 ): BrowserServicePort {
-  const request = async (capability: string, action: string, body: unknown) => {
+  const executingTransfers = new Map<string, PreparedToolCallV1>();
+  const request = async (
+    capability: string,
+    action: string,
+    body: unknown,
+    approval: "auto" | "confirmed" = "auto",
+  ) => {
     const transport = resolveKestrelOneBrowserRequest(
       context,
-      `/api/runtime/apps/built_in.browser/${encodeURIComponent(capability)}/auto/control/${encodeURIComponent(action)}`,
+      `/api/runtime/apps/built_in.browser/${encodeURIComponent(capability)}/${approval}/control/${encodeURIComponent(action)}`,
     );
     const response = await (context.fetchImpl ?? fetch)(transport.url, {
       method: "POST",
@@ -106,60 +112,103 @@ export function createKestrelOneBrowserService(
       const capability = prepared.activation.descriptor.toolId.slice(
         "browser.".length,
       );
-      const accepted = await request(capability, "accept", {
-        prepared,
-        authority: lifecycle.authority,
-      });
-      const preDispatch = readPreDispatchResult(accepted, prepared);
-      if (preDispatch) {
-        await lifecycle.persistCompletedResult(preDispatch.output);
-        await request(capability, "commit", {
-          receipt: preDispatch.commitReceipt,
-        }).catch(() => undefined);
-        return preDispatch.output;
-      }
-      const receipt = accepted as DispatchReceipt;
-      assertDispatchReceipt(receipt, prepared);
-      let invokeReceipt: DispatchReceipt | UploadStagedReceipt | DownloadStagedReceipt = receipt;
+      // execute is the trusted post-policy-gate runtime entry point. Preparing
+      // a call (including an approval ID) never enters this execution scope.
+      const transfer = capability === "upload" || capability === "download";
       if (
-        prepared.activation.descriptor.toolId === "browser.upload" ||
-        prepared.activation.descriptor.toolId === "browser.download"
+        transfer &&
+        (context.runtime?.runId !== prepared.runId ||
+          context.runtime.sessionId !== prepared.sessionId ||
+          (context.runtime.hostedApprovalAuthority?.threadId ??
+            context.runtime.threadId) !== lifecycle.authority.threadId)
       ) {
-        const staged = await request(capability, "invoke", {
-          prepared,
-          authority: lifecycle.authority,
-          receipt,
-        }) as UploadStagedReceipt | DownloadStagedReceipt;
-        assertStagedReceipt(staged, prepared, receipt);
-        invokeReceipt = staged;
-      }
-      await lifecycle.acknowledgeDispatch();
-      const invocation = requireRecord(await request(capability, "invoke", {
-        prepared,
-        authority: lifecycle.authority,
-        receipt: invokeReceipt,
-      }));
-      if (invocation.version !== "hosted_browser_invocation_result_v1") {
         throw new RuntimeFailure(
-          "BROWSER_ENGINE_FAILURE",
-          "Hosted Browser invocation result is invalid.",
-          { subsystem: "browser", classification: "runtime", recoverable: false },
+          "BROWSER_SERVICE_UNAVAILABLE",
+          "Transfer execution requires matching trusted runtime authority.",
+          {
+            subsystem: "browser",
+            classification: "configuration",
+            recoverable: false,
+          },
         );
       }
-      const output = invocation.output;
-      const commitReceipt = invocation.commitReceipt as CommitReceipt;
-      assertCommitReceipt(commitReceipt, prepared, receipt);
-      await lifecycle.persistCompletedResult(output);
-      await request(capability, "commit", { receipt: commitReceipt }).catch(
-        () => undefined,
-      );
-      return output;
+      const executeRequest = (action: string, body: unknown) =>
+        request(capability, action, body, transfer ? "confirmed" : "auto");
+      if (transfer) executingTransfers.set(prepared.callId, prepared);
+      try {
+        const accepted = await executeRequest("accept", {
+          prepared,
+          authority: lifecycle.authority,
+        });
+        const preDispatch = readPreDispatchResult(accepted, prepared);
+        if (preDispatch) {
+          await lifecycle.persistCompletedResult(preDispatch.output);
+          await executeRequest("commit", {
+            receipt: preDispatch.commitReceipt,
+          }).catch(() => undefined);
+          return preDispatch.output;
+        }
+        const receipt = accepted as DispatchReceipt;
+        assertDispatchReceipt(receipt, prepared);
+        let invokeReceipt:
+          | DispatchReceipt
+          | UploadStagedReceipt
+          | DownloadStagedReceipt = receipt;
+        if (
+          prepared.activation.descriptor.toolId === "browser.upload" ||
+          prepared.activation.descriptor.toolId === "browser.download"
+        ) {
+          const staged = (await executeRequest("invoke", {
+            prepared,
+            authority: lifecycle.authority,
+            receipt,
+          })) as UploadStagedReceipt | DownloadStagedReceipt;
+          assertStagedReceipt(staged, prepared, receipt);
+          invokeReceipt = staged;
+        }
+        await lifecycle.acknowledgeDispatch();
+        const invocation = requireRecord(
+          await executeRequest("invoke", {
+            prepared,
+            authority: lifecycle.authority,
+            receipt: invokeReceipt,
+          }),
+        );
+        if (invocation.version !== "hosted_browser_invocation_result_v1") {
+          throw new RuntimeFailure(
+            "BROWSER_ENGINE_FAILURE",
+            "Hosted Browser invocation result is invalid.",
+            {
+              subsystem: "browser",
+              classification: "runtime",
+              recoverable: false,
+            },
+          );
+        }
+        const output = invocation.output;
+        const commitReceipt = invocation.commitReceipt as CommitReceipt;
+        assertCommitReceipt(commitReceipt, prepared, receipt);
+        await lifecycle.persistCompletedResult(output);
+        await executeRequest("commit", { receipt: commitReceipt }).catch(
+          () => undefined,
+        );
+        return output;
+      } finally {
+        if (transfer) executingTransfers.delete(prepared.callId);
+      }
     },
     async authorizeArtifact(input) {
+      const active = executingTransfers.get(input.callId);
+      const confirmed =
+        active !== undefined &&
+        active.runId === input.runId &&
+        active.sessionId === input.sessionId &&
+        active.activation.descriptor.toolId === input.toolName;
       const payload = await request(
         input.toolName.slice("browser.".length),
         "artifact",
         input,
+        confirmed ? "confirmed" : "auto",
       );
       return payload === null
         ? undefined
@@ -179,9 +228,10 @@ function assertStagedReceipt(
   accepted: DispatchReceipt,
 ): void {
   if (
-    staged?.version !== (prepared.activation.descriptor.toolId === "browser.upload"
-      ? "hosted_browser_upload_staged_receipt_v1"
-      : "hosted_browser_download_staged_receipt_v1") ||
+    staged?.version !==
+      (prepared.activation.descriptor.toolId === "browser.upload"
+        ? "hosted_browser_upload_staged_receipt_v1"
+        : "hosted_browser_download_staged_receipt_v1") ||
     staged.receiptId !== accepted.receiptId ||
     staged.operationId !== prepared.callId ||
     staged.operation !== prepared.activation.descriptor.toolId
@@ -249,7 +299,7 @@ function readErrorDetails(value: unknown): Record<string, unknown> {
   if (!error || typeof error !== "object") return {};
   const details = (error as Record<string, unknown>).details;
   return details && typeof details === "object" && !Array.isArray(details)
-    ? details as Record<string, unknown>
+    ? (details as Record<string, unknown>)
     : {};
 }
 
