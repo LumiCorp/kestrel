@@ -41,6 +41,8 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Kestrel One now preserves attached files when a message is queued, so the
+  queued turn can resolve the same authorized files as an immediately sent message.
 - Hosted Browser cleanup now preserves correctly identified workers during
   their startup window and rechecks session ownership before deleting them,
   preventing background reconciliation from interrupting a valid opening.
