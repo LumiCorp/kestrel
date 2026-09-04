@@ -8,12 +8,12 @@ import type {
 } from "./browser-egress.js";
 
 export const MAX_APP_RELAY_SERIALIZED_BYTES = 20 * 1024 * 1024;
-const BROWSER_RECEIPT_TTL_MS = 35_000;
+const BROWSER_RECEIPT_TTL_MS = 5 * 60_000;
 const BROWSER_WORKER_READINESS_RETRY_MS = 250;
 const BROWSER_STARTUP_FAILURE_NOTIFY_TIMEOUT_MS = 3_000;
 const MAX_BROWSER_RECEIPTS = 128;
 export const APP_RELAY_REQUEST_TIMEOUT_MS = 30_000;
-export const BROWSER_ACCEPT_REQUEST_TIMEOUT_MS = 60_000;
+export const BROWSER_ACCEPT_REQUEST_TIMEOUT_MS = 120_000;
 const APP_RELAY_PATH = /^\/internal\/apps\/([^/]+)(\/api\/.*)$/u;
 const LEGACY_APP_PATHS = new Set([
   "/api/kestrel/tools/email/get-attachment",
@@ -161,7 +161,7 @@ export async function handleAppRelay(input: {
   const relayAbort = createRelayAbort(
     input.request,
     input.response,
-    input.requestTimeoutMs ?? (browserAction === "accept"
+    input.requestTimeoutMs ?? (browserAction === "accept" || browserAction === "invoke"
       ? BROWSER_ACCEPT_REQUEST_TIMEOUT_MS
       : APP_RELAY_REQUEST_TIMEOUT_MS),
   );
@@ -1186,7 +1186,7 @@ async function callPrivateBrowserWorkerWhenReady(input: {
   const capabilityExpiresAt = readBrowserCapabilityExpiry(
     input.instruction.capability,
   );
-  // The enclosing relay owns the total 60-second budget, including Web
+  // The enclosing relay owns the total 120-second budget, including Web
   // provisioning. Validate and serialize once, outside transport retries.
   const url = privateBrowserWorkerUrl(input.instruction, "accept");
   const body = JSON.stringify(input.body);

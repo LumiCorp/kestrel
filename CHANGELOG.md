@@ -41,6 +41,8 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Browser startup and execution now have more time for cold Machines and
+  Chrome startup before authorization expires or opening cleanup begins.
 - Kestrel One now preserves attached files when a message is queued, so the
   queued turn can resolve the same authorized files as an immediately sent message.
 - Hosted Browser cleanup now preserves correctly identified workers during

@@ -42,17 +42,17 @@ test("an exact pinned image may still be resolving only during Fly startup", asy
 });
 
 test("startup deadline is exact, fixed at creation, and still applies after Fly starts", async () => {
-  for (const openingAgeMs of [59_999, 60_000, 60_001]) {
+  for (const openingAgeMs of [299_999, 300_000, 300_001]) {
     for (const state of ["starting", "started"]) {
       const fixture = makeFixture(
         [record("opening", { openingAgeMs })],
         [machine({ state })],
       );
       const result = await fixture.reconcile();
-      assert.equal(result.pendingSessions, openingAgeMs < 60_000 ? 1 : 0);
+      assert.equal(result.pendingSessions, openingAgeMs < 300_000 ? 1 : 0);
       assert.deepEqual(
         fixture.events,
-        openingAgeMs < 60_000
+        openingAgeMs < 300_000
           ? []
           : ["terminal:lost", "delete:machine-1", "confirm"],
       );
@@ -67,7 +67,7 @@ test("a completed opening remains healthy past the startup deadline", async () =
 });
 
 test("unattached startup expires and deletes only its exact owned Machine", async () => {
-  const opening = record("opening", { openingAgeMs: 60_000 });
+  const opening = record("opening", { openingAgeMs: 300_000 });
   opening.resource = null;
   const fixture = makeFixture(
     [opening],
@@ -114,7 +114,7 @@ test("a stale provider list cannot delete a now-running ready worker", async () 
 
 test("ready, generation, and resource-attachment races prevent stale deletion", async () => {
   for (const race of ["ready", "generation", "machine", "attach"] as const) {
-    const opening = record("opening", { openingAgeMs: 60_000 });
+    const opening = record("opening", { openingAgeMs: 300_000 });
     if (race === "attach") opening.resource = null;
     const fixture = makeFixture([opening], [machine({ state: "starting" })]);
     const mark = fixture.store.markTerminal;
@@ -166,7 +166,7 @@ test("preserves a matching opening worker within its deadlines", async () => {
 
 test("marks a missing opening worker lost after its startup deadline", async () => {
   const fixture = makeFixture(
-    [record("opening", { openingAgeMs: 60_000 })],
+    [record("opening", { openingAgeMs: 300_000 })],
     [],
   );
   const result = await fixture.reconcile();

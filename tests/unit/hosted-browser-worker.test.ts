@@ -804,7 +804,7 @@ test("hosted worker measures exact installed engine and Chrome revisions", async
     async probe(executablePath, args, options) {
       calls.push({ executablePath, args });
       assert.deepEqual(options, {
-        timeoutMs: 15_000,
+        timeoutMs: 30_000,
         maxBufferBytes: 16 * 1024,
       });
       return executablePath.endsWith("agent-browser")
@@ -830,7 +830,7 @@ test("hosted worker accepts delayed exact Chrome measurement within the fixed pr
     engineExecutablePath: "/runtime/agent-browser",
     chromeExecutablePath: "/runtime/chrome",
     async probe(executablePath, _args, options) {
-      assert.equal(options.timeoutMs, 15_000);
+      assert.equal(options.timeoutMs, 30_000);
       if (executablePath.endsWith("chrome")) {
         await new Promise((resolve) => setTimeout(resolve, 5));
         return {
@@ -911,7 +911,7 @@ test("hosted worker runtime measurement identifies the failed probe without expo
     }),
     (error: unknown) => {
       assert.ok(error instanceof Error);
-      assert.match(error.message, /Chrome version probe timed out after 15000ms/u);
+      assert.match(error.message, /Chrome version probe timed out after 30000ms/u);
       assert.doesNotMatch(error.message, /secret|provider detail/u);
       return true;
     },
