@@ -15,6 +15,7 @@ import {
   projectBrowserAuditInput,
   projectBrowserAuditOutput,
   validateBrowserResultAuthority,
+  validateBrowserResultSemantics,
   type BrowserServicePort,
 } from "../../src/browser/contracts.js";
 import { BROWSER_RUNTIME_RELEASE_MANIFEST } from "../../src/browser/runtimeReleaseManifest.js";
@@ -2079,6 +2080,31 @@ test("Browser origins and session semantics normalize before audit persistence",
       }),
     /updatedAt cannot precede createdAt/u,
   );
+});
+
+test("snapshot quarantine discovery retains only public metadata and validates expiry order", () => {
+  const descriptor = {
+    downloadId: "download-ready",
+    filename: "fixture.txt",
+    measuredBytes: 12,
+    declaredMediaType: "text/plain",
+    normalizedSourceOrigin: "https://example.com/private?token=secret",
+    sha256: "a".repeat(64),
+    createdAt: "2026-09-01T12:00:00.000Z",
+    expiresAt: "2026-09-01T12:30:00.000Z",
+  };
+  const output = { ...validOutputs["browser.snapshot"], pendingDownloads: [descriptor] };
+  const projected = projectBrowserAuditOutput("browser.snapshot", {
+    ...output,
+    pendingDownloads: [{ ...descriptor, ownedPath: "/private/worker/file" }],
+  }) as Record<string, unknown>;
+  assert.deepEqual(projected.pendingDownloads, [{ ...descriptor, normalizedSourceOrigin: "https://example.com" }]);
+  assert.doesNotMatch(JSON.stringify(projected), /ownedPath|token=secret|private/u);
+  assert.doesNotThrow(() => validateBrowserResultSemantics("browser.snapshot", output));
+  assert.throws(() => validateBrowserResultSemantics("browser.snapshot", {
+    ...output,
+    pendingDownloads: [{ ...descriptor, expiresAt: "2026-09-01T11:00:00.000Z" }],
+  }), /expiresAt must follow createdAt/u);
 });
 
 test("Browser open audit projection remains a valid idempotent Session contract", () => {

@@ -89,6 +89,7 @@
     "validate:process:modules": "node scripts/validate.mjs --process-modules",
     "validate:postgres": "node scripts/validate.mjs --leaf postgres all",
     "validate:chromium": "node scripts/validate.mjs --leaf chromium all",
+    "validate:browser": "node scripts/validate-browser.mjs",
     "validate:audit": "node scripts/validate.mjs --leaf audit all",
     "production:cutover:preflight": "node --import tsx scripts/production-cutover-preflight.ts",
     "production:image:publish": "node --import tsx scripts/publish-production-image.ts",

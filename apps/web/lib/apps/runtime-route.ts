@@ -58,9 +58,7 @@ export async function handleAppRuntimeRequest(input: {
     }
     const adapter = getAppProviderAdapter(input.appKey);
     const runtime = adapter?.runtime;
-    if (
-      !(runtime &&runtime.capabilityKeys.includes(input.capabilityKey))
-    ) {
+    if (!(runtime && runtime.capabilityKeys.includes(input.capabilityKey))) {
       throw new AppRuntimeError("APP_RUNTIME_PROVIDER_NOT_FOUND", 404);
     }
     runtime.assertTarget({
@@ -76,6 +74,7 @@ export async function handleAppRuntimeRequest(input: {
       appKey: input.appKey,
       capabilityKey: input.capabilityKey,
       approval: approval.mode,
+      action: input.path[0] === "control" ? input.path[1] : undefined,
     });
     connectionId = policy.connectionId;
     if (runtime.mode === "lifecycle") {
@@ -261,7 +260,7 @@ export async function handleAppRuntimeRequest(input: {
     if (error instanceof AppRuntimeError) {
       return NextResponse.json(
         { error: { code: error.code } },
-        { status: error.status }
+        { status: error.status },
       );
     }
     if (error instanceof EnvironmentTicketError) {
@@ -273,13 +272,13 @@ export async function handleAppRuntimeRequest(input: {
     if (isRuntimeContractError(error)) {
       return NextResponse.json(
         { error: { code: error.code } },
-        { status: error.status }
+        { status: error.status },
       );
     }
     if (ticket && connectionId && error instanceof DOMException) {
       return NextResponse.json(
         { error: { code: "APP_RUNTIME_PROVIDER_TIMEOUT" } },
-        { status: 504 }
+        { status: 504 },
       );
     }
     return errorResponse(error, ticket ? 400 : 401);
@@ -319,14 +318,14 @@ function readBearer(value: string | null) {
 }
 
 function isRuntimeContractError(
-  error: unknown
+  error: unknown,
 ): error is { code: string; status: number } {
   return Boolean(
     error &&
-      typeof error === "object" &&
-      "code" in error &&
-      typeof error.code === "string" &&
-      "status" in error &&
-      typeof error.status === "number"
+    typeof error === "object" &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    "status" in error &&
+    typeof error.status === "number",
   );
 }

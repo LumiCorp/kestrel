@@ -709,7 +709,7 @@ export async function uploadThreadFile(input: {
             : inArray(schema.kestrelFiles.lifecycleState, ["draft", "failed"]),
           input.readyBefore === undefined
             ? undefined
-            : sql`${input.readyBefore} > now()`,
+            : sql`${input.readyBefore.toISOString()}::timestamptz > now()`,
         ),
       )
       .returning({ id: schema.kestrelFiles.id });

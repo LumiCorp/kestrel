@@ -182,6 +182,13 @@ export function attachHostedBrowserViewerSocket(input: {
     error instanceof Error &&
     error.message === HOSTED_BROWSER_VIEWER_FRAME_UNAVAILABLE;
 
+  // The access owner rejects effects while an approved grant awaits adoption.
+  // Keep this connection idle until a subsequent check confirms the revision;
+  // ordinary authorization failures and the authority deadline still close it.
+  const adoptionUnconfirmed = (error: unknown) =>
+    error instanceof Error &&
+    error.message === "BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED";
+
   const flushPendingState = () => {
     if (
       !pendingState ||
@@ -244,7 +251,7 @@ export function attachHostedBrowserViewerSocket(input: {
       },
       async (error: unknown) => {
         frameInFlight = false;
-        if (closeIntent || frameUnavailable(error)) return;
+        if (closeIntent || frameUnavailable(error) || adoptionUnconfirmed(error)) return;
         await fail(error, "viewer authority unavailable");
       },
     );
@@ -267,6 +274,7 @@ export function attachHostedBrowserViewerSocket(input: {
         try {
           await connection.revalidate();
         } catch (error) {
+          if (adoptionUnconfirmed(error)) return;
           await fail(error, "viewer authorization failed");
         } finally {
           authorityRevalidationInFlight = false;
