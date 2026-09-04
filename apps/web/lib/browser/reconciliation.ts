@@ -7,9 +7,9 @@ import type { HostedBrowserResourceRecord } from "./store";
 import { BROWSER_RUNTIME_RELEASE_MANIFEST } from "../../../../src/browser/runtimeReleaseManifest.js";
 import { deleteConfirmedBrowserMachine } from "./machine-cleanup";
 
-// The approved Browser accept budget, measured from durable opening creation.
+// Opening cleanup grace, measured from durable opening creation.
 // Reconciliation observes this deadline; it never extends worker acceptance.
-export const HOSTED_BROWSER_OPENING_TIMEOUT_MS = 60_000;
+export const HOSTED_BROWSER_OPENING_TIMEOUT_MS = 5 * 60_000;
 
 const TERMINAL_STATES = new Set<BrowserSessionV1["state"]>([
   "closed",

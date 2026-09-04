@@ -83,7 +83,7 @@ import {
 const LEDGER_VERSION = "desktop_browser_sessions_v1" as const;
 const IDLE_TTL_MS = 30 * 60 * 1000;
 const HARD_TTL_MS = 8 * 60 * 60 * 1000;
-const COMMAND_TIMEOUT_MS = 30_000;
+const COMMAND_TIMEOUT_MS = 120_000;
 const MAX_ENGINE_OUTPUT_BYTES = 512 * 1024;
 const MAX_PAGE_OUTPUT_CHARS = 32_768;
 const MAX_ENGINE_PAGE_OUTPUT_CHARS = 128 * 1024;

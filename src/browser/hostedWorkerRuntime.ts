@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { BROWSER_RUNTIME_RELEASE_MANIFEST } from "./runtimeReleaseManifest.js";
 
 const execFileAsync = promisify(execFile);
-export const HOSTED_BROWSER_VERSION_PROBE_TIMEOUT_MS = 15_000;
+export const HOSTED_BROWSER_VERSION_PROBE_TIMEOUT_MS = 30_000;
 export const HOSTED_BROWSER_VERSION_PROBE_MAX_BUFFER_BYTES = 16 * 1024;
 
 export type HostedBrowserRuntimeMeasurement = {

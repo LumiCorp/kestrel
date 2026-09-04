@@ -18,6 +18,7 @@ import { BROWSER_RUNTIME_RELEASE_MANIFEST } from "../../../../src/browser/runtim
 import {
   HOSTED_BROWSER_CAPABILITY_VERSION,
   issueHostedBrowserOperationCapability,
+  verifyHostedBrowserCapabilitySignature,
 } from "../../../../src/browser/hostedCapability.js";
 import type { BrowserEffectiveDomainAuthorityV1 } from "../../../../src/browser/domainAuthority.js";
 import type { HostedBrowserResourceRecord } from "./store";
@@ -276,13 +277,28 @@ test("startup failure confirms cleanup only after terminal intent and deletion",
   assert.equal(fixture.cleanupConfirmed, 1);
 });
 
-test("hosted Browser provisioning waits up to 30 seconds for Machine start", async () => {
+test("hosted Browser provisioning waits up to 60 seconds for Machine start", async () => {
   const fixture = serviceFixture("opening", "allow");
   await fixture.service.acceptOperation(preparedOpen(), {
     threadId: "thread-1",
     projectId: "project-1",
   });
-  assert.deepEqual(fixture.startedTimeouts, [30]);
+  assert.deepEqual(fixture.startedTimeouts, [60]);
+});
+
+test("hosted opening retains signed authority after slow readiness and still expires", async () => {
+  const fixture = serviceFixture("opening", "allow");
+  const instruction = await fixture.service.acceptOperation(preparedOpen(), {
+    threadId: "thread-1", projectId: "project-1",
+  });
+  const publicKeyPem = keys.publicKey.export({ type: "spki", format: "pem" }).toString();
+  const verifyAt = (elapsedMs: number) => verifyHostedBrowserCapabilitySignature({
+    token: instruction.capability, publicKeyPem,
+    now: new Date(now.getTime() + elapsedMs),
+  });
+  assert.equal(Date.parse(verifyAt(120_000).expiresAt) - now.getTime(), 300_000);
+  assert.equal(verifyAt(299_999).operationId, instruction.operationId);
+  assert.throws(() => verifyAt(300_000), /expired/u);
 });
 
 test("hosted acceptance reports the safe failure stage for unavailable origin authority", async () => {

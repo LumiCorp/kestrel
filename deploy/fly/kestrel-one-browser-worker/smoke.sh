@@ -127,7 +127,7 @@ if [[ ! "$preview_address" =~ ^[0-9]+(\.[0-9]+){3}$ ||
   printf 'hosted Browser image smoke fixture addresses are invalid\n' >&2
   exit 1
 fi
-cold_start_deadline=$((SECONDS + 60))
+cold_start_deadline=$((SECONDS + 120))
 worker_container="$(docker run --detach \
   --platform linux/amd64 \
   --name "$worker_name" \

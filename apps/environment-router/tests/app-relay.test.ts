@@ -26,7 +26,7 @@ function readinessCapability(expiresAt = new Date(Date.now() + 60_000).toISOStri
 test("ordinary App relay uses the settled 20 MiB serialized payload ceiling", () => {
   assert.equal(MAX_APP_RELAY_SERIALIZED_BYTES, 20 * 1024 * 1024);
   assert.equal(APP_RELAY_REQUEST_TIMEOUT_MS, 30_000);
-  assert.equal(BROWSER_ACCEPT_REQUEST_TIMEOUT_MS, 60_000);
+  assert.equal(BROWSER_ACCEPT_REQUEST_TIMEOUT_MS, 120_000);
 });
 
 test("app relay refreshes expired execution tickets and enforces workspace and path scope", async () => {
