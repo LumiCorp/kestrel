@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { attachmentIdsFromMessageParts } from "@/lib/attachments/store";
 import { resolveThreadEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
@@ -83,6 +84,7 @@ export async function POST(
       requestedEnvironmentId: environment.id,
       messageId: body.message.id,
       messageParts: body.message.parts,
+      attachmentIds: attachmentIdsFromMessageParts(body.message.parts),
       idempotencyKey:
         request.headers.get("idempotency-key")?.trim() || body.message.id,
       projectContextRevisionId: projectContext?.contextRevision.id ?? null,
