@@ -913,6 +913,9 @@ export function normalizeBrowserHostFailure(
       code === "BROWSER_SERVICE_UNAVAILABLE" || code === "BROWSER_TARGET_STALE",
     operation: input.toolName,
     dispatchAcknowledged: input.dispatchAcknowledged,
+    ...(!input.effectful || exactOutcomeKnown
+      ? { browserOutcomeKnown: true }
+      : {}),
   });
 }
 

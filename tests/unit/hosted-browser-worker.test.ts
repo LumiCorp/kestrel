@@ -1224,6 +1224,57 @@ test("hosted worker destroys the session after an unmarked post-accept engine fa
   assert.equal(destroys, 1);
 });
 
+test("hosted worker preserves the session after a known post-accept failure", async () => {
+  const prepared = preparedNavigate();
+  const capability = operationCapabilityFor(prepared, "revision-1");
+  let destroys = 0;
+  let controlLost = false;
+  const worker = startHostedBrowserWorker({
+    config: workerConfig(),
+    engine: {
+      async execute(_input, lifecycle) {
+        await lifecycle.acknowledgeDispatch();
+        throw Object.assign(new Error("BROWSER_ENGINE_FAILURE"), {
+          code: "BROWSER_ENGINE_FAILURE",
+          details: { browserOutcomeKnown: true },
+        });
+      },
+      async adopt() { return 0; },
+      async destroy() { destroys += 1; },
+    },
+    onControlLoss() { controlLost = true; },
+  });
+  await once(worker.server, "listening");
+  const port = (worker.server.address() as AddressInfo).port;
+  const request = (pathname: string, body: unknown) => fetch(
+    `http://[::1]:${port}${pathname}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  assert.equal((await request("/v1/operations/accept", {
+    capability,
+    prepared,
+    authority,
+  })).status, 200);
+  const invoked = await request("/v1/operations/invoke", {
+    capability,
+    operationId: prepared.callId,
+  });
+  assert.equal(invoked.status, 400);
+  assert.equal(
+    (await invoked.json() as { error: { code: string } }).error.code,
+    "BROWSER_ENGINE_FAILURE",
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(controlLost, false);
+  assert.equal(destroys, 0);
+  await worker.close();
+  assert.equal(destroys, 1);
+});
+
 test("hosted worker rejects the old revision after settings adoption returns", async () => {
   const prepared = preparedNavigate();
   const operationCapability = operationCapabilityFor(prepared, "revision-1");
