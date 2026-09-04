@@ -16,7 +16,20 @@ export async function approve(
 ) {
   assert.ok(prepared.approval?.approvalId);
   const toolName = prepared.activation.descriptor.toolId;
-  const authorityRevision = prepared.approval.authorityRevision;
+  const authorityRevision =
+    prepared.stableAuthority?.approvalAuthorityRevision ??
+    prepared.approval.authorityRevision;
+  const browserPolicy =
+    toolName === "browser.request_grant"
+      ? await h.port.resolvePolicy({
+          version: "browser_policy_resolution_v1",
+          runId: h.ids.runId,
+          threadId: h.ids.threadId,
+          operation: "browser.request_grant",
+          effectiveInput: prepared.effectiveInput,
+          authority: { threadId: h.ids.threadId, projectId: h.ids.projectId },
+        })
+      : undefined;
   const capability = h.tools
     .getCapabilityManifest()
     .find((item) => item.name === toolName)!;
@@ -45,7 +58,7 @@ export async function approve(
     ...(toolName === "browser.request_grant"
       ? {
           trustedPolicyDecision: prepared.policy.decision,
-          trustedPolicyRevision: prepared.policy.policyRevision,
+          trustedPolicyRevision: browserPolicy!.policyRevision,
         }
       : {}),
     approvalAuthority: {
@@ -151,10 +164,50 @@ export async function approve(
       (effects[0]!.payload as { preparedToolCall: PreparedToolCallV1 })
         .preparedToolCall,
     );
-    console.info("[browser-test] declined prepared operation released", { operation: prepared.activation.descriptor.toolId, at: Date.now() });
+    console.info("[browser-test] declined prepared operation released", {
+      operation: prepared.activation.descriptor.toolId,
+      at: Date.now(),
+    });
     await assert.rejects(h.tools.executePreparedToolCall(prepared));
+  } else {
+    const allowed = await checkToolPolicyGate({
+      ...gateInput,
+      eventType: "user.approval",
+      eventPayload: {
+        ...h.runContext.payload,
+        ...row!.response_envelope,
+        approvalId: row!.runtime_approval_id,
+      },
+      reactState: waiting.transition.statePatch!.agent as Record<
+        string,
+        unknown
+      >,
+    });
+    assert.equal(
+      allowed.kind,
+      "allowed",
+      `the real policy gate must authorize execution after approval: ${JSON.stringify(
+        allowed.kind === "blocked"
+          ? {
+              status: allowed.transition.status,
+              reasonCode: (
+                allowed.transition.statePatch?.agent as Record<string, any>
+              )?.terminal?.reasonCode,
+              resultKind: (
+                allowed.transition.statePatch?.agent as Record<string, any>
+              )?.lastActionResult?.kind,
+              decisionCodes: (
+                allowed.transition.statePatch?.agent as Record<string, any>
+              )?.decisionTrace?.map(
+                (item: { decisionCode?: string }) => item.decisionCode,
+              ),
+            }
+          : {},
+      )}`,
+    );
   }
-  // The suite resumes Browser service calls directly, not a durable turn-worker.
+  // The suite resumes Browser service calls only after the real policy gate,
+  // without starting a durable turn-worker.
   await h.sql`UPDATE thread_turns SET status = 'running' WHERE id = ${h.ids.turnId}`;
   await h.sql`UPDATE thread_turn_queue_state SET state = 'running', pause_reason = NULL WHERE thread_id = ${h.ids.threadId}`;
 }

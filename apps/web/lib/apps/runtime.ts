@@ -22,6 +22,7 @@ export async function authorizeAppRuntime(input: {
   appKey: string;
   capabilityKey: string;
   approval: "auto" | "confirmed";
+  action?: string;
 }) {
   const { ticket } = input;
   const [thread, execution] = await Promise.all([
@@ -29,7 +30,7 @@ export async function authorizeAppRuntime(input: {
       where: (table, { and: all, eq: equals }) =>
         all(
           equals(table.id, ticket.threadId),
-          equals(table.organizationId, ticket.organizationId)
+          equals(table.organizationId, ticket.organizationId),
         ),
       columns: { projectId: true },
     }),
@@ -41,7 +42,7 @@ export async function authorizeAppRuntime(input: {
           equals(table.environmentId, ticket.environmentId),
           equals(table.workspaceId, ticket.workspaceId),
           equals(table.threadId, ticket.threadId),
-          equals(table.actorId, ticket.actorId)
+          equals(table.actorId, ticket.actorId),
         ),
       columns: { id: true },
     }),
@@ -59,12 +60,22 @@ export async function authorizeAppRuntime(input: {
     throw new AppRuntimeError("APP_RUNTIME_PROJECT_ACCESS_DENIED");
   }
   const capability = access.capabilities.find(
-    (candidate) => candidate.key === input.capabilityKey
+    (candidate) => candidate.key === input.capabilityKey,
   );
   if (!capability) {
     throw new AppRuntimeError("APP_RUNTIME_CAPABILITY_DENIED");
   }
-  if (capability.approvalMode === "ask" && input.approval !== "confirmed") {
+  const preparationOrRelease =
+    input.appKey === "built_in.browser" &&
+    ((input.capabilityKey === "upload" && input.action === "prepare-upload") ||
+      (input.capabilityKey === "download" &&
+        (input.action === "prepare-download" ||
+          input.action === "release-download")));
+  if (
+    capability.approvalMode === "ask" &&
+    input.approval !== "confirmed" &&
+    !preparationOrRelease
+  ) {
     throw new AppRuntimeError("APP_RUNTIME_APPROVAL_REQUIRED", 409);
   }
 
@@ -78,7 +89,7 @@ export async function authorizeAppRuntime(input: {
             equals(table.id, access.connectionId ?? ""),
             equals(table.organizationId, ticket.organizationId),
             equals(table.appKey, input.appKey),
-            inArray(table.status, ["connected", "degraded"])
+            inArray(table.status, ["connected", "degraded"]),
           ),
       })) ?? null;
     if (!connection) {
@@ -131,8 +142,8 @@ export async function markAppConnectionDegraded(input: {
         eq(schema.appConnections.organizationId, input.organizationId),
         eq(schema.appConnections.environmentId, input.environmentId),
         eq(schema.appConnections.appKey, input.appKey),
-        inArray(schema.appConnections.status, ["connected", "degraded"])
-      )
+        inArray(schema.appConnections.status, ["connected", "degraded"]),
+      ),
     );
 }
 
@@ -158,7 +169,7 @@ export async function markAppConnectionHealthy(input: {
         eq(schema.appConnections.organizationId, input.organizationId),
         eq(schema.appConnections.environmentId, input.environmentId),
         eq(schema.appConnections.appKey, input.appKey),
-        inArray(schema.appConnections.status, ["connected", "degraded"])
-      )
+        inArray(schema.appConnections.status, ["connected", "degraded"]),
+      ),
     );
 }

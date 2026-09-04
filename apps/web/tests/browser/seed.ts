@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { ensureCoreAppCatalog } from "../../lib/apps/service.js";
+import { getAppProviderAdapter } from "../../lib/apps/provider-adapter.js";
 
 export async function seedBrowser(sql: postgres.Sql) {
   const ids = {
@@ -41,6 +42,10 @@ export async function seedBrowser(sql: postgres.Sql) {
     };
     await tx`INSERT INTO environment_app_capability_grants (environment_id, app_key, capability_key, enabled, approval_mode, logging_mode, rate_limit_mode, settings) VALUES (${ids.environmentId}, 'built_in.browser', 'request_grant', true, 'auto', 'metadata_only', 'off', ${tx.json(settings)})`;
     await tx`INSERT INTO project_app_capability_policies (project_id, app_key, capability_key, enabled, approval_mode, logging_mode, rate_limit_mode, settings) VALUES (${ids.projectId}, 'built_in.browser', 'request_grant', true, 'auto', 'metadata_only', 'off', ${tx.json({ enabledModes: ["operator"], personalGrantsEnabled: true, blockedPublicDomains: [] })})`;
+    for (const capability of getAppProviderAdapter("built_in.browser")!.runtime!.capabilityKeys.filter(key => key !== "request_grant")) {
+      await tx`INSERT INTO environment_app_capability_grants (environment_id, app_key, capability_key, enabled, approval_mode, logging_mode, rate_limit_mode, settings) VALUES (${ids.environmentId}, 'built_in.browser', ${capability}, true, 'auto', 'metadata_only', 'off', '{}'::jsonb)`;
+      await tx`INSERT INTO project_app_capability_policies (project_id, app_key, capability_key, enabled, approval_mode, logging_mode, rate_limit_mode, settings) VALUES (${ids.projectId}, 'built_in.browser', ${capability}, true, 'auto', 'metadata_only', 'off', '{}'::jsonb)`;
+    }
     await tx`INSERT INTO threads (id, title, created_by_user_id, organization_id, project_id) VALUES (${ids.threadId}, 'Browser test', ${ids.userId}, ${ids.organizationId}, ${ids.projectId})`;
     await tx`INSERT INTO environment_workspaces (id, organization_id, environment_id, project_id, created_by_user_id, name, kind, status, runtime_image) VALUES (${ids.workspaceId}, ${ids.organizationId}, ${ids.environmentId}, ${ids.projectId}, ${ids.userId}, 'Browser test', 'project', 'ready', 'test-workspace')`;
     await tx`INSERT INTO environment_run_executions (id, organization_id, environment_id, workspace_id, thread_id, project_id, actor_id, runtime_image, effective_capabilities, runtime_run_id, status) VALUES (${ids.executionId}, ${ids.organizationId}, ${ids.environmentId}, ${ids.workspaceId}, ${ids.threadId}, ${ids.projectId}, ${ids.userId}, 'test-workspace', '[]'::jsonb, ${ids.runId}, 'running')`;

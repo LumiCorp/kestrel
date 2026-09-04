@@ -1,5 +1,43 @@
 # Connected local Browser tests
 
+## Local Web preparation for the Fly check
+
+Run `node scripts/browser-fly-local.mjs --check` to create a disposable database,
+migrate and seed it, start the existing candidate Web build, verify the restricted
+proxy, and tear it down. Run without `--check` to leave Web on loopback port 3000
+and the restricted proxy on loopback port 3001. Requires a current Web build,
+Docker, free ports, and no Web `.env` files. No inherited application credentials
+or production configuration are loaded. This command never calls Fly.
+
+After `READY`, the operator can run `ngrok http 3001 --inspect=false` and open
+`<ngrok HTTPS URL>/fixture`. The public proxy exposes only the exact seeded
+Environment's Gateway configuration, Browser runtime control routes (still
+authorized by Web), and a bounded synthetic transfer fixture. Other routes return
+404. No credentials are printed. Private generated state is stored with mode
+0600 in the reported run directory; do not share it.
+
+This is phase 1, not a Fly-ready Environment: seeded Machine identities are
+explicit placeholders, no Fly provider credentials are installed, and no Browser
+worker image is selected. They must be replaced with the exact isolated Fly
+resources before a hosted test. The real Web Gateway configuration and missing-
+authorization rejection are exercised; successful Browser invocation is not yet
+claimed. The ngrok endpoint must be checked independently before Fly creation.
+
+Run `node apps/web/tests/browser/fly-fixture-check.mjs <https-origin>` for the
+credential-free real Chromium fixture check. It acknowledges ngrok's warning
+with an ordinary click in its own fresh profile, verifies the receiver's upload
+byte count and SHA-256 receipt, and verifies downloaded bytes. It does not prove
+hosted Browser approvals or Fly behavior. This check passed through the supplied
+ngrok endpoint on 2026-09-04. Missing/wrong Gateway tokens were rejected, a valid
+test Gateway token returned the expected configuration, and unrelated routes
+were blocked. Signed execution-ticket testing awaits separate transmission
+approval. No Fly resource was created.
+
+Ctrl-C stops the local servers and removes only the run's Docker container,
+disposable volume, generated credentials, and file storage. Logs and non-secret
+IDs remain for diagnosis. After an ungraceful kill, use the exact container name
+in the private state file to recover cleanup; never prune Docker.
+
 Run from the repository root with Docker running:
 
 ```sh
@@ -26,17 +64,63 @@ executables; subsequent runs reuse build layers. Leave disk space for the image.
 
 ## Real components and intentional test boundaries
 
+### Signed Web-route qualification
+
+The isolated local launcher now exercises real signed requests through the Next
+App runtime route, its provider target validator, and actor/capability access.
+It enables the Browser capabilities only in its disposable test organization.
+With no Fly provider configured, these probes must reach Browser composition
+and return `BROWSER_SERVICE_UNAVAILABLE`; this is authorization-path evidence,
+not a successful Browser session.
+
+The September 4 repair closes the authorization-ordering gaps:
+
+- The Web provider target validator rejected `upload/prepare-upload`,
+  `download/prepare-download`, and `download/release-download`. Its exact route
+  list is repaired and three regression tests demonstrated failure before the
+  repair and success afterward.
+- App authorization defers approval only for those three exact capability/action
+  pairs. Identity, capability access, and session ownership remain enforced.
+- The Browser client keeps preparation and release on `auto`, but uses
+  `confirmed` throughout transfer execution after the runtime policy gate.
+  Artifact authorization is confirmed only within that active execution.
+  Minimum transfer approval remains `ask`.
+
+All six connected cases now enter the real App runtime handler with a signed
+execution ticket. Approval replay also goes through the runtime policy gate.
+This exposed and corrected two fixture mistakes: preparation supplied the wrong
+runtime policy revision, and approval replay supplied a derived revision where
+the gate expects the upstream authority revision. Product policy was unchanged.
+
+Local qualification for the authorization-ordering repair:
+
+- Provider adapter regression: 8 passed (3 new tests failed before the repair).
+- Browser client regressions: 10 passed, including confirmed follow-up calls,
+  no confirmation from a prepared approval ID, and artifact execution scope.
+- Connected Browser: all 6 cases and cleanup passed through the signed Web path;
+  test image `sha256:ccee64ba270f604bacb1686ebb10df66c0ba580028308efd56b3ea009a2adaf1`.
+- `pnpm validate`: passed (72.0s).
+- `pnpm validate:postgres`: passed (71.6s).
+- `pnpm validate:chromium`: passed (254.1s, 32 browser tests).
+- `pnpm validate:process`: passed (613.6s).
+- Browser harness typecheck and compiled signed-Web preflight passed. The
+  preflight reached all three exact preparation/release routes before the
+  deliberately unconfigured provider returned `BROWSER_SERVICE_UNAVAILABLE`.
+- Owned Browser test containers, networks, and listeners: none remaining. No
+  Fly resources were created and no production changes were made.
+
 The suite uses migrated PostgreSQL, Redis viewer tickets, Web Browser services,
 the actual approval producer and Web decision handler, managed-file storage,
 the Environment Gateway relay and egress registry, signed worker capabilities,
 the real worker server, and the pinned agent-browser/Chrome executables.
 Completed tool outputs are persisted with Web's durable message writer.
 
-The selected entry point is the authenticated **Browser-service boundary**.
+The selected entry point is the **signed Web App runtime handler**.
 A test-only provider replaces Fly Machines with owned child processes and
 translates their private hostnames to local listener ports. Runtime identity is
 seeded; there is no model or durable turn-worker. After Web approval, the test
-continues the prepared Browser operation directly. Viewer checks use the actual
+requires the runtime policy gate to permit the prepared operation before
+execution. Viewer checks use the actual
 WebSocket protocol and service, not a mounted React viewer.
 
 An internal Docker network prevents public Internet access during execution.

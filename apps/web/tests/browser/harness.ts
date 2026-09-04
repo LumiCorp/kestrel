@@ -8,7 +8,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createClient } from "redis";
 import {
   ENVIRONMENT_GATEWAY_CONFIG_VERSION,
-  type EnvironmentExecutionTicket,
+  ENVIRONMENT_ROUTER_AUDIENCE,
+  signEnvironmentExecutionTicket,
+  verifyEnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
 import { handleAppRelay } from "../../../environment-router/src/app-relay.js";
 import { HostedBrowserEgressRegistry } from "../../../environment-router/src/browser-egress.js";
@@ -16,10 +18,8 @@ import { EnvironmentGatewayConfigClient } from "../../../environment-router/src/
 import { handleBrowserViewerControl } from "../../../environment-router/src/browser-viewer.js";
 import { handleBrowserUpload } from "../../../environment-router/src/browser-upload.js";
 import { handleBrowserDownload } from "../../../environment-router/src/browser-download.js";
-import {
-  configureHostedBrowserServiceResolver,
-  handleHostedBrowserControl,
-} from "../../lib/browser/control-route.js";
+import { configureHostedBrowserServiceResolver } from "../../lib/browser/control-route.js";
+import { handleAppRuntimeRequest } from "../../lib/apps/runtime-route.js";
 import { HostedBrowserStore } from "../../lib/browser/store.js";
 import { HostedBrowserService } from "../../lib/browser/service.js";
 import { HostedBrowserPolicy } from "../../lib/browser/policy.js";
@@ -55,6 +55,7 @@ import {
 import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
 import { persistDurableAssistantOutcome } from "../../lib/turns/store.js";
 import { getBrowserToolContract } from "../../../../src/browser/browserAppContract.fixture.js";
+import { buildRuntimePolicyRevision } from "../../../../agents/reference-react/src/steps/acter/policyGates.js";
 
 export async function createHarness() {
   const sql = postgres(process.env.DATABASE_URL!, { max: 4 });
@@ -80,33 +81,58 @@ export async function createHarness() {
     dial: site.dial,
   });
   const workspaceToken = randomUUID();
-  const executionTicket = randomUUID();
+  const previousTicketKey = process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY;
+  process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY = publicKeyPem;
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const executionTicket = signEnvironmentExecutionTicket({
+    privateKey: privateKeyPem,
+    ticket: {
+      version: 2,
+      audience: ENVIRONMENT_ROUTER_AUDIENCE,
+      organizationId: ids.organizationId,
+      environmentId: ids.environmentId,
+      workspaceId: ids.workspaceId,
+      threadId: ids.threadId,
+      runId: ids.executionId,
+      actorId: ids.userId,
+      agentId: "kestrel-one-app-relay",
+      target: {
+        provider: "fly",
+        appName: "browser-test",
+        machineId: "workspace",
+      },
+      capabilities: ["kestrel.tools.invoke"],
+      issuedAt,
+      expiresAt: issuedAt + 300,
+      nonce: randomUUID(),
+    },
+  });
   const store = new HostedBrowserStore();
   const policy = new HostedBrowserPolicy(store);
   const events: unknown[] = [];
   const outputs: unknown[] = [];
   let service: HostedBrowserService;
-  // This is the selected authenticated Browser-service seam, not a substitute
-  // implementation of the login route or Vercel runtime hosting.
+  // Exercise the signed App runtime handler; this host does not replace login
+  // or prove Vercel hosting.
   const control = createServer(async (request, response) => {
     try {
       assert.equal(request.headers.authorization, `Bearer ${executionTicket}`);
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      const result = await handleHostedBrowserControl({
+      const parts = request.url!.split("/");
+      const result = await handleAppRuntimeRequest({
         request: new Request(`http://control${request.url}`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            authorization: request.headers.authorization!,
+          },
           body: Buffer.concat(chunks),
         }),
-        action: request.url!.split("/").at(-1)!,
-        ticket: {
-          organizationId: ids.organizationId,
-          environmentId: ids.environmentId,
-          actorId: ids.userId,
-          runId: ids.executionId,
-        } as EnvironmentExecutionTicket,
-        projectId: ids.projectId,
+        appKey: parts[4]!,
+        capabilityKey: parts[5]!,
+        approval: parts[6]!,
+        path: parts.slice(7),
       });
       if (!result.ok)
         console.error("[browser-test] Web control response", {
@@ -240,6 +266,11 @@ export async function createHarness() {
   });
   const uninstall = configureHostedBrowserServiceResolver(async () => service);
   const context = {
+    runtime: {
+      runId: ids.runId,
+      sessionId: ids.threadId,
+      threadId: ids.threadId,
+    },
     kestrelOne: {
       appRelayUrl: routerUrl,
       appRelayToken: workspaceToken,
@@ -393,7 +424,11 @@ export async function createHarness() {
               : approvalRequired
                 ? "approval_required"
                 : "allow",
-          policyRevision: resolved.policyRevision,
+          policyRevision: buildRuntimePolicyRevision({
+            interactionMode: "build",
+            actSubmode: undefined,
+            executionPolicy: undefined,
+          }),
         },
         ...(approvalRequired
           ? {
@@ -453,6 +488,7 @@ export async function createHarness() {
     sql,
     store,
     policy,
+    port,
     service,
     registry,
     machines,
@@ -465,6 +501,77 @@ export async function createHarness() {
     actor,
     imageDigest,
     runContext,
+    async checkTransferAuthorization() {
+      const probe = async (
+        capability: string,
+        action: string,
+        token = executionTicket,
+      ) => {
+        const result = await handleAppRuntimeRequest({
+          appKey: "built_in.browser",
+          capabilityKey: capability,
+          approval: "auto",
+          path: ["control", action],
+          request: new Request(
+            `http://control/api/runtime/apps/built_in.browser/${capability}/auto/control/${action}`,
+            {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${token}`,
+                "content-type": "application/json",
+              },
+              body: "{}",
+            },
+          ),
+        });
+        return {
+          status: result.status,
+          code: (await result.json()).error?.code,
+        };
+      };
+      for (const capability of ["upload", "download"]) {
+        assert.deepEqual(await probe(capability, "accept"), {
+          status: 409,
+          code: "APP_RUNTIME_APPROVAL_REQUIRED",
+        });
+        assert.deepEqual(await probe(capability, "invoke"), {
+          status: 409,
+          code: "APP_RUNTIME_APPROVAL_REQUIRED",
+        });
+      }
+      assert.equal((await probe("upload", "prepare-download")).status, 404);
+      assert.notEqual(
+        (await probe("upload", "prepare-upload", "invalid")).status,
+        200,
+      );
+      const ticket = verifyEnvironmentExecutionTicket({
+        token: executionTicket,
+        publicKey: publicKeyPem,
+      });
+      for (const key of [
+        "actorId",
+        "organizationId",
+        "environmentId",
+        "workspaceId",
+        "threadId",
+        "runId",
+      ] as const) {
+        const altered = signEnvironmentExecutionTicket({
+          privateKey: privateKeyPem,
+          ticket: { ...ticket, [key]: randomUUID() },
+        });
+        assert.equal(
+          (await probe("upload", "prepare-upload", altered)).status,
+          403,
+        );
+      }
+      await sql`UPDATE environment_app_capability_grants SET enabled = false WHERE environment_id = ${ids.environmentId} AND app_key = 'built_in.browser' AND capability_key = 'upload'`;
+      try {
+        assert.equal((await probe("upload", "prepare-upload")).status, 403);
+      } finally {
+        await sql`UPDATE environment_app_capability_grants SET enabled = true WHERE environment_id = ${ids.environmentId} AND app_key = 'built_in.browser' AND capability_key = 'upload'`;
+      }
+    },
     async attach(bytes: Buffer, filename: string) {
       const scope = {
         threadId: ids.threadId,
@@ -561,6 +668,13 @@ export async function createHarness() {
         () => sql`DELETE FROM organization WHERE id = ${ids.organizationId}`,
         () => sql`DELETE FROM "user" WHERE id = ${ids.userId}`,
         () => uninstall(),
+        () => {
+          if (previousTicketKey === undefined)
+            delete process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY;
+          else
+            process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY =
+              previousTicketKey;
+        },
         () => tools.close(),
         () => site.close(),
         () => sql.end({ timeout: 0 }),

@@ -337,6 +337,7 @@ async function takeoverCase(h: Harness) {
   await h.call("browser.close");
 }
 async function uploadCase(h: Harness) {
+  await h.checkTransferAuthorization();
   await exerciseUploads(h);
   await h.call("browser.close");
 }
