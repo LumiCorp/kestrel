@@ -5,6 +5,15 @@ Machine at a time. It shares database and queue contracts with Kestrel One, so
 a live Machine update must follow any required Web deployment and migration.
 Publishing a tag is not deployment proof.
 
+For Browser lifecycle changes, additionally prove that reconciliation preserves
+an exactly identified opening worker in Fly `created` and `starting` states
+within the existing 60-second opening deadline. Preserve openings before
+resource attachment, fail closed on mismatched identities, and prove deadline
+cleanup cannot delete a concurrently ready session. Use injected clocks for
+deadline tests; no wall-clock sleep is needed. Verify
+`KESTREL_BROWSER_WORKER_IMAGE` matches the immutable digest configured in One,
+and run a real Browser open/close with reconciliation active.
+
 Use the repository-wide [production delivery runbook](../../../docs/production-delivery-channels.md)
 for the protected `main` to `production` promotion and common provider gates.
 This file owns the control-worker-specific order, verification, and rollback.

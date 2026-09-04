@@ -62,6 +62,16 @@ test("Browser lifecycle reconciliation is environment-scoped, race-safe, and met
   });
 
   const store = new HostedBrowserStore();
+  // Reconciliation must compare resource ownership under the same session lock
+  // as attachMachine. A stale resource-less snapshot cannot terminalize an attach.
+  for (const expectedMachineId of [null, id("wrong-machine")]) {
+    await assert.rejects(store.markTerminal({
+      sessionId: id("session", "a"), expectedGeneration: 1,
+      expectedMachineId, expectedState: "opening",
+      state: "lost", reason: "BROWSER_ENGINE_FAILURE", now: fixtureNow,
+    }), /BROWSER_SESSION_LOST/u);
+    assert.equal((await store.read(id("session", "a")))?.resource?.cleanupRequestedAt, null);
+  }
   // A delayed startup failure must recheck opening under the row lock, not
   // rely on the earlier service read. Neither ready nor terminal may be lost.
   for (const state of ["ready", "opening"] as const) {
