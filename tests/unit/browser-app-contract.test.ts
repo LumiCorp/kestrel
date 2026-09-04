@@ -31,6 +31,48 @@ import {
 } from "../../src/engine/RuntimeIO.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
+import { checkToolPolicyGate } from "../../agents/reference-react/src/steps/acter/policyGates.js";
+
+test("hosted automatic Browser grants retain capability identity through the real approval gate", async () => {
+  let dispatches = 0;
+  const port = passiveBrowserPort();
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.request_grant"],
+    context: {
+      browserService: {
+        ...port,
+        async resolvePolicy() {
+          return { version: "browser_policy_resolution_v1", decision: "approval_required", policyRevision: "grant-policy-1", sessionMode: "operator" };
+        },
+        async execute() { dispatches += 1; throw new Error("must wait for approval"); },
+      },
+      kestrelOne: { appApprovalModes: { "browser.request_grant": "auto" } },
+    },
+  });
+  const capability = registry.getCapabilityManifest().find((item) => item.name === "browser.request_grant")!;
+  const { prepared, runContext } = await prepareBrowserCall(registry, "browser.request_grant", {
+    sessionId: "browser-session-1", destination: "https://example.net/",
+  }, { approval: true, decision: "approval_required", approvalCapabilities: capability.approvalCapabilities ?? [] });
+  const result = await checkToolPolicyGate({
+    reactState: {}, activeRegion: undefined, acterStepId: "agent.exec.dispatch",
+    deliberationStepId: "agent.think", loopStepId: "agent.loop", currentStepAgent: "agent.exec.dispatch",
+    runId: runContext.runId, sessionId: runContext.sessionId, stepIndex: 1,
+    eventType: "run.start", eventPayload: runContext.payload,
+    toolName: "browser.request_grant", toolInput: prepared.effectiveInput,
+    toolClass: "external_side_effect", allowedInteractionModes: ["chat", "build"],
+    requiredApprovalCapabilities: capability.approvalCapabilities,
+    approvalDisposition: { ...capability.approvalDisposition!, mode: "ask" },
+    trustedPolicyDecision: "approval_required", trustedPolicyRevision: prepared.policy.policyRevision,
+    approvalAuthority: capability.approvalAuthority, preparedToolCall: prepared,
+    interactionMode: "build", actSubmode: undefined, modeSystemV2Enabled: true,
+    executionPolicy: undefined, autonomyPolicy: undefined, autonomyEvidence: [], autonomyRiskSignals: [],
+    io: {} as Parameters<typeof checkToolPolicyGate>[0]["io"],
+  });
+  assert.equal(result.kind, "blocked");
+  assert.deepEqual(prepared.stableAuthority?.capabilities, ["network.call"]);
+  assert.match(JSON.stringify(result), /runner_external_approval_binding_v2/u);
+  assert.equal(dispatches, 0);
+});
 
 const session = {
   version: "browser_session_v1",
@@ -2161,6 +2203,7 @@ async function prepareBrowserCall(
     approval?: boolean;
     hosted?: boolean;
     activeAttachmentId?: string;
+    approvalCapabilities?: readonly string[];
   } = {},
 ) {
   const effectiveRawInput =
@@ -2232,7 +2275,7 @@ async function prepareBrowserCall(
               approvalId: `approval-${sequence}`,
               authorityRevision: approvalAuthorityRevision,
             },
-            approvalCapabilities: ["external.confirm"],
+            approvalCapabilities: policy.approvalCapabilities ?? ["external.confirm"],
           }
         : {}),
     },
