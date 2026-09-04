@@ -2609,6 +2609,7 @@ export class DesktopBrowserService implements BrowserServicePort {
         );
       }
       const tabId = page.tabId;
+      await this.#pruneExpiredDownloads(runtime);
       runtime.snapshots.clear();
       runtime.continuations.clear();
       runtime.snapshots.set(snapshotId, {
@@ -2628,6 +2629,9 @@ export class DesktopBrowserService implements BrowserServicePort {
           capturedAt: this.#now().toISOString(),
           boundary: "untrusted_browser_content",
           title: page.title,
+          pendingDownloads: runtime.interceptedDownloads.map(
+            publicPendingBrowserDownload,
+          ),
         },
         content,
       );
@@ -3458,7 +3462,10 @@ export class DesktopBrowserService implements BrowserServicePort {
       documentIdentity: digest({
         tabId: parsedTabs.activeTabId,
         exactUrl,
-        navigationEpoch: extractScalar(document.stdout, "value"),
+        navigationEpoch: extractSuccessfulAgentString(
+          document.stdout,
+          "result",
+        ),
       }),
     };
   }

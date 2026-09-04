@@ -268,6 +268,17 @@ test("hosted Browser download reconciles a deterministic ready draft into one pr
         (SELECT count(*)::int FROM "file_scope_grants" WHERE "file_id" = ${fileId}) AS grants
     `;
   assert.deepEqual(counts, { files: 1, promotions: 1, grants: 1 });
+  const freshIdentity = {
+    ...identity,
+    operationId: `browser-fresh-operation-${suffix}`,
+    pendingDownloadId: `pending-fresh-download-${suffix}`,
+  };
+  assert.equal(await files.prepareHostedBrowserDownload(freshIdentity), "upload_required");
+  await files.uploadHostedBrowserDownload({ ...freshIdentity, body: Readable.from([bytes]) });
+  const fresh = await files.completeHostedBrowserDownload(freshIdentity);
+  assert.equal(fresh.lifecycleState, "ready");
+  assert.equal(fresh.sha256, identity.sha256);
+  assert.equal(await files.prepareHostedBrowserDownload(freshIdentity), "ready");
   await sql`UPDATE "kestrel_files" SET "created_at" = now() - interval '8 days' WHERE "id" = ${fileId}`;
   await files.cleanupExpiredFiles(new Date());
   assert.equal(

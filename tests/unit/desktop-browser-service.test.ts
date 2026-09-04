@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdtemp,
   mkdir,
@@ -1955,6 +1955,36 @@ test("interaction rechecks the current document revision before its effect", asy
   await fixture.service.close();
 });
 
+test("unchanged pinned-engine document ignores per-response boundary nonces", async () => {
+  const engine = new FakeEngine();
+  const fixture = await createFixture({ engine });
+  try {
+    const sessionId = await openSession(fixture.service);
+    const snapshot = asRecord(
+      await fixture.service.execute(
+        prepared("browser.snapshot", { sessionId }),
+        createLifecycle(),
+      ),
+    );
+    const output = asRecord(
+      await fixture.service.execute(
+        prepared("browser.interact", {
+          sessionId,
+          snapshotId: snapshot.snapshotId,
+          documentRevision: snapshot.documentRevision,
+          tabId: "t1",
+          action: { kind: "click", ref: "@e1" },
+        }),
+        createLifecycle(),
+      ),
+    );
+    assert.equal(output.outcome, "completed");
+    assert.ok(engine.commands.some((command) => command[0] === "click"));
+  } finally {
+    await fixture.service.close();
+  }
+});
+
 test("same-shape same-origin navigation invalidates snapshot document authority", async () => {
   const engine = new FakeEngine();
   const fixture = await createFixture({ engine });
@@ -3012,7 +3042,10 @@ test("engine launch failure before a PID binding terminalizes and removes openin
   assert.equal(ledger.sessions[0]?.state, "failed");
 });
 
-for (const sessionSuffix of ["123e4567-e89b-12d3-a456-426614174000", "a".repeat(64)]) {
+for (const sessionSuffix of [
+  "123e4567-e89b-12d3-a456-426614174000",
+  "a".repeat(64),
+]) {
   test(`Desktop Browser derives a short private socket path for ${sessionSuffix.length}-character IDs and removes it on cleanup`, async () => {
     const fixture = await createFixture({ randomId: () => sessionSuffix });
     await openSession(fixture.service);
@@ -3021,10 +3054,26 @@ for (const sessionSuffix of ["123e4567-e89b-12d3-a456-426614174000", "a".repeat(
       invocation.socketPath,
       `${invocation.sessionId}.sock`,
     );
-    assert.equal(Buffer.byteLength(socketFile, "utf8") <= 103, true, socketFile);
+    assert.equal(
+      Buffer.byteLength(socketFile, "utf8") <= 103,
+      true,
+      socketFile,
+    );
     assert.equal((await stat(invocation.socketPath)).mode & 0o777, 0o700);
-    assert.equal(path.dirname(invocation.socketPath), `/tmp/b${(process.getuid?.() ?? 0).toString(36)}`);
-    assert.equal(Buffer.byteLength(path.join(`/tmp/b${(4294967295).toString(36)}`, path.basename(invocation.socketPath), `${invocation.sessionId}.sock`)) <= 103, true);
+    assert.equal(
+      path.dirname(invocation.socketPath),
+      `/tmp/b${(process.getuid?.() ?? 0).toString(36)}`,
+    );
+    assert.equal(
+      Buffer.byteLength(
+        path.join(
+          `/tmp/b${(4294967295).toString(36)}`,
+          path.basename(invocation.socketPath),
+          `${invocation.sessionId}.sock`,
+        ),
+      ) <= 103,
+      true,
+    );
     await fixture.service.close();
     await assert.rejects(stat(invocation.socketPath), { code: "ENOENT" });
   });
@@ -3567,6 +3616,19 @@ test("a download observed after command return remains preparable without termin
   );
 
   await engine.emitDownload();
+
+  const discovered = asRecord(
+    await fixture.service.execute(
+      prepared("browser.snapshot", { sessionId }),
+      createLifecycle(),
+    ),
+  );
+  assert.ok(Array.isArray(discovered.pendingDownloads));
+  assert.equal(
+    asRecord(discovered.pendingDownloads[0]).downloadId,
+    "late-download",
+  );
+  assert.equal("ownedPath" in asRecord(discovered.pendingDownloads[0]), false);
 
   const effect = await fixture.service.prepareDownload({
     version: BROWSER_DOWNLOAD_PREPARATION_VERSION,
@@ -6367,7 +6429,17 @@ class FakeEngine implements DesktopBrowserEngineAdapter {
         return json({ title: "Fixture" });
       }
       if (input.command[0] === "eval") {
-        return json({ value: this.documentIdentity });
+        // The pinned CLI returns data.result, with a different boundary nonce
+        // on every response. Do not teach the service a fixture-only shape.
+        return {
+          stdout: JSON.stringify({
+            success: true,
+            error: null,
+            _boundary: { nonce: randomUUID() },
+            data: { result: this.documentIdentity },
+          }),
+          stderr: "",
+        };
       }
       if (input.command[0] === "tab") {
         if (input.command[1] === "close") {

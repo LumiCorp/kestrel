@@ -460,6 +460,13 @@ export function isAllowedAppRequest(pathname: string, method: string) {
       && /^previews\/[A-Za-z0-9_-]+$/u.test(path);
   }
   if (appKey === "built_in.browser") {
+    if (capability === "upload" && path === "control/prepare-upload") {
+      return method === "POST";
+    }
+    if (capability === "download" &&
+      (path === "control/prepare-download" || path === "control/release-download")) {
+      return method === "POST";
+    }
     return method === "POST"
       && [
         "open",
@@ -675,6 +682,7 @@ async function handleBrowserAcceptRelay(input: {
         return;
       }
       const completedOutput = await readBoundedWorkerJson(completed);
+      await adoptCompletedBrowserGrant(input.browserEgress, instruction, completedOutput);
       writeJson(input.response, 200, {
         version: "hosted_browser_pre_dispatch_result_v1",
         output: completedOutput,
@@ -919,6 +927,7 @@ async function handleBrowserInvokeRelay(input: {
     });
     if (!completed.ok) throw new Error("Browser completion was refused.");
     completedOutput = await readBoundedWorkerJson(completed);
+    await adoptCompletedBrowserGrant(input.browserEgress, retained.instruction, completedOutput);
   } catch {
     browserRelayReceipts.delete(receiptId);
     await notifyBrowserUnknown(input, publicBody, privateReceipt).catch(() => {});
@@ -937,6 +946,31 @@ async function handleBrowserInvokeRelay(input: {
       operationId: retained.instruction.operationId,
       operation: retained.instruction.operation,
     },
+  });
+}
+
+async function adoptCompletedBrowserGrant(
+  registry: HostedBrowserEgressRegistry | undefined,
+  instruction: BrowserPrivateInstruction,
+  output: unknown,
+): Promise<void> {
+  if (!registry || instruction.operation !== "browser.request_grant") return;
+  // The worker stages its local revision; only this Gateway owns the live
+  // proxy authority. Adopt after Web validates the signed completion and
+  // before exposing success to the caller's next same-session operation.
+  const result = requireRecord(output);
+  const authority = instruction.authority as HostedBrowserGatewayAuthorityV1 | undefined;
+  if (
+    !authority ||
+    result.operation !== instruction.operation ||
+    result.sessionId !== instruction.sessionId ||
+    (result.outcome !== "already_allowed" && result.outcome !== "granted") ||
+    result.effectiveAllowlistRevision !== authority.effectiveAllowlistRevision
+  ) throw new Error("Browser grant completion does not match Gateway authority.");
+  await registry.adopt({
+    sessionId: instruction.sessionId,
+    generation: instruction.generation,
+    authority,
   });
 }
 
