@@ -7,7 +7,7 @@ Publishing a tag is not deployment proof.
 
 For Browser lifecycle changes, additionally prove that reconciliation preserves
 an exactly identified opening worker in Fly `created` and `starting` states
-within the existing 60-second opening deadline. Preserve openings before
+within the existing five-minute opening deadline. Preserve openings before
 resource attachment, fail closed on mismatched identities, and prove deadline
 cleanup cannot delete a concurrently ready session. Use injected clocks for
 deadline tests; no wall-clock sleep is needed. Verify

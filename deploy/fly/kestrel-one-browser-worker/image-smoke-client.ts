@@ -289,13 +289,13 @@ function operationCapability(input: {
       ...IDENTITY,
       operationId: input.operationId,
       effectiveAllowlistRevision: input.effectiveAllowlistRevision,
-      expiresAt: new Date(input.now.getTime() + 2 * 60_000).toISOString(),
+      expiresAt: new Date(input.now.getTime() + 5 * 60_000).toISOString(),
     },
   });
 }
 
 async function waitForWorker(baseUrl: string, fetchImpl: typeof fetch) {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     try {
       await fetchImpl(baseUrl, { signal: AbortSignal.timeout(1_000) });
@@ -314,7 +314,7 @@ async function postJson(fetchImpl: typeof fetch, url: string, body: unknown) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(120_000),
   });
   const output = (await response.json()) as unknown;
   if (!response.ok) {

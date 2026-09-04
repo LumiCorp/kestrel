@@ -67,7 +67,7 @@ import {
 
 const IDLE_MS = 30 * 60_000;
 const HARD_MS = 8 * 60 * 60_000;
-const OPERATION_CAPABILITY_MS = 35_000;
+const OPERATION_CAPABILITY_MS = 5 * 60_000;
 const TERMINAL_STATES = new Set(["closed", "expired", "lost", "failed"]);
 
 export interface HostedBrowserSessionStorePort {
@@ -1525,7 +1525,7 @@ export class HostedBrowserService implements BrowserServicePort {
         appName: this.options.appName,
         machineId,
         state: "started",
-        timeoutSeconds: 30,
+        timeoutSeconds: 60,
       });
       const startedMachine = await this.options.machines.getMachine({
         appName: this.options.appName,
