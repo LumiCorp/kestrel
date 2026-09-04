@@ -14,6 +14,7 @@ import type {
   HostedBrowserViewerTicketStorePort,
 } from "./viewer-transient-store";
 import type { HostedBrowserViewerWorkerPort } from "./viewer-worker-client";
+import { resolveHostedBrowserViewerPolicyAccess } from "./viewer-composition-access";
 
 const keys = generateKeyPairSync("ed25519");
 const privateKeyPem = keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
@@ -164,6 +165,67 @@ test("authorization loss during frame delivery closes the Browser Session instea
   assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
   assert.equal(fixture.session.state, "lost");
   assert.equal(fixture.liveConnections.size, 0);
+});
+
+test("an approved domain revision blocks viewer effects without destroying the session before adoption", async () => {
+  const fixture = createFixture();
+  const caller = { organizationId: "org-1", actorId: "user-1", threadId: "thread-1" };
+  const issued = await fixture.service.mintTicket(caller);
+  const connection = await fixture.service.connect(issued.ticket);
+  fixture.currentAllowlistRevision = "revision-2";
+  const callsBefore = fixture.workerCalls.length;
+
+  for (const action of [
+    () => connection.frame(),
+    () => connection.revalidate(),
+    () => connection.dispatch({ version: "hosted_browser_viewer_route_v1", type: "accept_takeover" }),
+  ]) await assert.rejects(action(), /BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED/u);
+  await assert.rejects(fixture.service.mintTicket(caller), /BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED/u);
+  await assert.rejects(fixture.service.status(caller), /BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED/u);
+  assert.equal(fixture.workerCalls.length, callsBefore);
+  assert.equal(fixture.session.state, "ready");
+  assert.deepEqual(fixture.terminations, []);
+
+  // Socket settlement removes only this viewer's authority while adoption proceeds.
+  await connection.disconnect();
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.equal(fixture.cleanupPending, null);
+  assert.equal(fixture.workerCalls.at(-1)?.purpose, "disconnect");
+  assert.equal(fixture.session.state, "ready");
+  fixture.session.effectiveAllowlistRevision = "revision-2";
+  fixture.resource.proxyAuthorityRevision = "revision-2";
+  const renewed = await fixture.service.mintTicket(caller);
+  const reconnected = await fixture.service.connect(renewed.ticket);
+  assert.equal((await reconnected.frame()).type, "frame");
+  assert.deepEqual(fixture.terminations, []);
+});
+
+test("real access loss still destroys the session even during allowlist adoption", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({ organizationId: "org-1", actorId: "user-1", threadId: "thread-1" });
+  const connection = await fixture.service.connect(issued.ticket);
+  fixture.currentAllowlistRevision = "revision-2";
+  fixture.accessAllowed = false;
+  await assert.rejects(connection.frame(), /BROWSER_SESSION_LOST/u);
+  assert.equal(fixture.session.state, "lost");
+  assert.deepEqual(fixture.terminations, ["BROWSER_SESSION_LOST"]);
+});
+
+test("allowlist adoption blocks takeover input without returning control to the agent", async () => {
+  const fixture = createFixture();
+  const issued = await fixture.service.mintTicket({ organizationId: "org-1", actorId: "user-1", threadId: "thread-1" });
+  const connection = await fixture.service.connect(issued.ticket);
+  await connection.dispatch({ version: "hosted_browser_viewer_route_v1", type: "accept_takeover" });
+  fixture.currentAllowlistRevision = "revision-2";
+  await assert.rejects(connection.dispatch({
+    version: "hosted_browser_viewer_route_v1", type: "input", leaseId: connection.state.inputLeaseId!,
+    input: { version: "desktop_browser_viewer_input_v1", kind: "keyboard", phase: "down", key: "x" },
+  }), /BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED/u);
+  assert.equal(fixture.workerInputs.length, 0);
+  await connection.disconnect();
+  assert.equal(fixture.session.state, "human_control");
+  assert.equal(fixture.liveConnections.size, 0);
+  assert.deepEqual(fixture.terminations, []);
 });
 
 test("a transient authorization read failure is not converted into authority loss", async () => {
@@ -1332,6 +1394,7 @@ function createFixture(options: { requestAuthorized?: boolean } = {}) {
     liveConnections,
     resource,
     accessAllowed: true,
+    currentAllowlistRevision: "revision-1",
     get authorizeThrows() { return authorizeThrows; },
     set authorizeThrows(value) { authorizeThrows = value; },
     get environmentReady() { return environmentReady; },
@@ -1415,7 +1478,18 @@ function createFixture(options: { requestAuthorized?: boolean } = {}) {
     access: {
       async authorize() {
         if (authorizeThrows) throw new Error("transient authorization read failure");
-        return fixture.accessAllowed && environmentReady;
+        return fixture.accessAllowed && environmentReady &&
+          resolveHostedBrowserViewerPolicyAccess({
+            origin: { environmentId: "env-1", projectId: "project-1", userId: "user-1" },
+            session,
+            current: {
+              decision: "allow",
+              environmentId: "env-1",
+              projectId: "project-1",
+              userId: "user-1",
+              effectiveAllowlistRevision: fixture.currentAllowlistRevision,
+            },
+          });
       },
     },
     tickets,

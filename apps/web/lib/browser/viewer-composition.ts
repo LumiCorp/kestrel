@@ -8,7 +8,10 @@ import { HostedBrowserPolicy } from "./policy";
 import { resolveHostedBrowserServiceForAuthority } from "./composition";
 import { HostedBrowserStore } from "./store";
 import { HostedBrowserViewerService } from "./viewer-service";
-import { resolveHostedBrowserViewerRequester } from "./viewer-composition-access";
+import {
+  resolveHostedBrowserViewerPolicyAccess,
+  resolveHostedBrowserViewerRequester,
+} from "./viewer-composition-access";
 import {
   composeHostedBrowserViewerLifecycle,
   createCleanupSafeHostedBrowserViewerLifecycle,
@@ -157,12 +160,11 @@ export async function resolveHostedBrowserViewerService(input: {
             generation: authority.session.generation,
           },
         });
-        return current.resolution.decision === "allow" &&
-          current.authority.environmentId === authority.origin.environmentId &&
-          current.authority.projectId === authority.origin.projectId &&
-          current.authority.userId === authority.origin.userId &&
-          current.authority.effectiveAllowlistRevision ===
-            authority.session.effectiveAllowlistRevision;
+        return resolveHostedBrowserViewerPolicyAccess({
+          origin: authority.origin,
+          session: authority.session,
+          current: { ...current.authority, decision: current.resolution.decision },
+        });
       },
     },
     evidence: {

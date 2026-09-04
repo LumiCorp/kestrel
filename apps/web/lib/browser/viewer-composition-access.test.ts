@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveHostedBrowserViewerRequester } from "./viewer-composition-access";
+import { resolveHostedBrowserViewerPolicyAccess, resolveHostedBrowserViewerRequester } from "./viewer-composition-access";
 
 const origin = {
   organizationId: "org-1",
@@ -12,6 +12,26 @@ const origin = {
   userId: "origin-actor",
   effectiveAllowlistRevision: "revision-1",
 };
+
+test("viewer policy requires exact adopted authority and distinguishes denied access", () => {
+  const current = { ...origin, decision: "allow" as const };
+  assert.equal(resolveHostedBrowserViewerPolicyAccess({ origin, session: origin, current }), true);
+  assert.throws(() => resolveHostedBrowserViewerPolicyAccess({
+    origin, session: origin, current: { ...current, effectiveAllowlistRevision: "revision-2" },
+  }), /BROWSER_ALLOWLIST_ADOPTION_UNCONFIRMED/u);
+  for (const decision of ["deny", "approval_required"] as const) {
+    assert.equal(resolveHostedBrowserViewerPolicyAccess({
+      origin, session: origin,
+      current: { ...current, decision, effectiveAllowlistRevision: "revision-2" },
+    }), false);
+  }
+  for (const field of ["environmentId", "projectId", "userId"] as const) {
+    assert.equal(resolveHostedBrowserViewerPolicyAccess({
+      origin, session: origin,
+      current: { ...current, [field]: "other", effectiveAllowlistRevision: "revision-2" },
+    }), false);
+  }
+});
 
 test("viewer composition admits an authorized replacement only for fail-close", () => {
   assert.deepEqual(resolveHostedBrowserViewerRequester({
