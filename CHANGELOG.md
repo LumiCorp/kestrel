@@ -43,7 +43,9 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Hosted Browser personal-domain grants now retain their approval identity when
   the App uses Automatic mode, and the live viewer correctly handles masked
-  authentication messages in production builds.
+  authentication messages in production builds. A viewer pauses during an
+  approved domain change instead of destroying the Browser Session before the
+  new grant is installed.
 - Browser startup and execution now have more time for cold Machines and
   Chrome startup before authorization expires or opening cleanup begins.
 - Kestrel One now preserves attached files when a message is queued, so the
