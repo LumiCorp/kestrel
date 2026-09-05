@@ -1255,6 +1255,55 @@ test("trusted Browser allow dispatches its exact prepared call without external.
   );
 });
 
+test("automatic Browser preparation carries the policy decision in single and batch dispatch", async () => {
+  for (const batch of [false, true]) {
+    for (const strict of [false, true]) {
+      const toolName = "browser.tabs";
+      const toolInput = { operation: "list" };
+      const revision = hashCanonical({ browserTabs: "automatic" });
+      const config = {
+        ...buildExecConfig(),
+        capabilityManifestProvider: () => [{
+          name: toolName, freshnessClass: "runtime" as const,
+          capabilityClasses: ["browser.read"], approvalCapabilities: [],
+          approvalDisposition: {
+            mode: "auto" as const, reasonCode: "environment_policy" as const,
+            authority: { kind: "runtime_policy" as const, revision },
+          },
+          executionClass: "external_side_effect" as const,
+          inputDependentPreparation: true,
+        }],
+      };
+      let decision: string | undefined;
+      const transition = await createExecDispatchStep(config)(buildContext({
+        session: { ...buildContext().session, state: { agent: { nextAction: batch
+          ? { kind: "tool_batch", items: [{ name: toolName, input: toolInput }] }
+          : { kind: "tool", name: toolName, input: toolInput },
+        } } },
+        event: { ...buildContext().event, payload: {
+          modeSystemV2Enabled: true, interactionMode: "build", actSubmode: "full_auto",
+          executionPolicy: { approvalPolicy: { strictApprovalPerCall: strict } },
+        } },
+      }), {
+        useModel: async () => { throw new Error("not expected"); },
+        inspectTool: async () => ({ effectiveInput: toolInput, executionClass: "read_only" }),
+        prepareToolForApproval: async (_name, _input, approval) => {
+          decision = approval.policyDecision;
+          if (approval.policyDecision === "deny") assert.fail("tabs fixture is enabled");
+          return buildLocalPreparedBrowserCall({
+            toolName, effectiveInput: toolInput, callId: "prepared-tabs-auto",
+            policyRevision: approval.policyRevision, authorityRevision: approval.authorityRevision,
+            decision: approval.policyDecision ?? "approval_required",
+          });
+        },
+        useTool: async () => { throw new Error("must use durable dispatch"); },
+      });
+      assert.equal(decision, strict ? "approval_required" : "allow", `batch=${batch}, strict=${strict}`);
+      assert.equal(transition.status, strict ? "WAITING" : "RUNNING");
+    }
+  }
+});
+
 test("Browser batch approval preserves the per-item prepared call through Desktop resume", async () => {
   const toolName = "browser.tabs" as const;
   const toolInput = { operation: "list" };
