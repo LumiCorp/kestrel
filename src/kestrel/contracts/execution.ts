@@ -291,6 +291,8 @@ export interface StepIO {
     name: string,
     input: unknown,
     approval: {
+      /** Trusted policy result for exact preparation; omitted callers retain approval-required behavior. */
+      policyDecision?: "allow" | "deny" | "approval_required";
       policyRevision: string;
       authorityRevision: string;
       capabilities: readonly string[];

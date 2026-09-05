@@ -3,7 +3,7 @@ import type { PreparedToolCallV1 } from "../../../../../src/kestrel/contracts/to
 import { hashCanonical } from "../../../../../src/kestrel/contracts/tool-contract.js";
 
 import type { AutonomyPolicy } from "../../../../../src/governance/contracts.js";
-import type { ToolApprovalDispositionV1 } from "../../../../../src/mode/contracts.js";
+import { resolveEffectiveToolDecisionV1, type ToolApprovalDispositionV1 } from "../../../../../src/mode/contracts.js";
 import { applyReferenceReactExecPatch } from "../../commandProcessor.js";
 import {
   buildRuntimePolicyRevision,
@@ -349,6 +349,7 @@ async function continuePolicyBoundDurableToolBatch(input: {
   const currentPendingApproval = (
     input.reactState.exec as Record<string, unknown> | undefined
   )?.pendingApproval;
+  const configuredDisposition = input.toolApprovalDispositionByName[nextItem.name];
   const preparation =
     trustedInspection !== undefined &&
     trustedPolicy?.decision !== "deny" &&
@@ -361,6 +362,17 @@ async function continuePolicyBoundDurableToolBatch(input: {
           authorityRevision:
             boundApprovalAuthority?.revision ?? runtimePolicyRevision,
           capabilities: inspectedApprovalCapabilities,
+          effectiveDecision: configuredDisposition === undefined
+            ? undefined
+            : resolveEffectiveToolDecisionV1({
+                interactionMode: input.interactionMode,
+                actSubmode: input.actSubmode,
+                toolClass,
+                allowedInteractionModes: input.toolAllowedInteractionModesByName[nextItem.name],
+                executionPolicy: input.executionPolicy,
+                requiredCapabilities: inspectedApprovalCapabilities,
+                approvalDisposition: configuredDisposition,
+              }),
           toolIntent,
         })
       : undefined;
@@ -374,8 +386,6 @@ async function continuePolicyBoundDurableToolBatch(input: {
           (capability) => capability !== "external.confirm",
         )
       : configuredApprovalCapabilities;
-  const configuredDisposition =
-    input.toolApprovalDispositionByName[nextItem.name];
   const approvalDisposition =
     trustedPolicy === undefined
       ? configuredDisposition

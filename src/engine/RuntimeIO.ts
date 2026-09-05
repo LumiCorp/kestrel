@@ -1699,6 +1699,7 @@ export class RuntimeIO {
     name: string,
     input: unknown,
     approval: {
+      policyDecision?: "allow" | "deny" | "approval_required";
       policyRevision: string;
       authorityRevision: string;
       capabilities: readonly string[];
@@ -1761,7 +1762,7 @@ export class RuntimeIO {
               },
         rawInput,
         policy: {
-          decision: "approval_required",
+          decision: approval.policyDecision ?? "approval_required",
           policyRevision: approval.policyRevision,
         },
         approval: {
