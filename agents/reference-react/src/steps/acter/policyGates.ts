@@ -79,6 +79,7 @@ export async function prepareExactToolCallForPolicyGate(input: {
   policyRevision: string;
   authorityRevision: string;
   capabilities: readonly string[];
+  effectiveDecision?: EffectiveToolDecisionV1 | undefined;
   toolIntent?:
     | {
         modelToolCallId?: string | undefined;
@@ -110,6 +111,13 @@ export async function prepareExactToolCallForPolicyGate(input: {
         input.toolName,
         input.toolInput,
         {
+          policyDecision: input.effectiveDecision === undefined
+            ? "approval_required"
+            : !input.effectiveDecision.available
+              ? "deny"
+              : input.effectiveDecision.approvalDisposition.mode === "auto"
+                ? "allow"
+                : "approval_required",
           policyRevision: input.policyRevision,
           authorityRevision: input.authorityRevision,
           capabilities: input.capabilities,

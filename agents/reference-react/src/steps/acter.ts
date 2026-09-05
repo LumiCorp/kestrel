@@ -22,6 +22,7 @@ import {
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
   normalizeInteractionMode,
+  resolveEffectiveToolDecisionV1,
   parseExecutionPolicyOverride,
   toCanonicalInteractionMode,
 } from "../../../../src/mode/contracts.js";
@@ -426,6 +427,17 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
               authorityRevision:
                 boundApprovalAuthority?.revision ?? runtimePolicyRevision,
               capabilities: inspectedApprovalCapabilities,
+              effectiveDecision: configuredApprovalDisposition === undefined
+                ? undefined
+                : resolveEffectiveToolDecisionV1({
+                    interactionMode: toCanonicalInteractionMode(modeResolution.interactionMode),
+                    actSubmode: modeResolution.actSubmode,
+                    toolClass,
+                    allowedInteractionModes: toolAllowedInteractionModesByName[actionForDispatch.name],
+                    executionPolicy,
+                    requiredCapabilities: inspectedApprovalCapabilities,
+                    approvalDisposition: configuredApprovalDisposition,
+                  }),
               toolIntent,
             })
           : undefined;

@@ -28,6 +28,8 @@ import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { fingerprintSandboxCapabilityCatalogV2, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
+import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
+import { hashCanonical } from "../../src/kestrel/contracts/tool-contract.js";
 import {
   createEffectiveModelContractV1,
   legacyEffectiveModelContractResolverV1,
@@ -46,6 +48,29 @@ const guardrailConfig = {
   toolBatchCheckpointSize: 5,
   toolCallRetryCount: 0,
 };
+
+test("RuntimeIO exact preparation forwards policy decisions without inventing approval", async () => {
+  const unexpected = async (): Promise<never> => { throw new Error("preparation must not dispatch Browser effects"); };
+  const io = createRuntimeIO({
+    signal: new AbortController().signal, emitted: [],
+    toolGateway: new UnifiedToolRegistry({ allowlist: ["browser.tabs"], context: {
+      browserService: {
+        version: "browser_service_port_v1", resolvePolicy: unexpected,
+        execute: unexpected, authorizeArtifact: unexpected, adoptAllowlistRevision: unexpected,
+      },
+    } }),
+  });
+  for (const policyDecision of ["allow", "approval_required"] as const) {
+    const prepared = await io.prepareToolForApproval("browser.tabs", {
+      sessionId: "browser-session-1", generation: 1, operation: "list",
+    }, {
+      policyDecision, policyRevision: hashCanonical("policy"),
+      authorityRevision: hashCanonical("authority"), capabilities: [],
+    });
+    assert.equal(prepared.policy.decision, policyDecision);
+    assert.equal(prepared.approval?.externalApprovalBinding, undefined);
+  }
+});
 
 test("RuntimeIO.model does not emit model request events when already aborted", async () => {
   const controller = new AbortController();
@@ -1383,6 +1408,7 @@ test("RuntimeIO console stream volume does not change durable boundary cardinali
 });
 
 function createRuntimeIO(input: {
+  toolGateway?: ToolGateway;
   signal: AbortSignal;
   emitted: string[];
   modelCall?: ((options?: ModelGatewayCallOptions) => Promise<unknown>) | undefined;
@@ -1417,7 +1443,7 @@ function createRuntimeIO(input: {
       input.provenanceUpdates?.push(structuredClone(update));
     },
   } as unknown as RuntimeStore;
-  const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
+  const toolGateway: ToolGateway = input.toolGateway ?? adaptLegacyTestToolGateway({
     call: async <T>(_name: string, _toolInput: unknown, options?: ToolGatewayCallOptions) => {
       const result = input.toolCall === undefined ? { ok: true } : await input.toolCall(options);
       return result as T;

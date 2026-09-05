@@ -23,7 +23,7 @@ import {
   compileToolJsonSchemaV1,
   hashCanonical,
 } from "../../src/kestrel/contracts/tool-contract.js";
-import type { PreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
+import { parseDurablePreparedToolCallV1, type PreparedToolCallV1 } from "../../src/kestrel/contracts/tool-invocation.js";
 import { derivePreparedToolApprovalAuthorityRevisionV1 } from "../../src/io/ToolInvocationSupport.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import {
@@ -32,7 +32,8 @@ import {
 } from "../../src/engine/RuntimeIO.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
-import { checkToolPolicyGate } from "../../agents/reference-react/src/steps/acter/policyGates.js";
+import { checkToolPolicyGate, prepareExactToolCallForPolicyGate } from "../../agents/reference-react/src/steps/acter/policyGates.js";
+import { resolveEffectiveToolDecisionV1 } from "../../src/mode/contracts.js";
 
 test("hosted automatic Browser grants retain capability identity through the real approval gate", async () => {
   let dispatches = 0;
@@ -1587,6 +1588,56 @@ test("Browser upload cannot replace the trusted active-turn attachment with mode
     ),
     hasBrowserCode("BROWSER_SERVICE_UNAVAILABLE"),
   );
+});
+
+test("automatic hosted tabs list is durable after the real policy gate", async () => {
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["browser.tabs"],
+    context: {
+      browserService: passiveBrowserPort(),
+      kestrelOne: { appApprovalModes: { "browser.tabs": "auto" } },
+    },
+  });
+  const capability = registry.getCapabilityManifest().find((item) => item.name === "browser.tabs")!;
+  let captured: Awaited<ReturnType<typeof prepareBrowserCall>> | undefined;
+  const preparation = await prepareExactToolCallForPolicyGate({
+    io: { async prepareToolForApproval(_name, input, approval) {
+      captured = await prepareBrowserCall(registry, "browser.tabs", input as Record<string, unknown>, {
+        approval: true, decision: approval.policyDecision ?? "approval_required",
+        approvalCapabilities: approval.capabilities,
+      });
+      return captured.prepared;
+    } } as Parameters<typeof prepareExactToolCallForPolicyGate>[0]["io"],
+    toolName: "browser.tabs", toolInput: { sessionId: "browser-session-1", operation: "list" },
+    policyRevision: hashCanonical("policy"), authorityRevision: hashCanonical("authority"),
+    capabilities: capability.approvalCapabilities ?? [],
+    effectiveDecision: resolveEffectiveToolDecisionV1({
+      interactionMode: "build", toolClass: "read_only",
+      approvalDisposition: capability.approvalDisposition!,
+      requiredCapabilities: capability.approvalCapabilities,
+    }),
+  });
+  assert.equal(preparation.kind, "prepared");
+  assert.ok(captured);
+  const { prepared, runContext } = captured;
+  const result = await checkToolPolicyGate({
+    reactState: {}, activeRegion: undefined, acterStepId: "agent.exec.dispatch",
+    deliberationStepId: "agent.think", loopStepId: "agent.loop", currentStepAgent: "agent.exec.dispatch",
+    runId: runContext.runId, sessionId: runContext.sessionId, stepIndex: 1,
+    eventType: "run.start", eventPayload: runContext.payload,
+    toolName: "browser.tabs", toolInput: prepared.effectiveInput,
+    toolClass: "read_only", allowedInteractionModes: ["chat", "build"],
+    requiredApprovalCapabilities: capability.approvalCapabilities,
+    approvalDisposition: capability.approvalDisposition,
+    trustedPolicyDecision: prepared.policy.decision,
+    approvalAuthority: capability.approvalAuthority, preparedToolCall: prepared,
+    interactionMode: "build", actSubmode: undefined, modeSystemV2Enabled: true,
+    executionPolicy: undefined, autonomyPolicy: undefined, autonomyEvidence: [], autonomyRiskSignals: [],
+    io: {} as Parameters<typeof checkToolPolicyGate>[0]["io"],
+  });
+  assert.equal(result.kind, "allowed");
+  if (result.kind !== "allowed") assert.fail("automatic tabs list should execute");
+  assert.doesNotThrow(() => parseDurablePreparedToolCallV1(result.preparedToolCall));
 });
 
 test("tabs preparation keeps input-dependent execution class consistent", async () => {

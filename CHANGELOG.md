@@ -41,6 +41,9 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Kestrel One Browser tab listing in Automatic mode no longer fails because
+  preparation incorrectly requires an approval binding. Strict approval mode
+  and mandatory upload/download approvals remain enforced.
 - Kestrel One Browser uploads and downloads can now create their required
   approval request before execution. Approved transfers carry confirmation
   through completion, while pending and declined transfers remain blocked.
