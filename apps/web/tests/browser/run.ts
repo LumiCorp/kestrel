@@ -187,7 +187,14 @@ async function grantCase(h: Harness) {
 }
 async function browseCase(h: Harness) {
   await open(h);
-  const snapshot = await h.call("browser.snapshot");
+  const tabs = await h.call("browser.tabs", { operation: "list" });
+  assert.equal(typeof tabs.activeTabId, "string");
+  // Exact production failure: the model invented a starting cursor on its first read.
+  await assert.rejects(
+    h.call("browser.snapshot", { tabId: tabs.activeTabId, scope: "document", cursor: "0" }),
+    /BROWSER_TARGET_STALE/u,
+  );
+  const snapshot = await h.call("browser.snapshot", { tabId: tabs.activeTabId, cursor: null });
   assert.match(String(snapshot.content), /Connected Browser fixture/u);
   assert.match(
     String(

@@ -1687,6 +1687,46 @@ test("adapter rejection leaves an operation unacknowledged", async () => {
   await fixture.service.close();
 });
 
+test("a fabricated first-snapshot cursor is rejected with fresh-read guidance without losing the tab", async () => {
+  const metrics: DesktopBrowserMetric[] = [];
+  const engine = new FakeEngine({ snapshotContent: "x".repeat(70_000) });
+  const fixture = await createFixture({ engine, metrics });
+  try {
+    const sessionId = await openSession(fixture.service);
+    const snapshotsBefore = engine.commands.filter((args) => args[0] === "snapshot").length;
+    await assert.rejects(
+      fixture.service.execute(
+        prepared("browser.snapshot", { sessionId, generation: 1, tabId: "t1", scope: "document", cursor: "0" }),
+        createLifecycle(),
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error && "code" in error);
+        assert.equal(error.code, "BROWSER_TARGET_STALE");
+        assert.match(error.message, /omit cursor/iu);
+        return true;
+      },
+    );
+    assert.ok(metrics.some((metric) => metric.name === "browser_target_stale" && metric.reason === "continuation"));
+    assert.equal(engine.commands.filter((args) => args[0] === "snapshot").length, snapshotsBefore);
+    assert.equal(engine.closed.length, 0);
+    const fresh = asRecord(await fixture.service.execute(
+      prepared("browser.snapshot", { sessionId, generation: 1, tabId: "t1", scope: "document", cursor: null }),
+      createLifecycle(),
+    ));
+    assert.equal(fresh.sessionId, sessionId);
+    assert.equal(fresh.complete, false);
+    assert.equal(typeof fresh.nextCursor, "string");
+    const continued = asRecord(await fixture.service.execute(
+      prepared("browser.snapshot", { sessionId, cursor: fresh.nextCursor }),
+      createLifecycle(),
+    ));
+    assert.equal(continued.snapshotId, fresh.snapshotId);
+  } finally {
+    await fixture.service.close();
+    await rm(fixture.homePath, { recursive: true, force: true });
+  }
+});
+
 test("all engine operations serialize and stale snapshot refs fail before acknowledgement", async () => {
   const engine = new FakeEngine({
     snapshotContent: "x".repeat(70_000),
