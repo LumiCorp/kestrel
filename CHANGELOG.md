@@ -41,6 +41,10 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Browser fresh snapshots and inspections accept an explicit null cursor, with
+  model-facing instructions that distinguish fresh reads from continuation.
+  Invented cursors remain rejected, and stale-read errors explain how to request
+  a fresh read without replacing the Browser Session.
 - Kestrel One Browser tab listing in Automatic mode no longer fails because
   preparation incorrectly requires an approval binding. Strict approval mode
   and mandatory upload/download approvals remain enforced.

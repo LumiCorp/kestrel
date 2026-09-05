@@ -35,6 +35,25 @@ import { defaultToolCatalog } from "../../tools/catalog.js";
 import { checkToolPolicyGate, prepareExactToolCallForPolicyGate } from "../../agents/reference-react/src/steps/acter/policyGates.js";
 import { resolveEffectiveToolDecisionV1 } from "../../src/mode/contracts.js";
 
+test("Browser fresh-read contracts explicitly omit cursors and sanitized failures retain that guidance", () => {
+  for (const name of ["browser.snapshot", "browser.inspect"] as const) {
+    const contract = getBrowserToolContract(name);
+    const properties = contract.inputSchema.properties as Record<string, { description?: string }>;
+    assert.match(properties.cursor!.description!, /omit.*fresh/iu);
+    assert.match(properties.cursor!.description!, /nextCursor/u);
+    assert.match(properties.cursor!.description!, /never.*0/iu);
+    const inputSchema = compileToolJsonSchemaV1(contract.inputSchema, { surface: "input" });
+    assert.equal(inputSchema({ sessionId: "session-1", generation: 1, cursor: null, ...(name === "browser.inspect" ? { kind: "accessibility" } : { tabId: "t1" }) }), true);
+    const update = buildRunToolUpdate({
+      runId: "run-1", sessionId: "session-1", seq: 1, toolCallId: "call-1",
+      toolName: name, phase: "failed",
+      error: { code: "BROWSER_TARGET_STALE", message: "private-page-sentinel", details: { cursor: "private-cursor-sentinel" } },
+    });
+    assert.match(update.error!.message, /omit cursor/iu);
+    assert.doesNotMatch(JSON.stringify(update), /private-.*-sentinel/u);
+  }
+});
+
 test("hosted automatic Browser grants retain capability identity through the real approval gate", async () => {
   let dispatches = 0;
   const port = passiveBrowserPort();
