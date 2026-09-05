@@ -122,7 +122,9 @@ test("hosted Browser image build is pinned, nonroot, compiled, and runtime-fetch
     /KESTREL_BROWSER_SMOKE_GATEWAY_ADDRESS, 43110/u,
   );
   assert.match(smoke, /direct connection unexpectedly reached/u);
-  assert.match(smoke, /gateway accepted missing credentials/u);
+  assert.match(smoke, /gateway did not challenge missing credentials/u);
+  assert.match(smoke, /response\.writeHead\(407/u);
+  assert.match(smoke, /proxy-authenticate/u);
   assert.match(smoke, /Gateway loss stays closed/u);
   assert.match(smoke, /--platform linux\/amd64/u);
   assert.match(smoke, /chrome="\$\{chrome%/u);
@@ -148,7 +150,7 @@ test("hosted Browser image build is pinned, nonroot, compiled, and runtime-fetch
   assert.match(smoke, /Google Chrome for Testing 152\.0\.7977\.54/u);
 });
 
-test("hosted Browser image smoke drives exact open and close control operations", async () => {
+test("hosted Browser image smoke reads the authenticated page before closing", async () => {
   const keys = generateKeyPairSync("ed25519");
   const privateKeyPem = keys.privateKey
     .export({ type: "pkcs8", format: "pem" })
@@ -162,6 +164,7 @@ test("hosted Browser image smoke drives exact open and close control operations"
     body: Record<string, unknown> | null;
   }> = [];
   let readySession: Record<string, unknown> | undefined;
+  let snapshotContent = '- StaticText "ready"';
   const fetchImpl = (async (request, init) => {
     const url = new URL(String(request));
     const method = init?.method ?? "GET";
@@ -210,6 +213,9 @@ test("hosted Browser image smoke drives exact open and close control operations"
       return Response.json({ accepted: true, operationId: prepared.callId });
     }
     if (url.pathname.endsWith("/invoke")) {
+      if (operationId.endsWith("snapshot")) {
+        return Response.json({ sessionId: readySession?.sessionId, content: snapshotContent });
+      }
       if (operationId.endsWith("open")) {
         assert.ok(readySession);
         return Response.json({
@@ -252,6 +258,9 @@ test("hosted Browser image smoke drives exact open and close control operations"
       "POST /v1/operations/accept",
       "POST /v1/operations/invoke",
       "POST /v1/operations/commit",
+      "POST /v1/operations/accept",
+      "POST /v1/operations/invoke",
+      "POST /v1/operations/commit",
     ],
   );
   const acceptedTools = requests
@@ -264,5 +273,14 @@ test("hosted Browser image smoke drives exact open and close control operations"
           }
         ).activation.descriptor.toolId,
     );
-  assert.deepEqual(acceptedTools, ["browser.open", "browser.close"]);
+  assert.deepEqual(acceptedTools, ["browser.open", "browser.snapshot", "browser.close"]);
+  const snapshotRequest = requests.find((request) =>
+    (request.body?.prepared as { callId?: string } | undefined)?.callId === "browser-image-smoke-snapshot"
+  );
+  assert.equal((snapshotRequest?.body?.prepared as { effectiveInput: { cursor: unknown } }).effectiveInput.cursor, null);
+  snapshotContent = '- StaticText "BROWSER_DESTINATION_BLOCKED"';
+  await assert.rejects(runHostedBrowserImageSmokeControl({
+    baseUrl: "http://worker.test:43105", privateKeyPem, fetchImpl,
+    now: new Date("2026-08-30T12:00:00.000Z"),
+  }), /did not read the authenticated fixture page/u);
 });

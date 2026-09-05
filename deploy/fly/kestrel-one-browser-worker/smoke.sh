@@ -87,8 +87,15 @@ gateway_container="$(docker run --detach \
     createServer((incoming, response) => {
       try {
         const target = new URL(incoming.url);
-        if (incoming.headers["proxy-authorization"] !== expected ||
-            target.protocol !== "http:" ||
+        if (incoming.headers["proxy-authorization"] !== expected) {
+          response.writeHead(407, {
+            "proxy-authenticate": "Basic realm=\"Kestrel Browser\"",
+            connection: "close",
+          });
+          response.end();
+          return;
+        }
+        if (target.protocol !== "http:" ||
             target.hostname !== "browser-smoke-preview.internal" ||
             target.port !== "43106") throw new Error("denied");
         const upstream = forward({
@@ -232,7 +239,7 @@ docker exec "$worker_container" node --input-type=module --eval '
       path: "http://browser-smoke-preview.internal:43106/",
     }, (response) => {
       response.resume();
-      response.on("end", () => response.statusCode === 403 ? resolve() : reject(new Error("gateway accepted missing credentials")));
+      response.on("end", () => response.statusCode === 407 ? resolve() : reject(new Error("gateway did not challenge missing credentials")));
     });
     requestValue.on("error", reject);
     requestValue.end();

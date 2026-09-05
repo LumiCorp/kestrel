@@ -4438,7 +4438,7 @@ test("restart recovers a run-less queued route without letting its delayed start
   assert.equal(session.lastRunStatus, "WAITING");
 });
 
-test("a promoted queued run replaces only its exact accepted predecessor", async () => {
+test("a promoted queued run replaces only its exact accepted predecessor", async (t) => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -4469,6 +4469,13 @@ test("a promoted queued run replaces only its exact accepted predecessor", async
   };
   uiStore.patch({ activeSession: promoted, sessions: [promoted] });
 
+  const controller = (appState.getRunController as () => {
+    acquireQueueJournalTransaction(sessionId: string): Promise<() => void>;
+    runQueueJournalTransaction(sessionId: string, operation: () => Promise<void>): Promise<void>;
+  })();
+  const releaseJournal = await controller.acquireQueueJournalTransaction(promoted.sessionId);
+  t.after(releaseJournal);
+
   (appState.onRunnerEvent as (event: unknown) => void)({
     id: "run-started-exact-predecessor",
     type: "run.started",
@@ -4485,6 +4492,12 @@ test("a promoted queued run replaces only its exact accepted predecessor", async
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // Timer turns do not complete a queued journal transaction. Observe the
+  // predecessor while blocked, then fence the event's actual transaction.
+  assert.equal(uiStore.getState().activeSession.acceptedRunId, "run-predecessor");
+  releaseJournal();
+  await controller.runQueueJournalTransaction(promoted.sessionId, async () => {});
 
   const session = uiStore.getState().activeSession;
   assert.equal(session.queuedRunReservations, undefined);
