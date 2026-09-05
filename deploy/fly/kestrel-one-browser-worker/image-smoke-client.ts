@@ -190,6 +190,33 @@ export async function runHostedBrowserImageSmokeControl(input: {
     openPrepared.callId,
   );
 
+  const snapshotPrepared = preparedCall(
+    "browser.snapshot",
+    "browser-image-smoke-snapshot",
+    { sessionId: IDENTITY.sessionId, generation: IDENTITY.generation, cursor: null },
+    policyRevision,
+  );
+  const snapshotCapability = operationCapability({
+    operationId: snapshotPrepared.callId,
+    effectiveAllowlistRevision,
+    privateKeyPem: input.privateKeyPem,
+    now,
+  });
+  await requireAcceptance(await postJson(fetchImpl, `${baseUrl}/v1/operations/accept`, {
+    capability: snapshotCapability, prepared: snapshotPrepared, authority,
+    session: readySession, gatewayProxy,
+  }), snapshotPrepared.callId);
+  const snapshot = requireRecord(await postJson(fetchImpl, `${baseUrl}/v1/operations/invoke`, {
+    capability: snapshotCapability, operationId: snapshotPrepared.callId,
+  }));
+  if (snapshot.sessionId !== IDENTITY.sessionId ||
+      typeof snapshot.content !== "string" || !snapshot.content.includes("ready")) {
+    throw new Error("Hosted Browser image smoke did not read the authenticated fixture page.");
+  }
+  await requireCommit(await postJson(fetchImpl, `${baseUrl}/v1/operations/commit`, {
+    capability: snapshotCapability, operationId: snapshotPrepared.callId,
+  }), snapshotPrepared.callId);
+
   const closePrepared = preparedCall(
     "browser.close",
     "browser-image-smoke-close",
@@ -240,7 +267,7 @@ export async function runHostedBrowserImageSmokeControl(input: {
 }
 
 function preparedCall(
-  toolId: "browser.open" | "browser.close",
+  toolId: "browser.open" | "browser.snapshot" | "browser.close",
   callId: string,
   effectiveInput: Record<string, unknown>,
   policyRevision: string,

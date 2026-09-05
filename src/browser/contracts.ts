@@ -829,7 +829,7 @@ export function projectBrowserRunError(
     (BROWSER_FAILURE_CODES as readonly string[]).includes(error.code)
       ? (error.code as BrowserFailureCode)
       : "BROWSER_ENGINE_FAILURE";
-  return { code, message: browserFailureMessage(code) };
+  return { code, message: browserFailureMessage(code, toolName) };
 }
 
 export function browserArtifactPresentation(
@@ -908,7 +908,7 @@ export function normalizeBrowserHostFailure(
     (BROWSER_FAILURE_CODES as readonly string[]).includes(error.code)
       ? (error.code as BrowserFailureCode)
       : "BROWSER_ENGINE_FAILURE";
-  return browserFailure(code, browserFailureMessage(code), {
+  return browserFailure(code, browserFailureMessage(code, input.toolName), {
     recoverable:
       code === "BROWSER_SERVICE_UNAVAILABLE" || code === "BROWSER_TARGET_STALE",
     operation: input.toolName,
@@ -1310,7 +1310,7 @@ function validateTimestampOrder(
   }
 }
 
-function browserFailureMessage(code: BrowserFailureCode): string {
+function browserFailureMessage(code: BrowserFailureCode, toolName?: string): string {
   switch (code) {
     case "BROWSER_SESSION_CONFLICT":
       return "The Thread already has a conflicting Browser Session.";
@@ -1325,6 +1325,9 @@ function browserFailureMessage(code: BrowserFailureCode): string {
     case "BROWSER_HUMAN_CONTROL_ACTIVE":
       return "Agent Browser actions are disabled while human control is active.";
     case "BROWSER_TARGET_STALE":
+      if (toolName === "browser.snapshot" || toolName === "browser.inspect") {
+        return "The Browser tab, reference, or continuation cursor is stale. For a fresh read, omit cursor or set it to null. For continuation, use only the exact nextCursor returned by this tool's previous incomplete result; never invent one or use 0.";
+      }
       return "The Browser target reference is stale.";
     case "BROWSER_ACTION_OUTCOME_UNKNOWN":
       return "The Browser operation outcome is unknown.";
